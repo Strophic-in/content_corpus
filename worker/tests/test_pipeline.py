@@ -168,6 +168,32 @@ def test_draft_still_invalid_after_repairs_is_retried(owner, user):
     assert FakeWriter.calls == 4
 
 
+def test_writing_again_after_giving_up_runs_again(owner, user):
+    """Live bug: the first try died without writing v1, so "Write script" asked for
+    write_script:<post>:v1 again, got the dead job back, and the post sat in
+    'scripting' with nothing queued."""
+    pid = new_post(owner, user)
+    job = as_user(owner, user, "select (api.generate_script(%s)).id as id", (pid,))
+    owner.execute("update jobs set state = 'dead', attempts = 3, error = '{\"stage\": \"validate\"}' "
+                  "where id = %s", (job["id"],))
+    owner.execute("update posts set status = 'failed' where id = %s", (pid,))   # as on_give_up does
+
+    again = as_user(owner, user, "select * from api.generate_script(%s)", (pid,))
+    assert again["id"] == job["id"]                                   # same work, same row...
+    assert (again["state"], again["attempts"], again["error"]) == ("queued", 0, None)   # ...revived
+    assert runner().tick()
+    assert post(owner, pid)["status"] == "awaiting_approval"
+
+
+def test_finished_work_is_not_queued_twice(owner, user):
+    args = (user, "cpu", "write_script", f"dedupe-test:{uuid.uuid4()}")
+    first = owner.execute("select * from private.enqueue_job(%s, %s, %s, %s)", args).fetchone()
+    owner.execute("update jobs set state = 'succeeded' where id = %s", (first["id"],))
+    second = owner.execute("select * from private.enqueue_job(%s, %s, %s, %s)", args).fetchone()
+    assert second["id"] == first["id"] and second["state"] == "succeeded"
+    owner.execute("delete from jobs where id = %s", (first["id"],))
+
+
 def test_missing_key_fails_fast_with_readable_reason(owner, user):
     owner.execute("delete from user_keys where user_id = %s", (user,))
     pid = new_post(owner, user)
