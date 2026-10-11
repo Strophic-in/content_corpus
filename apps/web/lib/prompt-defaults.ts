@@ -6,14 +6,19 @@ import path from "node:path";
 // The shipped default prompts (repo-root prompts/): where every new format starts
 // and what "Reset to default" restores. The Docker image carries them at
 // /app/prompts; in development they are two directories up.
+// The paths are runtime-only (turbopackIgnore): the image copies prompts/ itself,
+// and letting the bundler trace a dynamic path would pull the whole project in.
 function promptsDir(): string {
-  for (const d of [process.env.PROMPTS_DIR, path.resolve(process.cwd(), "prompts"), path.resolve(process.cwd(), "../../prompts")]) {
-    if (d && fs.existsSync(path.join(d, "ideas.md"))) return d;
+  for (const d of [process.env.PROMPTS_DIR,
+                   path.resolve(/*turbopackIgnore: true*/ process.cwd(), "prompts"),
+                   path.resolve(/*turbopackIgnore: true*/ process.cwd(), "../../prompts")]) {
+    if (d && fs.existsSync(/*turbopackIgnore: true*/ path.join(d, "ideas.md"))) return d;
   }
   throw new Error("default prompts not found — set PROMPTS_DIR");
 }
 
-const read = (file: string) => fs.readFileSync(path.join(promptsDir(), file), "utf8").trim();
+const read = (file: string) =>
+  fs.readFileSync(/*turbopackIgnore: true*/ path.join(promptsDir(), file), "utf8").trim();
 
 export type Template = "narrated" | "dialogue";
 export type Source = { name: string; url: string };
