@@ -81,7 +81,7 @@ grant select, insert, update, delete on "user", "session", "account", "verificat
 -- Read access; rows are scoped by the RLS policies in 0004_rls.sql.
 grant select on app_settings, caption_styles, render_batches, posts, scripts, shots,
                 jobs, publish_attempts, post_events, workers, lane_config,
-                storage_objects, storage_config
+                storage_objects, storage_config, channels, formats, format_versions, ideas
   to corpus_web;
 
 -- Settings rows are created by api.ensure_settings(); the form edits intent only.
@@ -111,13 +111,49 @@ grant update (name, font_family, font_size_px, primary_color, accent_color,
 -- workers can advance a post's lifecycle.
 grant insert (user_id, format, topic, brief, slot_date, publish_tz, publish_at,
               audio_source, target_seconds, platforms, captions_enabled,
-              caption_style_id)
+              caption_style_id, channel_id, format_id)
   on posts to corpus_web;
 grant update (format, topic, brief, slot_date, publish_tz, publish_at,
               audio_source, target_seconds, platforms, captions_enabled,
-              caption_style_id)
+              caption_style_id, channel_id, format_id)
   on posts to corpus_web;
 grant delete on posts to corpus_web;
+
+-- Prompt library: the owner edits what a format makes. `version` and `is_default`
+-- are absent: versions are kept by a trigger, the default is switched by
+-- api.set_default_format, and history is restored by api.restore_format_version.
+grant insert (user_id, channel_id, name, description, audio_source, target_seconds, idea_prompt,
+              script_prompt, visual_style, sources, ideas_per_batch)
+  on formats to corpus_web;
+grant update (name, description, audio_source, target_seconds, idea_prompt,
+              script_prompt, visual_style, sources, ideas_per_batch)
+  on formats to corpus_web;
+grant delete on formats to corpus_web;
+-- ideas are read-only: a swipe goes through api.decide_idea, a batch through api.request_ideas.
+
+-- Channels: the profile is the owner's to edit; the default is switched by
+-- api.set_default_channel.
+grant insert (user_id, name, niche, audience, voice, language, timezone, default_publish_time,
+              ideas_daily, ideas_daily_at)
+  on channels to corpus_web;
+grant update (name, niche, audience, voice, language, timezone, default_publish_time,
+              ideas_daily, ideas_daily_at, updated_at)
+  on channels to corpus_web;
+grant delete on channels to corpus_web;
+
+-- Connected accounts: the OAuth callback (web) stores the token encrypted; like
+-- the key vault, token_ciphertext is write-only, so the web can never read a token
+-- back. Publishing workers decrypt it as the owner role.
+grant select (id, user_id, channel_id, platform, external_id, handle, display_name, avatar_url,
+              token_expires_at, scopes, status, connected_at, updated_at)
+  on channel_accounts to corpus_web;
+grant insert (user_id, channel_id, platform, external_id, handle, display_name, avatar_url,
+              token_ciphertext, token_expires_at, scopes, status, updated_at)
+  on channel_accounts to corpus_web;
+grant update (external_id, handle, display_name, avatar_url, token_ciphertext, token_expires_at,
+              scopes, status, updated_at)
+  on channel_accounts to corpus_web;
+grant delete on channel_accounts to corpus_web;
 
 -- Scripts: text fields of a draft only. `state` is excluded, so approval cannot
 -- be self-served — it goes through api.approve_script.

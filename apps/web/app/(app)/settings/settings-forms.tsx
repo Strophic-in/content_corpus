@@ -53,40 +53,11 @@ export function SettingsForm({ settings: s }: { settings: Settings }) {
     <form action={action} className="flex flex-col gap-6">
       <section className="flex flex-col gap-4 rounded-xl border border-border bg-surface p-5">
         <div>
-          <h2 className="font-medium">Channel</h2>
-          <p className="mt-1 text-sm text-muted">Every script is written for this channel.</p>
+          <h2 className="font-medium">Writing &amp; narration</h2>
+          <p className="mt-1 text-sm text-muted">
+            For every channel. Each channel's voice lives in Channels; each kind of video's prompts in its Library.
+          </p>
         </div>
-        <label className="flex flex-col gap-1 text-sm">Channel name
-          <input name="channel_name" maxLength={120} defaultValue={s.channel_name ?? ""} className={input} />
-        </label>
-        <label className="flex flex-col gap-1 text-sm">Niche
-          <textarea name="channel_niche" rows={2} maxLength={500} defaultValue={s.channel_niche ?? ""}
-                    placeholder="Startup and office humour for Indian tech workers" className={input} />
-        </label>
-        <label className="flex flex-col gap-1 text-sm">Audience
-          <textarea name="channel_audience" rows={2} maxLength={500} defaultValue={s.channel_audience ?? ""}
-                    placeholder="Founders, developers and PMs, 22-35" className={input} />
-        </label>
-        <label className="flex flex-col gap-1 text-sm">Voice
-          <textarea name="channel_voice" rows={2} maxLength={500} defaultValue={s.channel_voice ?? ""}
-                    placeholder="Deadpan, relatable, never mean" className={input} />
-        </label>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <label className="flex flex-col gap-1 text-sm">Script language
-            <input name="script_language" required maxLength={40} defaultValue={s.script_language} className={input} />
-          </label>
-          <label className="flex flex-col gap-1 text-sm">Default reel length (s)
-            <input name="default_reel_seconds" type="number" min={5} max={90} required
-                   defaultValue={s.default_reel_seconds} className={input} />
-          </label>
-        </div>
-        <label className="flex flex-col gap-1 text-sm">Audio style
-          <select name="default_audio_source" defaultValue={s.default_audio_source} className={input}>
-            <option value="kokoro">Narrated voice-over — one narrator over animation (explainers)</option>
-            <option value="ltx_native">Characters speak — dialogue voiced by the video model (sketches)</option>
-          </select>
-          <span className="text-xs text-muted">Applies to new posts.</span>
-        </label>
         <div className="grid gap-4 sm:grid-cols-2">
           <label className="flex flex-col gap-1 text-sm">Narrator voice
             <select name="narrator_voice" defaultValue={s.narrator_voice} className={input}>
@@ -125,12 +96,6 @@ export function SettingsForm({ settings: s }: { settings: Settings }) {
           </span>
         </label>
         <div className="grid gap-4 sm:grid-cols-3">
-          <label className="flex flex-col gap-1 text-sm">Timezone
-            <input name="timezone" required defaultValue={s.timezone} className={input} />
-          </label>
-          <label className="flex flex-col gap-1 text-sm">Publish time
-            <input name="default_publish_time" type="time" step={60} required defaultValue={s.default_publish_time.slice(0, 5)} className={input} />
-          </label>
           <label className="flex flex-col gap-1 text-sm">YouTube visibility
             <select name="youtube_privacy" defaultValue={s.youtube_privacy} className={input}>
               <option value="private">Private</option>

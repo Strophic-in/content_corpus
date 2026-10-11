@@ -7,33 +7,19 @@ import { z } from "zod";
 import { encrypt } from "@/lib/crypto";
 import { asUser } from "@/lib/db";
 import { requireUser } from "@/lib/session";
+import { friendly } from "@/lib/errors";
 import { wakeWorker } from "@/lib/wake";
 
 export type ActionState = { ok: boolean; error?: string; message?: string } | null;
 
-// Postgres errors the UI can explain. Anything else is logged and reported
-// generically — never echo raw SQL errors to the page.
-function friendly(err: unknown): string {
-  const e = err as { code?: string; message?: string; constraint?: string };
-  if (e?.code === "23505" && e.constraint === "posts_user_id_slot_date_key")
-    return "You already have a post on that day — one post per day.";
-  if (e?.code === "P0002") return "That item no longer exists.";
-  if (e?.code === "55000" && e.message) return e.message.charAt(0).toUpperCase() + e.message.slice(1) + ".";
-  if (e?.code === "42501") {
-    console.error("action refused by database permissions:", e.message);
-    return "The database refused that change — it isn't allowed in the current state.";
-  }
-  if (e?.code === "23514") return "One of the values is out of range.";
-  console.error("action failed", err);
-  return "Something went wrong. Please try again.";
-}
-
 const PostInput = z.object({
   slot_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Pick a date."),
+  publish_time: z.string().regex(/^\d{2}:\d{2}(:\d{2})?$/, "Pick a time."),
+  format_id: z.string().uuid("Pick a format."),
   topic: z.string().trim().min(3, "Give the post a topic.").max(300),
   brief: z.string().trim().max(2000).optional().transform((v) => v || null),
   target_seconds: z
-    .union([z.literal(""), z.coerce.number().int().min(5).max(90)])
+    .union([z.literal(""), z.coerce.number().int().min(5).max(300)])
     .optional()
     .transform((v) => (v === "" || v === undefined ? null : v)),
 });
@@ -42,17 +28,23 @@ export async function createPost(_: ActionState, form: FormData): Promise<Action
   const user = await requireUser();
   const parsed = PostInput.safeParse(Object.fromEntries(form));
   if (!parsed.success) return { ok: false, error: parsed.error.issues[0].message };
-  const { slot_date, topic, brief, target_seconds } = parsed.data;
+  const { slot_date, publish_time, format_id, topic, brief, target_seconds } = parsed.data;
   let id: string;
   try {
     id = await asUser(user.id, async (db) => {
       await db.query("select api.ensure_settings()");
-      // New posts take the channel's audio style (narrated voice-over or on-screen speech).
+      // The post belongs to the format's channel, at that channel's local time, and
+      // takes the format's audio style (narrated voice-over or on-screen speech).
       const r = await db.query(
-        `insert into posts (user_id, slot_date, topic, brief, target_seconds, audio_source)
-         values ($1, $2, $3, $4, $5, (select default_audio_source from app_settings)) returning id`,
-        [user.id, slot_date, topic, brief, target_seconds],
+        `insert into posts (user_id, channel_id, format_id, slot_date, publish_tz, publish_at, topic, brief,
+                            target_seconds, audio_source)
+         select $1, c.id, f.id, $3::date, c.timezone, ($3::date + $4::time) at time zone c.timezone, $5, $6, $7,
+                f.audio_source
+           from formats f join channels c on c.id = f.channel_id where f.id = $2
+         returning id`,
+        [user.id, format_id, slot_date, publish_time, topic, brief, target_seconds],
       );
+      if (!r.rows[0]) throw Object.assign(new Error("format not found"), { code: "P0002" });
       return r.rows[0].id as string;
     });
   } catch (err) {
@@ -65,12 +57,14 @@ export async function updatePost(postId: string, _: ActionState, form: FormData)
   const user = await requireUser();
   const parsed = PostInput.safeParse(Object.fromEntries(form));
   if (!parsed.success) return { ok: false, error: parsed.error.issues[0].message };
-  const { slot_date, topic, brief, target_seconds } = parsed.data;
+  const { slot_date, publish_time, format_id, topic, brief, target_seconds } = parsed.data;
   try {
     await asUser(user.id, (db) =>
       db.query(
-        `update posts set slot_date = $2, topic = $3, brief = $4, target_seconds = $5 where id = $1`,
-        [postId, slot_date, topic, brief, target_seconds],
+        `update posts p set slot_date = $2::date, publish_at = ($2::date + $3::time) at time zone p.publish_tz,
+                topic = $4, brief = $5, target_seconds = $6, format_id = f.id, audio_source = f.audio_source
+           from formats f where p.id = $1 and f.id = $7`,
+        [postId, slot_date, publish_time, topic, brief, target_seconds, format_id],
       ),
     );
   } catch (err) {
@@ -142,18 +136,11 @@ export async function rejectScript(scriptId: string, _: ActionState, form: FormD
 
 // ── settings ────────────────────────────────────────────────────────────────
 
+// Account-wide settings. A channel's profile, timezone and posting time are on
+// its channel; a kind of video's length, audio style and prompts on its format.
 const SettingsInput = z.object({
-  channel_name: z.string().trim().max(120),
-  channel_niche: z.string().trim().max(500),
-  channel_audience: z.string().trim().max(500),
-  channel_voice: z.string().trim().max(500),
-  script_language: z.string().trim().min(2).max(40),
-  default_reel_seconds: z.coerce.number().int().min(5).max(90),
   script_model: z.string().trim().max(120),
-  timezone: z.string().trim().min(3).max(64),
-  default_publish_time: z.string().regex(/^\d{2}:\d{2}(:\d{2})?$/),
   youtube_privacy: z.enum(["private", "unlisted", "public"]),
-  default_audio_source: z.enum(["kokoro", "ltx_native"]),
   narrator_voice: z.enum(["am_michael", "am_fenrir", "am_onyx", "bm_george", "bm_lewis", "af_heart", "af_bella", "bf_emma"]),
   narrator_speed: z.coerce.number().min(0.7).max(1.5),
   auto_approve: z.string().optional().transform((v) => v === "on"),
@@ -168,15 +155,9 @@ export async function saveSettings(_: ActionState, form: FormData): Promise<Acti
     await asUser(user.id, async (db) => {
       await db.query("select api.ensure_settings()");
       await db.query(
-        `update app_settings set channel_name = $1, channel_niche = $2, channel_audience = $3,
-                channel_voice = $4, script_language = $5, default_reel_seconds = $6,
-                script_model = nullif($7, ''), timezone = $8, default_publish_time = $9::time,
-                youtube_privacy = $10, auto_approve = $11, default_audio_source = $12,
-                narrator_voice = $13, narrator_speed = $14`,
-        [v.channel_name || null, v.channel_niche || null, v.channel_audience || null,
-         v.channel_voice || null, v.script_language, v.default_reel_seconds, v.script_model,
-         v.timezone, v.default_publish_time, v.youtube_privacy, v.auto_approve,
-         v.default_audio_source, v.narrator_voice, v.narrator_speed],
+        `update app_settings set script_model = nullif($1, ''), youtube_privacy = $2, auto_approve = $3,
+                narrator_voice = $4, narrator_speed = $5`,
+        [v.script_model, v.youtube_privacy, v.auto_approve, v.narrator_voice, v.narrator_speed],
       );
     });
   } catch (err) {

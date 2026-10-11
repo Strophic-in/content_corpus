@@ -118,6 +118,12 @@ def enqueue(c: Connection, *, user_id: str, lane: str, kind: str, dedupe_key: st
          priority, max_attempts, lease_seconds, state, not_before)).fetchone()
 
 
+def schedule_daily_ideas() -> int:
+    """Queue each channel's daily idea batch for today if it is not queued yet."""
+    with conn() as c:
+        return c.execute("select private.schedule_daily_ideas() as n").fetchone()["n"]
+
+
 def log_event(c: Connection, post_id, from_state: str | None, to_state: str, actor: str,
               reason: str | None = None, detail: dict | None = None) -> None:
     c.execute("select private.log_post_event(%s, %s, %s, %s, %s, %s)",

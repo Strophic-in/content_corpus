@@ -10,6 +10,9 @@ write for that model, not for a human crew.
 - Voice: {channel_voice}
 - Language for all dialogue and text: {script_language}
 
+## Channel look (added to every shot automatically — do not repeat it)
+{visual_style}
+
 ## Output fields
 - `title`: the YouTube title. At most 100 characters. No clickbait the video does not deliver.
 - `hook`: the idea of the first two seconds — why a scrolling viewer stops.
@@ -17,8 +20,9 @@ write for that model, not for a human crew.
 - `hashtags`: 3-6 tags without spaces, most relevant first, include `#shorts`.
 - `intended_dialogue`: every spoken line across all shots, in order, as plain text.
   It is used to help speech recognition spell names and jargon correctly.
-- `style_prompt`: one fixed look appended to EVERY shot prompt so all shots match:
-  setting, era, lighting, colour, lens/camera feel, realism level. 1-2 sentences.
+- `style_prompt`: only what THIS video adds to the channel look — its setting, era,
+  palette or mood in one short sentence, appended to every shot so they match. Use
+  "" if the channel look is enough.
 - `shots`: {shot_count_hint}. Each shot:
   - `seconds`: an integer from 3 to 12. The shots together should total about
     {target_seconds} seconds.
@@ -36,8 +40,9 @@ write for that model, not for a human crew.
 1. A character must be facing the camera, mouth unobstructed, and NOT eating,
    drinking or covering their face while speaking. Lip-sync fails otherwise.
 2. Keep spoken lines short: at most about 2.5 words per second of the shot.
-3. Never ask for on-screen text, captions, logos or signs with words — the model
-   garbles text. Captions are added later.
+3. Plan shots that need no on-screen text, captions, logos or signs with words —
+   the model garbles text. Write `visual` and `style_prompt` as what SHOULD be seen;
+   never "no …" or "without …", since the model reads every word as something to show.
 4. One clear action per shot. Avoid fast, complex choreography, hands doing fine
    work, crowds of distinct faces, and duplicated props.
 5. Describe recurring characters identically in every shot (age, look, clothing)

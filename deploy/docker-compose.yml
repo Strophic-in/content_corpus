@@ -32,7 +32,10 @@ x-worker: &worker
 
 services:
   web:
-    build: ../apps/web
+    build:
+      context: ../apps/web
+      additional_contexts:
+        prompts: ../prompts
     image: content-corpus-web:latest
     restart: unless-stopped
     env_file: ../.env
@@ -43,6 +46,8 @@ services:
 
   worker-cpu:
     <<: *worker
+    # Also on HealMem's private network, to reach its Qdrant (the idea agent's memory).
+    networks: [default, vector]
     environment:
       CORPUS_LANE: cpu
       CORPUS_WAKE_PORT: "8787"
@@ -68,3 +73,10 @@ services:
 
 volumes:
   corpus-cache:
+
+networks:
+  default: {}
+  # Qdrant lives in the HealMem stack; the idea agent keeps its own collection there.
+  vector:
+    name: healmem_vector
+    external: true

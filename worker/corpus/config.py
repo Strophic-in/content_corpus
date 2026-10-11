@@ -74,6 +74,9 @@ class Settings:
     # Worker-local cache (cpu lane: shot segments waiting for assembly). Losing it
     # only costs time: anything missing is rebuilt from R2.
     cache_dir: Path
+    # The idea agent's long memory (optional): a Qdrant the worker can reach.
+    qdrant_url: str
+    qdrant_api_key: str
     # GPU-lane only.
     comfy_url: str
     scratch_root: Path
@@ -114,6 +117,8 @@ def settings() -> Settings:
         r2_secret_access_key=os.environ.get("R2_SECRET_ACCESS_KEY", "").strip(),
         r2_bucket=os.environ.get("R2_BUCKET", "content-corpus-media").strip(),
         cache_dir=Path(os.environ.get("CORPUS_CACHE_DIR") or Path.home() / ".cache" / "content_corpus"),
+        qdrant_url=os.environ.get("QDRANT_URL", "").strip(),
+        qdrant_api_key=os.environ.get("QDRANT_API_KEY", "").strip(),
         comfy_url=os.environ.get("COMFY_URL", "http://127.0.0.1:28188").rstrip("/"),
         scratch_root=Path(os.environ.get("CORPUS_SCRATCH_ROOT", "/workspace/scratch")),
         prompts_dir=ROOT / "prompts",

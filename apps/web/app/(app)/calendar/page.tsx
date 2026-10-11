@@ -1,6 +1,6 @@
 import Link from "next/link";
 
-import { asUser } from "@/lib/db";
+import { workspace } from "@/lib/channels";
 import { postsBetween } from "@/lib/posts";
 import { requireUser } from "@/lib/session";
 import { statusBadge } from "@/lib/status";
@@ -22,18 +22,17 @@ function todayIn(tz: string) {
 
 export default async function CalendarPage({ searchParams }: { searchParams: Promise<{ m?: string }> }) {
   const user = await requireUser();
-  const tz = await asUser(user.id, async (db) => {
-    const r = await db.query("select timezone from api.ensure_settings()");
-    return (r.rows[0]?.timezone as string) ?? "Asia/Kolkata";
-  });
+  const { active } = await workspace(user.id);
+  const tz = active.timezone;
   const today = todayIn(tz);
   const { m } = await searchParams;
   const [y, mo] = (m && /^\d{4}-\d{2}$/.test(m) ? m : today.slice(0, 7)).split("-").map(Number);
 
   const daysInMonth = new Date(Date.UTC(y, mo, 0)).getUTCDate();
   const firstWeekday = (new Date(Date.UTC(y, mo - 1, 1)).getUTCDay() + 6) % 7; // Monday = 0
-  const posts = await postsBetween(user.id, ymd(y, mo, 1), ymd(y, mo, daysInMonth));
-  const byDay = new Map(posts.map((p) => [p.slot_date, p]));
+  const posts = await postsBetween(user.id, active.id, ymd(y, mo, 1), ymd(y, mo, daysInMonth));
+  const byDay = new Map<string, typeof posts>();
+  for (const p of posts) byDay.set(p.slot_date, [...(byDay.get(p.slot_date) ?? []), p]);
 
   const prev = mo === 1 ? `${y - 1}-12` : `${y}-${String(mo - 1).padStart(2, "0")}`;
   const next = mo === 12 ? `${y + 1}-01` : `${y}-${String(mo + 1).padStart(2, "0")}`;
@@ -64,7 +63,7 @@ export default async function CalendarPage({ searchParams }: { searchParams: Pro
         ))}
         {cells.map((day, i) => {
           if (!day) return <div key={`pad-${i}`} className="min-h-24 bg-background" />;
-          const post = byDay.get(day);
+          const dayPosts = byDay.get(day) ?? [];
           const isToday = day === today;
           const isPast = day < today;
           return (
@@ -72,29 +71,31 @@ export default async function CalendarPage({ searchParams }: { searchParams: Pro
               <span className={`text-xs tabular-nums ${isToday ? "font-semibold text-accent" : "text-muted"}`}>
                 {Number(day.slice(8))}
               </span>
-              {post ? (
-                <Link href={`/posts/${post.id}`} className="flex flex-1 flex-col gap-1 rounded-md p-1 hover:bg-background">
-                  <span className="line-clamp-2 text-xs font-medium sm:text-sm">{post.topic}</span>
+              {dayPosts.map((post) => (
+                <Link key={post.id} href={`/posts/${post.id}`} className="flex flex-col gap-1 rounded-md p-1 hover:bg-background">
+                  <span className="line-clamp-2 text-xs font-medium sm:text-sm">
+                    {post.publish_time && <span className="mr-1 text-muted tabular-nums">{post.publish_time}</span>}
+                    {post.topic}
+                  </span>
                   <span className={`w-fit rounded px-1.5 py-0.5 text-[10px] font-medium sm:text-xs ${statusBadge(post.status).className}`}>
                     {statusBadge(post.status).label}
                   </span>
                 </Link>
-              ) : (
-                !isPast && (
-                  <Link
-                    href={`/posts/new?date=${day}`}
-                    aria-label={`New post on ${day}`}
-                    className="mt-auto flex h-7 items-center justify-center rounded-md border border-dashed border-border text-muted hover:border-accent hover:text-accent"
-                  >
-                    +
-                  </Link>
-                )
+              ))}
+              {!isPast && (
+                <Link
+                  href={`/posts/new?date=${day}`}
+                  aria-label={`New post on ${day}`}
+                  className={`mt-auto flex items-center justify-center rounded-md border border-dashed border-border text-muted hover:border-accent hover:text-accent ${dayPosts.length ? "h-5 text-xs" : "h-7"}`}
+                >
+                  +
+                </Link>
               )}
             </div>
           );
         })}
       </div>
-      <p className="text-xs text-muted">One post per day. Times are in {tz}.</p>
+      <p className="text-xs text-muted">{active.name} · times are in {tz}.</p>
     </div>
   );
 }

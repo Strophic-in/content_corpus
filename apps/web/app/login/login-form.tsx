@@ -29,14 +29,14 @@ export function LoginForm({ googleEnabled }: { googleEnabled: boolean }) {
       setError(error.message ?? "Something went wrong.");
       return;
     }
-    router.replace("/dashboard");
+    router.replace("/discover");
     router.refresh();
   }
 
   async function onGoogle() {
     setError(null);
     setBusy(true);
-    const { error } = await authClient.signIn.social({ provider: "google", callbackURL: "/dashboard" });
+    const { error } = await authClient.signIn.social({ provider: "google", callbackURL: "/discover" });
     if (error) {
       setBusy(false);
       setError(error.message ?? "Google sign-in failed.");

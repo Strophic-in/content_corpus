@@ -21,6 +21,9 @@ RUN useradd --uid 10001 --create-home web
 COPY --from=build --chown=web /app/.next/standalone ./
 COPY --from=build --chown=web /app/.next/static ./.next/static
 COPY --from=build --chown=web /app/public ./public
+# The shipped default prompts: where new formats start, and "Reset to default".
+COPY --from=prompts --chown=web . ./prompts
+ENV PROMPTS_DIR=/app/prompts
 USER web
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s \

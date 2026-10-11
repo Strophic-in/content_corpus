@@ -10,6 +10,7 @@ Everything runs on one always-on box (an Oracle Cloud Ampere A1: arm64, Ubuntu
 | gpu lane (rents Race GPUs over the API + SSH) | container `worker-gpu` |
 | Database | VibeDB's Postgres on the host, reached as `host.docker.internal` |
 | Kokoro voice model | Voicer's `backend/models/`, mounted read-only (one copy on the box) |
+| Idea memory (Qdrant) | HealMem's Qdrant, collection `content_corpus_memory`; worker-cpu joins the `healmem_vector` network |
 | Media | Cloudflare R2 |
 
 The containers publish nothing except the web app on localhost. The web app and
@@ -79,8 +80,38 @@ Run these as the deploy user (`hafeez`, in the `docker` group) unless marked `su
 7. **Retire any other workers** (for example on a laptop) so only these lanes
    claim jobs. The web app's sign-in session starts fresh on the new domain.
 
+## Connecting YouTube and Instagram (Channels → Connect)
+
+Both use standard OAuth. The owner clicks Connect on a channel and approves on
+Google's or Instagram's own page, and the token is stored encrypted. Each platform
+needs a developer app, set up once: put its keys in the VM's .env and redeploy.
+
+**YouTube** (Google Cloud console):
+1. Create a project and enable **YouTube Data API v3**.
+2. In Google Auth Platform, set up Branding and Audience as an external app, with
+   your email as a test user. Under Data access, add the youtube.upload and
+   youtube.readonly scopes. Set the publishing status to **In production**: while
+   it is "Testing", Google expires refresh tokens after 7 days. You will see an
+   "unverified app" warning; that is expected for a personal app.
+3. Under Clients, create a **Web application** client with these redirect URIs:
+   - https://content-corpus.strophic.in/api/connect/youtube/callback
+   - https://content-corpus.strophic.in/api/auth/callback/google (for Google sign-in)
+4. In .env, set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET.
+
+**Instagram** (Meta for Developers, "Instagram API with Instagram Login"):
+1. The Instagram account must be a Professional (Creator or Business) account.
+2. Create a Business-type app with the Instagram use case. Under Instagram, in API
+   setup with Instagram login, set the redirect URI
+   https://content-corpus.strophic.in/api/connect/instagram/callback.
+3. Under App roles, add the Instagram account as an Instagram tester, then accept
+   the invite in the Instagram app. Development mode is enough for your own account.
+4. In .env, set INSTAGRAM_APP_ID and INSTAGRAM_APP_SECRET. These are the Instagram
+   app's ID and secret, not the Facebook app's.
+
 ## Notes
 
+- The idea agent's embedding model (bge-small, about 34 MB) downloads into the
+  corpus-cache volume on first use. Ideas are kept for 30 days unless accepted.
 - **Whisper** (word timings) downloads its model, about 500 MB, into the
   `corpus-cache` volume on first use.
 - **Segments waiting for assembly** live in the same volume and are deleted once

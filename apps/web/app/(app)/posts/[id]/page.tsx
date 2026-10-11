@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
+import { workspace } from "@/lib/channels";
+import { asUser } from "@/lib/db";
 import { postDetail, type PostRow, type ScriptRow, type ShotRow } from "@/lib/posts";
 import { signedUrl } from "@/lib/r2";
 import { requireUser } from "@/lib/session";
@@ -24,6 +26,11 @@ export default async function PostPage({ params }: { params: Promise<{ id: strin
   const detail = await postDetail(user.id, id);
   if (!detail) notFound();
   const { post, scripts, shots, events } = detail;
+  const formats = post.channel_id
+    ? await asUser(user.id, async (db) => (await db.query(
+        "select id, name, is_default from formats where channel_id = $1 order by is_default desc, name",
+        [post.channel_id])).rows as { id: string; name: string; is_default: boolean }[])
+    : (await workspace(user.id)).formats;
   const live = scripts.find((s) => ["awaiting_approval", "approved", "draft"].includes(s.state));
   const older = scripts.filter((s) => s !== live);
   const badge = statusBadge(post.status);
@@ -76,7 +83,7 @@ export default async function PostPage({ params }: { params: Promise<{ id: strin
         <details className="rounded-xl border border-border bg-surface p-5">
           <summary className="cursor-pointer text-sm font-medium">Edit post</summary>
           <div className="mt-4">
-            <PostForm postId={post.id} defaults={post} />
+            <PostForm postId={post.id} defaults={post} formats={formats} />
           </div>
           <div className="mt-6 border-t border-border pt-4">
             <DeletePostButton postId={post.id} />

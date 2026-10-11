@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import hashlib
 
-from .. import db
+from .. import db, prompts
 from ..config import settings
 from ..runner import Handler, JobContext, Permanent
 from ..script.llm import MAX_SHOT_SECONDS, MIN_SHOT_SECONDS
@@ -39,8 +39,15 @@ def seed_for(script_id: str, idx: int) -> int:
     return int.from_bytes(hashlib.sha256(f"{script_id}:{idx}".encode()).digest()[:6], "big") >> 1
 
 
-def shot_prompt(shot: dict, style: str | None, narrated: bool = False) -> str:
-    parts = [shot.get("visual", "").strip(), shot.get("audio", "").strip(), (style or "").strip()]
+def shot_prompt(shot: dict, style: str | None, narrated: bool = False, look: str = "") -> str:
+    """What the video model sees: the shot itself first (it matters most), then the
+    format's look and this video's additions — each once. Writers sometimes copy the
+    look into `visual`; repeating it again only buries the action (seen live)."""
+    visual = shot.get("visual", "").strip()
+    parts = [visual, shot.get("audio", "").strip()]
+    for extra in ((look or "").strip(), (style or "").strip()):
+        if extra and not any(prompts.contains(p, extra) for p in parts):
+            parts.append(extra)
     if narrated:
         parts.append(NO_SPEECH)
     return " ".join(p for p in parts if p)
@@ -61,8 +68,11 @@ def run(ctx: JobContext) -> dict:
         plan = s["shot_plan"] or []
         if not plan:
             raise Permanent("approved script has no shots", stage="input")
-        narrated = c.execute("select audio_source from posts where id = %s",
-                             (s["post_id"],)).fetchone()["audio_source"] == "kokoro"
+        post = c.execute("""select p.audio_source, f.visual_style from posts p
+                              left join formats f on f.id = p.format_id where p.id = %s""",
+                         (s["post_id"],)).fetchone()
+        narrated = post["audio_source"] == "kokoro"
+        look = post["visual_style"] or ""
 
         total = 0.0
         for idx, shot in enumerate(plan):
@@ -74,7 +84,7 @@ def run(ctx: JobContext) -> dict:
                                       negative_prompt, seed, width, height, num_frames, fps,
                                       narration)
                    values (%s, %s, %s, %s, 'anchor', %s, %s, %s, %s, %s, %s, %s, %s)""",
-                (s["post_id"], script_id, idx, idx, shot_prompt(shot, s["style_prompt"], narrated),
+                (s["post_id"], script_id, idx, idx, shot_prompt(shot, s["style_prompt"], narrated, look),
                  NEGATIVE_NARRATED if narrated else NEGATIVE, seed_for(str(script_id), idx),
                  WIDTH, HEIGHT, frames, FPS, (shot.get("narration") or None) if narrated else None))
         db.log_event(c, s["post_id"], "approved", "approved", f"worker:{settings().worker_id}",

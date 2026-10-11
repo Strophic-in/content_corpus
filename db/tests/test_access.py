@@ -304,3 +304,116 @@ def test_key_vault_upsert_as_web(alice, owner):
     got = owner.execute("select ciphertext from user_keys where user_id = %s and name = 'openai'",
                         (alice,)).fetchone()[0]
     assert got == "v1.second.key"
+
+
+# ── channels, prompt library, ideas, connected accounts (0011) ─────────────────
+
+def _new_channel(c, uid: str, name: str = "Cutaway") -> uuid.UUID:
+    return c.execute("insert into channels (user_id, name) values (%s, %s) returning id",
+                     (uid, name)).fetchone()[0]
+
+
+def _new_format(c, uid: str, name: str = "3D explainer", channel=None) -> uuid.UUID:
+    channel = channel or _new_channel(c, uid, f"ch-{uuid.uuid4().hex[:6]}")
+    return c.execute("""insert into formats (user_id, channel_id, name, idea_prompt, script_prompt, visual_style)
+                        values (%s, %s, %s, 'ideas v1', 'script v1', 'look v1') returning id""",
+                     (uid, channel, name)).fetchone()[0]
+
+
+def test_format_edits_keep_history_and_can_be_restored(alice):
+    with web(alice) as c:
+        fid = _new_format(c, alice)
+        c.execute("update formats set script_prompt = 'script v2' where id = %s", (fid,))
+        c.execute("update formats set description = 'only a label' where id = %s", (fid,))  # not a new version
+        assert c.execute("select version from formats where id = %s", (fid,)).fetchone()[0] == 2
+        assert c.execute("select snapshot->>'script_prompt' from format_versions where format_id = %s "
+                         "and version = 1", (fid,)).fetchone()[0] == "script v1"
+        c.execute("select api.restore_format_version(%s, 1)", (fid,))
+        row = c.execute("select script_prompt, version from formats where id = %s", (fid,)).fetchone()
+        assert row == ("script v1", 3)                                # v2 itself is kept as a version
+
+
+@pytest.mark.parametrize("stmt", [
+    "update formats set version = 99 where id = %s",
+    "update formats set is_default = true where id = %s",
+    "insert into format_versions (format_id, version, snapshot) values (%s, 5, '{}')",
+    "update ideas set status = 'accepted' where format_id = %s",
+    "update channels set is_default = true where id = (select channel_id from formats where id = %s)",
+])
+def test_bookkeeping_columns_are_not_writable(alice, stmt):
+    with pytest.raises(psycopg.errors.InsufficientPrivilege):
+        with web(alice) as c:
+            c.execute(stmt, (_new_format(c, alice),))
+
+
+def test_cannot_put_a_format_on_someone_elses_channel(alice, bob, owner):
+    with psycopg.connect(OWNER, autocommit=True) as o:
+        theirs = o.execute("insert into channels (user_id, name) values (%s, 'theirs') returning id",
+                           (bob,)).fetchone()[0]
+    with pytest.raises(psycopg.errors.InsufficientPrivilege):    # RLS with-check
+        with web(alice) as c:
+            _new_format(c, alice, channel=theirs)
+
+
+def test_defaults_are_switched_only_through_api(alice):
+    with web(alice) as c:
+        ch = _new_channel(c, alice)
+        a, b = _new_format(c, alice, "A", ch), _new_format(c, alice, "B", ch)
+        c.execute("select api.set_default_format(%s)", (a,))
+        c.execute("select api.set_default_format(%s)", (b,))
+        assert c.execute("select array_agg(id) from formats where is_default").fetchone()[0] == [b]
+        other = _new_channel(c, alice, "Second")
+        c.execute("select api.set_default_channel(%s)", (ch,))
+        c.execute("select api.set_default_channel(%s)", (other,))
+        assert c.execute("select array_agg(id) from channels where is_default").fetchone()[0] == [other]
+
+
+def test_account_tokens_are_write_only(alice):
+    with web(alice) as c:
+        ch = _new_channel(c, alice)
+        c.execute("""insert into channel_accounts (user_id, channel_id, platform, external_id, handle,
+                                                   token_ciphertext) values (%s, %s, 'youtube', 'UC1', '@me', 'v1.x.y')""",
+                  (alice, ch))
+        assert c.execute("select handle from channel_accounts where channel_id = %s", (ch,)).fetchone()[0] == "@me"
+    with pytest.raises(psycopg.errors.InsufficientPrivilege):
+        with web(alice) as c:
+            c.execute("select token_ciphertext from channel_accounts")
+
+
+def test_swiping_schedules_a_post_or_records_why_not(alice, owner):
+    with psycopg.connect(OWNER, autocommit=True) as o:       # ideas are written by the worker
+        o.execute("insert into app_settings (user_id) values (%s)", (alice,))
+        ch = o.execute("insert into channels (user_id, name, timezone) values (%s, 'c', 'Asia/Kolkata') "
+                       "returning id", (alice,)).fetchone()[0]
+        fid = o.execute("insert into formats (user_id, channel_id, name, idea_prompt, script_prompt) "
+                        "values (%s, %s, 'f', 'i', 's') returning id", (alice, ch)).fetchone()[0]
+        ids = [o.execute("insert into ideas (user_id, channel_id, format_id, title, hook, brief) values "
+                         "(%s, %s, %s, %s, 'A hook.', 'A brief.') returning id", (alice, ch, fid, t)).fetchone()[0]
+               for t in ("Why is the sky blue?", "Gum stays 7 years?")]
+    with web(alice) as c:
+        two_same_day = ["2031-05-04 18:30+05:30", "2031-05-04 21:00+05:30"]
+        c.execute("select api.decide_idea(%s, true, %s)", (ids[0], two_same_day[0]))
+        c.execute("select api.decide_idea(%s, false, null, %s)", (ids[1], " done before "))
+        post = c.execute("select p.topic, p.slot_date::text, p.format_id, p.channel_id, p.brief from ideas i "
+                         "join posts p on p.id = i.post_id where i.id = %s", (ids[0],)).fetchone()
+        assert post[:4] == ("Why is the sky blue?", "2031-05-04", fid, ch) and "Hook: A hook." in post[4]
+        assert c.execute("select status, reject_reason from ideas where id = %s",
+                         (ids[1],)).fetchone() == ("rejected", "done before")
+        c.execute("insert into posts (user_id, topic, slot_date, publish_at) values (%s, 'same day', "
+                  "'2031-05-04', %s)", (alice, two_same_day[1]))            # many posts per day
+        with pytest.raises(psycopg.errors.ObjectNotInPrerequisiteState):
+            c.execute("select api.decide_idea(%s, true, now())", (ids[0],))  # no second swipe
+
+
+def test_daily_ideas_are_scheduled_once_per_channel_per_day(alice, owner):
+    with psycopg.connect(OWNER, autocommit=True) as o:
+        ch = o.execute("insert into channels (user_id, name) values (%s, 'daily') returning id",
+                       (alice,)).fetchone()[0]
+        fid = o.execute("insert into formats (user_id, channel_id, name, idea_prompt, script_prompt, is_default) "
+                        "values (%s, %s, 'daily', 'i', 's', true) returning id", (alice, ch)).fetchone()[0]
+        o.execute("select private.schedule_daily_ideas()")
+        o.execute("select private.schedule_daily_ideas()")
+        jobs = o.execute("select state, payload->>'trigger' from jobs where kind = 'suggest_ideas' "
+                         "and payload->>'format_id' = %s", (str(fid),)).fetchall()
+        assert jobs == [("queued", "daily")]
+        o.execute("delete from jobs where kind = 'suggest_ideas' and payload->>'format_id' = %s", (str(fid),))

@@ -5,7 +5,8 @@ from __future__ import annotations
 import logging
 
 from .config import settings
-from .handlers import assemble, build_segment, narrate, plan_shots, render_post, write_script
+from .handlers import (assemble, build_segment, narrate, plan_shots, render_post, suggest_ideas,
+                       write_script)
 from .runner import Runner
 
 HANDLERS = {
@@ -15,6 +16,7 @@ HANDLERS = {
         "narrate": narrate.HANDLER,
         "build_segment": build_segment.HANDLER,
         "assemble": assemble.HANDLER,
+        "suggest_ideas": suggest_ideas.HANDLER,
     },
     # The gpu lane runs on the same always-on box as cpu, as its own process: it
     # rents and drives the Race GPU remotely, and a long render must not block

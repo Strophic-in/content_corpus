@@ -8,6 +8,9 @@ export type PostRow = {
   audio_source: "ltx_native" | "kokoro";
   brief: string | null;
   slot_date: string; // YYYY-MM-DD
+  publish_time: string | null; // HH:MM in the post's timezone
+  channel_id: string | null;
+  format_id: string | null;
   status: string;
   target_seconds: number | null;
   auto_approve: boolean;
@@ -45,15 +48,17 @@ export type EventRow = { id: string; from_state: string | null; to_state: string
 
 // slot_date comes back as a plain YYYY-MM-DD string (never shifted by a JS Date
 // timezone), because a calendar day is not an instant.
-const POST_COLS = `id, topic, brief, audio_source, to_char(slot_date, 'YYYY-MM-DD') as slot_date, status,
+const POST_COLS = `id, topic, brief, audio_source, to_char(slot_date, 'YYYY-MM-DD') as slot_date,
+                   to_char(publish_at at time zone publish_tz, 'HH24:MI') as publish_time, channel_id, format_id, status,
                    target_seconds, auto_approve, approved_script_id, error, final_key,
                    final_duration_s, updated_at`;
 
-export async function postsBetween(userId: string, from: string, to: string): Promise<PostRow[]> {
+export async function postsBetween(userId: string, channelId: string, from: string, to: string): Promise<PostRow[]> {
   return asUser(userId, async (db) => {
     const r = await db.query(
-      `select ${POST_COLS} from posts where slot_date between $1 and $2 order by slot_date`,
-      [from, to],
+      `select ${POST_COLS} from posts where channel_id = $3 and slot_date between $1 and $2
+        order by slot_date, publish_at nulls last, created_at`,
+      [from, to, channelId],
     );
     return r.rows;
   });

@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 import { requireUser } from "@/lib/session";
 import { userSettings } from "@/lib/posts";
 
@@ -30,6 +32,11 @@ export default async function SettingsPage() {
       </section>
 
       <SettingsForm settings={settings} />
+
+      <Link href="/dashboard" className="rounded-xl border border-border bg-surface p-5 transition hover:border-accent">
+        <h2 className="font-medium">System status →</h2>
+        <p className="mt-1 text-sm text-muted">Workers, storage used against the 9 GB cap, and posts by status.</p>
+      </Link>
     </div>
   );
 }

@@ -1,0 +1,34 @@
+[
+  {
+    "name": "Wikipedia most read",
+    "url": "https://api.wikimedia.org/feed/v1/wikipedia/en/featured/{yesterday}"
+  },
+  {
+    "name": "Google Trends US",
+    "url": "https://trends.google.com/trending/rss?geo=US"
+  },
+  {
+    "name": "Google Trends India",
+    "url": "https://trends.google.com/trending/rss?geo=IN"
+  },
+  {
+    "name": "ScienceDaily",
+    "url": "https://www.sciencedaily.com/rss/top/science.xml"
+  },
+  {
+    "name": "Phys.org",
+    "url": "https://phys.org/rss-feed/"
+  },
+  {
+    "name": "Live Science",
+    "url": "https://www.livescience.com/feeds/all"
+  },
+  {
+    "name": "Reddit r/todayilearned",
+    "url": "https://www.reddit.com/r/todayilearned/top/.rss?t=day"
+  },
+  {
+    "name": "NASA",
+    "url": "https://www.nasa.gov/news-release/feed/"
+  }
+]

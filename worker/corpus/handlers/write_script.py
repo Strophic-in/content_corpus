@@ -13,7 +13,7 @@ import hashlib
 
 from psycopg.types.json import Jsonb
 
-from .. import db, vault
+from .. import channels, db, prompts, vault
 from ..config import settings
 from ..runner import Handler, JobContext, Permanent, Retryable
 from ..script.llm import (NARRATOR_WORDS_PER_SECOND, OpenAIScriptWriter, ScriptWriter, Usage,
@@ -27,15 +27,15 @@ REPAIR_ROUNDS = 2
 
 # audio_source → prompt. 'kokoro' is narrated mode: one TTS voice-over across the
 # reel, visuals with sound effects only. 'ltx_native': characters speak on screen.
-TEMPLATES = {"ltx_native": "script_reel.md", "kokoro": "script_narrated.md"}
-
-
 def _system_prompt(st: dict, target_seconds: int, revision_note: str, audio_source: str,
-                   speed: float = 1.1) -> str:
-    template = (settings().prompts_dir / TEMPLATES[audio_source]).read_text(encoding="utf-8")
+                   speed: float = 1.1, fmt: dict | None = None) -> str:
+    """The script writer's instructions: the post's format's prompt (prompt library),
+    or the shipped default for posts made before formats existed."""
+    template = fmt["script_prompt"] if fmt else prompts.default(f"script:{audio_source}")
+    look = fmt["visual_style"] if fmt else prompts.default("visual_style")
     shots = max(1, round(target_seconds / 8))
     cap = narration_word_cap(speed)
-    return template.format_map({
+    return prompts.fill(template, {
         "channel_name": st.get("channel_name") or "(unnamed)",
         "channel_niche": st.get("channel_niche") or "(not set — infer from the topic)",
         "channel_audience": st.get("channel_audience") or "(general)",
@@ -47,6 +47,7 @@ def _system_prompt(st: dict, target_seconds: int, revision_note: str, audio_sour
         # Asked a few words under the hard cap that validate() enforces.
         "narration_words": cap - 5,
         "narration_words_per_second": round(NARRATOR_WORDS_PER_SECOND * speed, 1),
+        "visual_style": look or "(none set)",
     })
 
 
@@ -79,6 +80,7 @@ def run(ctx: JobContext) -> dict:
             return {"script_id": str(existing["id"]), "reused": True}
         st = c.execute("select * from app_settings where user_id = %s",
                        (post["user_id"],)).fetchone() or {}
+        st = {**st, **channels.profile(c, post["user_id"], post.get("channel_id"))}
         rejected = c.execute(
             """select rejection_note, title from scripts
                 where post_id = %s and state = 'rejected' and rejection_note is not null
@@ -91,14 +93,19 @@ def run(ctx: JobContext) -> dict:
     if not key:
         raise Permanent("Add your OpenAI API key in Settings.", stage="config")
 
-    target = post["target_seconds"] or st.get("default_reel_seconds") or 24
+    fmt = None
+    if post.get("format_id"):
+        with db.conn() as c:
+            fmt = c.execute("select * from formats where id = %s", (post["format_id"],)).fetchone()
+    target = (post["target_seconds"] or (fmt or {}).get("target_seconds")
+              or st.get("default_reel_seconds") or 24)
     revision = ""
     if rejected:
         revision = (f"## Revision\nThe previous version (\"{rejected['title']}\") was rejected "
                     f"with this note — address it:\n{rejected['rejection_note']}")
     narrated = post["audio_source"] == "kokoro"
     speed = float(st.get("narrator_speed") or 1.1)
-    system = _system_prompt(st, target, revision, post["audio_source"], speed)
+    system = _system_prompt(st, target, revision, post["audio_source"], speed, fmt)
     user = f"Topic: {post['topic']}\nBrief: {post['brief'] or '(none)'}"
     input_sha = hashlib.sha256("\x1f".join([system, user, model]).encode()).hexdigest()
 
@@ -139,13 +146,14 @@ def run(ctx: JobContext) -> dict:
         script_id = c.execute(
             """insert into scripts (post_id, version, state, title, hook, description, hashtags,
                                     intended_dialogue, shot_plan, style_prompt, model,
-                                    input_sha256, review, token_usage)
-               values (%s, %s, 'awaiting_approval', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                                    input_sha256, review, token_usage, format_id, format_version)
+               values (%s, %s, 'awaiting_approval', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                returning id""",
             (post_id, version, out.title, out.hook, out.description, out.hashtags,
              out.intended_dialogue, Jsonb(shot_plan), out.style_prompt, usage.model, input_sha,
              Jsonb(out.review.model_dump()),
-             Jsonb({"input": usage.input_tokens, "output": usage.output_tokens}))).fetchone()["id"]
+             Jsonb({"input": usage.input_tokens, "output": usage.output_tokens}),
+             (fmt or {}).get("id"), (fmt or {}).get("version"))).fetchone()["id"]
         c.execute("update posts set status = 'awaiting_approval', error = null where id = %s",
                   (post_id,))
         db.log_event(c, post_id, "scripting", "awaiting_approval",

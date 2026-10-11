@@ -10,7 +10,7 @@ export function proxy(request: NextRequest) {
 
   if (pathname === "/login") {
     return hasSession
-      ? NextResponse.redirect(new URL("/dashboard", request.url))
+      ? NextResponse.redirect(new URL("/discover", request.url))
       : NextResponse.next();
   }
   if (!hasSession) {
@@ -21,7 +21,8 @@ export function proxy(request: NextRequest) {
 
 export const config = {
   matcher: [
-    // Everything except auth API, Next internals and static assets.
-    "/((?!api/auth|_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)",
+    // Everything except auth API, Next internals, static assets and the app manifest
+    // and icons (a phone fetches those without cookies when installing the app).
+    "/((?!api/auth|_next/static|_next/image|favicon.ico|manifest.webmanifest|icons/|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)",
   ],
 };

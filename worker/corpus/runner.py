@@ -145,6 +145,8 @@ class Runner:
         if self.lane == "cpu":
             for r in db.reap():
                 log.warning("reaped lease: %s %s -> %s", r["kind"], r["job_id"], r["new_state"])
+            if db.schedule_daily_ideas():
+                log.info("queued today's idea batches")
         job = db.claim(self.lane, self.s.version, list(self.handlers))
         if not job:
             return False

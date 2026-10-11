@@ -1,0 +1,1 @@
+Stylised 3D animation with a smooth CGI finish, simple clean shapes and uncluttered frames, soft cinematic lighting, muted realistic colours and a shallow depth of field. People are smooth grey mannequin-like figures wearing a fitted grey long-sleeve top and grey trousers.

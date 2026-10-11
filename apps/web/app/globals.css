@@ -50,3 +50,21 @@ body {
   background: var(--background);
   color: var(--foreground);
 }
+
+/* App feel: sheets slide up, toasts rise in. */
+@keyframes sheet-up {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+@keyframes toast-in {
+  from { transform: translateY(16px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+.anim-sheet { animation: sheet-up 280ms cubic-bezier(.2, .9, .3, 1); }
+.anim-toast { animation: toast-in 220ms ease-out; }
+@media (prefers-reduced-motion: reduce) {
+  .anim-sheet, .anim-toast { animation: none; }
+}
+
+/* Installed app / phone: no rubber-band bounce or tap flash around the deck. */
+html { -webkit-tap-highlight-color: transparent; overscroll-behavior-y: none; }

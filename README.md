@@ -2,8 +2,10 @@
 
 **Plan, script, render and publish AI-animated YouTube Shorts on a shoestring.**
 
-You put topics on a calendar. OpenAI writes each one up as a short 3D-explainer
-script, and you approve it. Rented GPUs then render the shots with LTX-2.5. A local
+Every morning an idea agent reads free trend feeds and suggests video ideas as
+cards you swipe: right to schedule one, left to skip it. You can also add topics
+to the calendar yourself. OpenAI writes each one up as a short script, and you
+approve it. Rented GPUs then render the shots with LTX-2.5. A local
 voice model narrates, captions are timed to the word, and a finished 9:16 reel is
 ready to download. Publishing to YouTube Shorts comes next. A 40-second reel costs
 about **₹15 of GPU time** and is ready a few minutes after you click *Render*.
@@ -13,6 +15,22 @@ about **₹15 of GPU time** and is ready a few minutes after you click *Render*.
 > progress.
 
 ---
+
+## What it does
+
+- **Channels**: run several YouTube and Instagram channels, each with its own
+  niche, audience, voice, timezone and connected accounts. Connecting an account is
+  standard OAuth: click Connect, then approve.
+- **Prompt library**: every prompt that shapes a video lives in a *format*: the
+  idea agent's prompt, the script writer's prompt, the look of every shot, and the
+  trend sources. You edit them in the app, with full version history and one-tap
+  restore.
+- **Discover**: an idea agent reads free feeds (Wikipedia most-read, Google Trends,
+  science news, Reddit TIL and others) and suggests ideas as swipeable cards. It
+  remembers what was made, suggested and skipped (local embeddings plus Qdrant), so
+  it never repeats itself, and it learns from the reasons you give for skipping.
+- **Many posts a day**, each at its own time, on a calendar per channel.
+- **Installable app**: on a phone it opens full-screen with a bottom tab bar.
 
 ## How a reel is made
 
