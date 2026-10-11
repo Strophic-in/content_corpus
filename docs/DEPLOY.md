@@ -58,7 +58,9 @@ Run these as the deploy user (`hafeez`, in the `docker` group) unless marked `su
    sudo install -o 10001 -g 10001 -m 600 /path/to/id_ed25519 secrets/race_ssh_key
    ```
 
-4. **DNS.** In Cloudflare, add an A record `content-corpus` → the VM's public IP.
+4. **DNS.** In Cloudflare, add an A record `content-corpus` → the VM's public IP
+   (proxied is fine). Don't look the name up before the record exists:
+   resolvers cache "not found" for 30 minutes (the zone's negative TTL).
 
 5. **nginx + certificate** (`sudo`)
    ```bash
