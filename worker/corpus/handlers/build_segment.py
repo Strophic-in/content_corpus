@@ -1,0 +1,95 @@
+"""cpu/build_segment — finish one rendered shot while the GPU renders the next.
+
+render_post queues this the moment a shot is stored in R2. The shot becomes its
+finished piece of the reel (1080x1920, captions burned in, its exact-length sound
+bed) and waits in this worker's local cache; cpu/assemble then only has to join
+the pieces. The cache is a speed-up, never the source of truth: assemble rebuilds
+any piece it cannot find (another machine, a restart, a changed caption style).
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import tempfile
+from dataclasses import asdict
+from pathlib import Path
+
+from psycopg.types.json import Jsonb
+
+from .. import db, storage
+from ..config import settings
+from ..media import assemble as media
+from ..runner import Handler, JobContext
+
+WORD_TIMINGS = media.whisper_words   # swapped by tests
+
+SHOT_COLS = """id, post_id, script_id, idx, state, artifact_key, artifact_sha256,
+               narration, narration_key, narration_words"""
+
+
+def caption_style(c, post: dict) -> media.CaptionStyle:
+    sid = post.get("caption_style_id") or (c.execute(
+        "select caption_style_id from app_settings where user_id = %s", (post["user_id"],)).fetchone() or {}).get(
+        "caption_style_id")
+    if not sid:
+        return media.CaptionStyle()
+    row = c.execute("""select font_family, font_size_px, primary_color, accent_color, outline_px, shadow_px,
+                              position_y, words_per_group, active_scale, uppercase
+                         from caption_styles where id = %s""", (sid,)).fetchone()
+    return media.CaptionStyle(**{k: (float(v) if k in ("position_y", "active_scale") else v)
+                                 for k, v in row.items()}) if row else media.CaptionStyle()
+
+
+def cache_dir(post_id) -> Path:
+    return settings().cache_dir / "segments" / str(post_id)
+
+
+def ensure_segment(post: dict, shot: dict, style: media.CaptionStyle, hint: str) -> tuple[Path, Path, bool]:
+    """(picture, sound, was_cached) for a rendered shot, building and caching it if needed."""
+    narrated = post["audio_source"] == "kokoro"
+    d = cache_dir(post["id"])
+    d.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=d) as tmp:
+        work = Path(tmp)
+        narration = None
+        words = shot.get("narration_words")
+        if narrated:
+            narration = storage.get_file(shot["narration_key"], work / "narration.wav")
+            if words is None:   # voiced before word timings were recorded at narrate time
+                words = media.narration_words(narration, shot["narration"] or "", WORD_TIMINGS)
+                with db.conn() as c:
+                    c.execute("update shots set narration_words = %s where id = %s", (Jsonb(words), shot["id"]))
+        key = hashlib.sha256(json.dumps(
+            [media.SEGMENT_VERSION, shot["artifact_sha256"] or shot["artifact_key"], shot["narration_key"],
+             words, None if narrated else hint, asdict(style), media.LEAD_IN, media.SFX_GAIN],
+            sort_keys=True, default=str).encode()).hexdigest()[:16]
+        video, audio = d / f"{shot['idx']}-{key}.mp4", d / f"{shot['idx']}-{key}.wav"
+        if video.exists() and audio.exists():
+            return video, audio, True
+        clip = storage.get_file(shot["artifact_key"], work / "clip.mp4")
+        timed = (media.shifted([tuple(w) for w in words], media.LEAD_IN) if narrated
+                 else media.dialogue_words(clip, hint, WORD_TIMINGS))
+        media.build_segment(clip, work / "seg.mp4", work / "seg.wav", narration=narration, words=timed,
+                            style=style)
+        # Sound first, picture last: a picture on disk means the pair is complete.
+        os.replace(work / "seg.wav", audio)
+        os.replace(work / "seg.mp4", video)
+    return video, audio, False
+
+
+def run(ctx: JobContext) -> dict:
+    with db.conn() as c:
+        shot = c.execute(f"select {SHOT_COLS} from shots where id = %s", (ctx.payload["shot_id"],)).fetchone()
+        post = shot and c.execute("select * from posts where id = %s", (shot["post_id"],)).fetchone()
+        if not shot or post["approved_script_id"] != shot["script_id"] or shot["state"] != "uploaded":
+            return {"skipped": "shot is gone, superseded or not rendered"}
+        style = caption_style(c, post)
+        hint = c.execute("select intended_dialogue from scripts where id = %s",
+                         (shot["script_id"],)).fetchone()["intended_dialogue"]
+    video, _, cached = ensure_segment(post, shot, style, hint)
+    return {"idx": shot["idx"], "segment": video.name, "cached": cached}
+
+
+HANDLER = Handler(run=run)

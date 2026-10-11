@@ -1,0 +1,80 @@
+"""cpu/narrate — voice each shot's narration and let the voice set the shot length.
+
+Narrated mode's rule: the picture follows the voice. Each line is spoken by the
+channel's narrator (Kokoro, on the CPU), stored in R2 through the storage
+ledger, and the shot's num_frames becomes the line's length plus a short pause,
+rounded to LTX's 8n+1. The line's word timings are measured here too (Whisper
+on the line's own recording), so captions are ready before anyone presses
+Render. Idempotent: finished shots are skipped, so a retry resumes where a crash
+left off.
+"""
+
+from __future__ import annotations
+
+import tempfile
+from pathlib import Path
+
+from psycopg.types.json import Jsonb
+
+from .. import db, storage
+from ..config import settings
+from ..gpu import ltx25
+from ..media import assemble as media
+from ..media import tts
+from ..runner import Handler, JobContext, Permanent
+
+SPEAK = tts.speak                    # swapped by tests
+WORD_TIMINGS = media.whisper_words   # swapped by tests
+
+
+def run(ctx: JobContext) -> dict:
+    script_id = ctx.payload["script_id"]
+    with db.conn() as c:
+        s = c.execute("select id, post_id, state from scripts where id = %s", (script_id,)).fetchone()
+        if s is None:
+            raise Permanent("script was deleted", stage="input")
+        post = c.execute("select id, user_id, audio_source from posts where id = %s",
+                         (s["post_id"],)).fetchone()
+        if s["state"] != "approved" or post["audio_source"] != "kokoro":
+            return {"skipped": "not an approved narrated script"}
+        st = c.execute("select narrator_voice, narrator_speed from app_settings where user_id = %s",
+                       (post["user_id"],)).fetchone() or {}
+        shots = c.execute("""select id, idx, narration, narration_key, narration_words from shots
+                              where script_id = %s order by idx""", (script_id,)).fetchall()
+    if not shots:
+        raise Permanent("no shots to narrate", stage="input")
+    voice = st.get("narrator_voice") or "am_michael"
+    speed = float(st.get("narrator_speed") or 1.1)
+    prefix = storage.post_prefix(post["user_id"], post["id"])
+
+    done, total = 0, 0.0
+    with tempfile.TemporaryDirectory() as tmp:
+        for sh in shots:
+            if sh["narration_key"] and sh["narration_words"] is not None:
+                continue
+            text = (sh["narration"] or "").strip()
+            if not text:
+                raise Permanent(f"shot {sh['idx'] + 1} has no narration line", stage="input")
+            wav = Path(tmp) / f"{sh['idx']}.wav"
+            if sh["narration_key"]:          # voiced by an earlier attempt; only timings missing
+                storage.get_file(sh["narration_key"], wav)
+            else:
+                seconds = SPEAK(text, voice, speed, wav)
+                key = f"{prefix}/narration/{script_id}/{sh['idx']}.wav"
+                storage.put_file(key, wav, kind="narration", user_id=post["user_id"], post_id=post["id"],
+                                 shot_id=sh["id"], content_type="audio/wav")
+                with db.conn() as c:
+                    c.execute("""update shots set narration_key = %s, narration_seconds = %s, num_frames = %s
+                                  where id = %s""", (key, round(seconds, 3), ltx25.frames_for(seconds), sh["id"]))
+                done += 1
+                total += seconds
+            words = media.narration_words(wav, text, WORD_TIMINGS)
+            with db.conn() as c:
+                c.execute("update shots set narration_words = %s where id = %s", (Jsonb(words), sh["id"]))
+    with db.conn() as c:
+        db.log_event(c, post["id"], "approved", "approved", f"worker:{settings().worker_id}",
+                     "narration recorded", {"voice": voice, "shots": done, "seconds": round(total, 2)})
+    return {"voice": voice, "shots_voiced": done, "seconds": round(total, 2)}
+
+
+HANDLER = Handler(run=run)

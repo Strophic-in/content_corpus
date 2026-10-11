@@ -1,0 +1,14 @@
+.env
+.env.*
+!.env.example
+__pycache__/
+*.pyc
+.venv/
+node_modules/
+.next/
+*.log
+.pytest_cache/
+.DS_Store
+*.tsbuildinfo
+# Superseded Supabase drafts (replaced by db/); kept locally, not published.
+supabase/
