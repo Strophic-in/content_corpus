@@ -12,13 +12,13 @@ function promptsDir(): string {
   for (const d of [process.env.PROMPTS_DIR,
                    path.resolve(/*turbopackIgnore: true*/ process.cwd(), "prompts"),
                    path.resolve(/*turbopackIgnore: true*/ process.cwd(), "../../prompts")]) {
-    if (d && fs.existsSync(/*turbopackIgnore: true*/ path.join(d, "ideas.md"))) return d;
+    if (d && fs.existsSync(path.join(/*turbopackIgnore: true*/ d, "ideas.md"))) return d;
   }
   throw new Error("default prompts not found — set PROMPTS_DIR");
 }
 
 const read = (file: string) =>
-  fs.readFileSync(/*turbopackIgnore: true*/ path.join(promptsDir(), file), "utf8").trim();
+  fs.readFileSync(path.join(/*turbopackIgnore: true*/ promptsDir(), file), "utf8").trim();
 
 export type Template = "narrated" | "dialogue";
 export type Source = { name: string; url: string };
