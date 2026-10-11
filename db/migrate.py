@@ -71,11 +71,18 @@ def main() -> int:
 
         pending = []
         for f in files:
-            digest = hashlib.sha256(f.read_bytes()).hexdigest()
+            # Hashed with LF line endings, so a Windows checkout (CRLF) and the
+            # server's (LF, per .gitattributes) agree on what was applied.
+            text = f.read_bytes().replace(b"\r\n", b"\n")
+            digest = hashlib.sha256(text).hexdigest()
+            crlf = hashlib.sha256(text.replace(b"\n", b"\r\n")).hexdigest()
             if f.name not in applied:
                 pending.append((f, digest))
                 print(f"  pending   {f.name}")
-            elif applied[f.name] != digest:
+            elif applied[f.name] == crlf and not status_only:
+                conn.execute("update public.schema_migrations set sha256 = %s where name = %s", (digest, f.name))
+                print(f"  applied   {f.name}  (recorded from a CRLF checkout; re-keyed to LF)")
+            elif applied[f.name] not in (digest, crlf):
                 print(f"  CHANGED   {f.name}  (applied version differs; add a new migration)")
             else:
                 print(f"  applied   {f.name}")
