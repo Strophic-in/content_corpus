@@ -3,6 +3,7 @@ import Link from "next/link";
 import { requireUser } from "@/lib/session";
 import { userSettings } from "@/lib/posts";
 
+import { SignOutButton } from "../sign-out-button";
 import { KeyForm, SettingsForm } from "./settings-forms";
 
 export const metadata = { title: "Settings · Content Corpus" };
@@ -32,6 +33,14 @@ export default async function SettingsPage() {
       </section>
 
       <SettingsForm settings={settings} />
+
+      <section className="flex items-center gap-3 rounded-xl border border-border bg-surface p-5">
+        <div className="min-w-0 flex-1">
+          <h2 className="font-medium">Account</h2>
+          <p className="truncate text-sm text-muted">{user.email}</p>
+        </div>
+        <SignOutButton />
+      </section>
 
       <Link href="/dashboard" className="rounded-xl border border-border bg-surface p-5 transition hover:border-accent">
         <h2 className="font-medium">System status →</h2>

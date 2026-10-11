@@ -5,6 +5,8 @@ import { postsBetween } from "@/lib/posts";
 import { requireUser } from "@/lib/session";
 import { statusBadge } from "@/lib/status";
 
+import { ChannelPicker } from "../nav";
+
 export const metadata = { title: "Calendar · Content Corpus" };
 
 const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -22,7 +24,7 @@ function todayIn(tz: string) {
 
 export default async function CalendarPage({ searchParams }: { searchParams: Promise<{ m?: string }> }) {
   const user = await requireUser();
-  const { active } = await workspace(user.id);
+  const { channels, active } = await workspace(user.id);
   const tz = active.timezone;
   const today = todayIn(tz);
   const { m } = await searchParams;
@@ -49,7 +51,10 @@ export default async function CalendarPage({ searchParams }: { searchParams: Pro
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center gap-3">
-        <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
+          <p className="text-sm text-muted"><ChannelPicker channels={channels.map(({ id, name }) => ({ id, name }))} activeId={active.id} /></p>
+        </div>
         <div className="ml-auto flex gap-2 text-sm">
           <Link href={`/calendar?m=${prev}`} className="rounded-md border border-border px-2.5 py-1">←</Link>
           <Link href="/calendar" className="rounded-md border border-border px-2.5 py-1">Today</Link>

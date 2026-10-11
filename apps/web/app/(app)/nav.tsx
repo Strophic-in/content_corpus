@@ -62,6 +62,24 @@ export function BottomTabs() {
   );
 }
 
+/** The channel name as a tap-to-switch picker, for page titles (phones have no top bar). */
+export function ChannelPicker({ channels, activeId }: { channels: { id: string; name: string }[]; activeId: string }) {
+  const router = useRouter();
+  const [pending, start] = useTransition();
+  const name = channels.find((c) => c.id === activeId)?.name ?? "";
+  if (channels.length < 2) return <span className="font-medium text-foreground">{name}</span>;
+  return (
+    <span className="relative inline-flex items-center font-medium text-foreground">
+      {name}<span aria-hidden className="ml-0.5 text-muted">▾</span>
+      <select aria-label="Switch channel" value={activeId} disabled={pending}
+              onChange={(e) => start(async () => { await switchChannel(e.target.value); router.refresh(); })}
+              className="absolute inset-0 cursor-pointer opacity-0">
+        {channels.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+      </select>
+    </span>
+  );
+}
+
 export function ChannelSwitcher({ channels, activeId }: { channels: { id: string; name: string }[]; activeId: string }) {
   const router = useRouter();
   const [pending, start] = useTransition();

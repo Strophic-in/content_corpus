@@ -2,6 +2,7 @@ import { workspace } from "@/lib/channels";
 import { asUser } from "@/lib/db";
 import { requireUser } from "@/lib/session";
 
+import { ChannelPicker } from "../nav";
 import { AutoRefresh } from "../posts/[id]/post-actions";
 import { Deck, type IdeaCard } from "./deck";
 
@@ -17,7 +18,7 @@ function host(url: string) {
 
 export default async function DiscoverPage() {
   const user = await requireUser();
-  const { active, formats } = await workspace(user.id);
+  const { channels, active, formats } = await workspace(user.id);
   const data = await asUser(user.id, async (db) => {
     const ideas = (await db.query(
       `select i.id, i.title, i.hook, i.brief, i.why_now, i.sources, f.name as format_name
@@ -49,6 +50,7 @@ export default async function DiscoverPage() {
       {data.looking > 0 && <AutoRefresh everyMs={5000} />}
       <Deck
         key={active.id}
+        picker={<ChannelPicker channels={channels.map(({ id, name }) => ({ id, name }))} activeId={active.id} />}
         cards={cards}
         looking={data.looking > 0}
         channel={{ name: active.name, timezone: active.timezone }}

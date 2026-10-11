@@ -3,19 +3,20 @@ import Link from "next/link";
 import { workspace } from "@/lib/channels";
 import { requireUser } from "@/lib/session";
 
+import { ChannelPicker } from "../nav";
 import { NewFormatForm } from "./library-forms";
 
 export const metadata = { title: "Library · Content Corpus" };
 
 export default async function LibraryPage() {
   const user = await requireUser();
-  const { active, formats } = await workspace(user.id);
+  const { channels, active, formats } = await workspace(user.id);
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-6">
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Prompt library</h1>
         <p className="mt-1 text-sm text-muted">
-          Formats for <span className="font-medium text-foreground">{active.name}</span> — each kind of video it
+          Formats for <ChannelPicker channels={channels.map(({ id, name }) => ({ id, name }))} activeId={active.id} /> — each kind of video it
           makes, with every prompt that shapes it: ideas, scripts and the look of every shot.
         </p>
       </div>

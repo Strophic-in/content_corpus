@@ -12,6 +12,7 @@ export type IdeaCard = {
 };
 
 type Props = {
+  picker?: React.ReactNode;
   cards: IdeaCard[];
   looking: boolean;
   channel: { name: string; timezone: string };
@@ -35,7 +36,7 @@ function when(date: string, time: string) {
     .format(d) + ", " + new Intl.DateTimeFormat("en-IN", { hour: "numeric", minute: "2-digit", timeZone: "UTC" }).format(d);
 }
 
-export function Deck({ cards, looking, channel, formats, defaultFormatId, suggestion }: Props) {
+export function Deck({ picker, cards, looking, channel, formats, defaultFormatId, suggestion }: Props) {
   const router = useRouter();
   const [queue, setQueue] = useState(cards);
   const [drag, setDrag] = useState({ x: 0, y: 0, active: false });
@@ -152,7 +153,9 @@ export function Deck({ cards, looking, channel, formats, defaultFormatId, sugges
       <div className="flex items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Discover</h1>
-          <p className="text-sm text-muted">{queue.length ? `${queue.length} idea${queue.length === 1 ? "" : "s"} for ${channel.name}` : channel.name}</p>
+          <p className="flex items-center gap-1 text-sm text-muted">
+            {queue.length ? `${queue.length} idea${queue.length === 1 ? "" : "s"} for` : "For"} {picker ?? channel.name}
+          </p>
         </div>
         <div className="flex items-center gap-2">
           {formats.length > 1 && (
@@ -168,7 +171,9 @@ export function Deck({ cards, looking, channel, formats, defaultFormatId, sugges
         </div>
       </div>
 
-      <div className="relative h-[min(62vh,520px)] select-none">
+      {/* The top card is in the flow and as tall as its text (the page scrolls if it
+          is long); the cards peeking behind it fill the same box. */}
+      <div className="relative select-none">
         {queue.slice(0, 3).reverse().map((card, revIdx, arr) => {
           const depth = arr.length - 1 - revIdx;          // 0 = top
           const isTop = depth === 0;
@@ -181,7 +186,7 @@ export function Deck({ cards, looking, channel, formats, defaultFormatId, sugges
             <article key={card.id} style={style}
                      onPointerDown={isTop ? onPointerDown : undefined} onPointerMove={isTop ? onPointerMove : undefined}
                      onPointerUp={isTop ? onPointerUp : undefined} onPointerCancel={isTop ? onPointerUp : undefined}
-                     className={`absolute inset-0 flex flex-col gap-3 overflow-hidden rounded-3xl border border-border bg-surface p-6 shadow-xl ${isTop ? "cursor-grab active:cursor-grabbing" : "pointer-events-none"}`}>
+                     className={`flex flex-col gap-3 overflow-hidden rounded-3xl border border-border bg-surface p-6 shadow-xl ${isTop ? "relative min-h-[min(58vh,520px)] cursor-grab active:cursor-grabbing" : "pointer-events-none absolute inset-0"}`}>
               {isTop && (
                 <>
                   <span aria-hidden style={{ opacity: Math.max(0, Math.min(1, x / THRESHOLD)) }}
@@ -198,10 +203,10 @@ export function Deck({ cards, looking, channel, formats, defaultFormatId, sugges
               {card.hook && <p className="text-base text-muted italic">“{card.hook}”</p>}
               <p className="text-sm leading-relaxed">{card.brief}</p>
               {card.sources.length > 0 && (
-                <div className="mt-auto flex flex-wrap gap-2 text-xs">
+                <div className="mt-auto flex flex-wrap gap-2 pt-2 text-xs">
                   {card.sources.map((s) => (
                     <a key={s.url} href={s.url} target="_blank" rel="noreferrer" onPointerDown={(e) => e.stopPropagation()}
-                       className="truncate rounded-full border border-border px-2 py-0.5 text-muted hover:text-foreground">{s.label} ↗</a>
+                       className="max-w-full truncate rounded-full border border-border px-2 py-0.5 text-muted hover:text-foreground">{s.label} ↗</a>
                   ))}
                 </div>
               )}
@@ -210,7 +215,7 @@ export function Deck({ cards, looking, channel, formats, defaultFormatId, sugges
         })}
 
         {!queue.length && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 rounded-3xl border border-dashed border-border p-8 text-center">
+          <div className="flex min-h-[min(58vh,520px)] flex-col items-center justify-center gap-4 rounded-3xl border border-dashed border-border p-8 text-center">
             {looking ? (
               <>
                 <div className="flex gap-1.5" aria-hidden>
@@ -233,8 +238,9 @@ export function Deck({ cards, looking, channel, formats, defaultFormatId, sugges
         )}
       </div>
 
+      {/* Pinned just above the tab bar, so they stay in reach while a long card scrolls. */}
       {top && (
-        <div className="flex items-center justify-center gap-8">
+        <div className="sticky bottom-[calc(env(safe-area-inset-bottom)+5rem)] z-20 flex items-center justify-center gap-8 md:bottom-4">
           <button aria-label="Skip" onClick={() => decide(top, -1)} disabled={!!leaving}
                   className="grid size-16 place-items-center rounded-full border border-border bg-surface text-2xl text-danger shadow-md transition active:scale-90">✕</button>
           <button aria-label="Make it" onClick={() => decide(top, 1)} disabled={!!leaving}
