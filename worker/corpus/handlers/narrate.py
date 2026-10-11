@@ -22,9 +22,11 @@ from ..gpu import ltx25
 from ..media import assemble as media
 from ..media import tts
 from ..runner import Handler, JobContext, Permanent
+from ..script.llm import MAX_SHOT_SECONDS
 
 SPEAK = tts.speak                    # swapped by tests
 WORD_TIMINGS = media.whisper_words   # swapped by tests
+PAUSE_SECONDS = 0.35                 # after each line; ltx25.frames_for's default pad
 
 
 def run(ctx: JobContext) -> dict:
@@ -60,6 +62,11 @@ def run(ctx: JobContext) -> dict:
                 storage.get_file(sh["narration_key"], wav)
             else:
                 seconds = SPEAK(text, voice, speed, wav)
+                if seconds + PAUSE_SECONDS > MAX_SHOT_SECONDS:
+                    # The shot would end mid-sentence: its picture cannot be longer.
+                    raise Permanent(f"Shot {sh['idx'] + 1}'s narration takes {seconds:.1f}s to say, but a "
+                                    f"shot holds at most {MAX_SHOT_SECONDS}s. Write the script again; "
+                                    f"new scripts keep every line short enough.", stage="narration_too_long")
                 key = f"{prefix}/narration/{script_id}/{sh['idx']}.wav"
                 storage.put_file(key, wav, kind="narration", user_id=post["user_id"], post_id=post["id"],
                                  shot_id=sh["id"], content_type="audio/wav")
@@ -77,4 +84,16 @@ def run(ctx: JobContext) -> dict:
     return {"voice": voice, "shots_voiced": done, "seconds": round(total, 2)}
 
 
-HANDLER = Handler(run=run)
+def on_give_up(ctx: JobContext, err: dict) -> None:
+    """Say why on the post, instead of leaving it 'recording narration' forever."""
+    with db.tx() as c:
+        post = c.execute("""select p.id, p.status from posts p join scripts s on s.post_id = p.id
+                             where s.id = %s for update of p""", (ctx.payload["script_id"],)).fetchone()
+        if post and post["status"] == "approved":
+            c.execute("update posts set status = 'failed', error = %s where id = %s",
+                      (Jsonb({"stage": err.get("stage"), "message": err.get("message")}), post["id"]))
+            db.log_event(c, post["id"], "approved", "failed", "system", "narration gave up",
+                         {"stage": err.get("stage")})
+
+
+HANDLER = Handler(run=run, on_give_up=on_give_up)

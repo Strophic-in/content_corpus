@@ -25,9 +25,14 @@ text-to-speech voice across the whole reel. Write for that pipeline.
   muted realistic colours, shallow depth of field. Name any recurring figure the same
   way every time (for example "a smooth grey 3D mannequin-like person"). 1-2 sentences.
 - `shots`: {shot_count_hint}. Each shot:
-  - `seconds`: an integer from 3 to 12; together about {target_seconds} seconds.
+  - `seconds`: your estimate of how long the shot's narration takes to say (the
+    narrator speaks about {narration_words_per_second} words per second, plus a
+    short pause); the recorded voice sets the real length. Together about
+    {target_seconds} seconds.
   - `narration`: what the narrator says over this shot — one or two short sentences,
-    spoken to the viewer as "you". At most about 3 words per second of the shot.
+    spoken to the viewer as "you". **At most {narration_words} words**, because one
+    shot can hold only that much speech. Split a longer thought across two shots
+    (the second shot continuing the same visual) rather than cramming it into one.
   - `visual`: one continuous take that SHOWS what the narration says, described in
     order: subject, action, setting, camera move (slow push-in, orbit, macro, cutaway,
     x-ray or cross-section view), light. Describe recurring figures fully every time.

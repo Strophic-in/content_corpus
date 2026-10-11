@@ -2,7 +2,9 @@
 
 Safe to retry: the version number comes from the job (fixed at enqueue), and a
 retry that finds that version already written returns it instead of paying for
-another LLM call. Everything the call produces lands in one transaction.
+another LLM call. Everything the call produces lands in one transaction. A draft
+that breaks a rule (validate()) is sent back to the model with the exact problems,
+up to REPAIR_ROUNDS times, before the attempt counts as failed.
 """
 
 from __future__ import annotations
@@ -14,10 +16,13 @@ from psycopg.types.json import Jsonb
 from .. import db, vault
 from ..config import settings
 from ..runner import Handler, JobContext, Permanent, Retryable
-from ..script.llm import OpenAIScriptWriter, ScriptWriter, validate
+from ..script.llm import (NARRATOR_WORDS_PER_SECOND, OpenAIScriptWriter, ScriptWriter, Usage,
+                          narration_word_cap, validate)
 
 # Swapped out by tests; production always talks to OpenAI with the user's key.
 WRITER_FACTORY = OpenAIScriptWriter
+# Extra calls per attempt that hand the model its own draft and the rules it broke.
+REPAIR_ROUNDS = 2
 
 
 # audio_source → prompt. 'kokoro' is narrated mode: one TTS voice-over across the
@@ -25,9 +30,11 @@ WRITER_FACTORY = OpenAIScriptWriter
 TEMPLATES = {"ltx_native": "script_reel.md", "kokoro": "script_narrated.md"}
 
 
-def _system_prompt(st: dict, target_seconds: int, revision_note: str, audio_source: str) -> str:
+def _system_prompt(st: dict, target_seconds: int, revision_note: str, audio_source: str,
+                   speed: float = 1.1) -> str:
     template = (settings().prompts_dir / TEMPLATES[audio_source]).read_text(encoding="utf-8")
     shots = max(1, round(target_seconds / 8))
+    cap = narration_word_cap(speed)
     return template.format_map({
         "channel_name": st.get("channel_name") or "(unnamed)",
         "channel_niche": st.get("channel_niche") or "(not set — infer from the topic)",
@@ -37,6 +44,9 @@ def _system_prompt(st: dict, target_seconds: int, revision_note: str, audio_sour
         "target_seconds": target_seconds,
         "shot_count_hint": f"about {shots} shot{'s' if shots != 1 else ''}",
         "revision_note": revision_note,
+        # Asked a few words under the hard cap that validate() enforces.
+        "narration_words": cap - 5,
+        "narration_words_per_second": round(NARRATOR_WORDS_PER_SECOND * speed, 1),
     })
 
 
@@ -87,17 +97,33 @@ def run(ctx: JobContext) -> dict:
         revision = (f"## Revision\nThe previous version (\"{rejected['title']}\") was rejected "
                     f"with this note — address it:\n{rejected['rejection_note']}")
     narrated = post["audio_source"] == "kokoro"
-    system = _system_prompt(st, target, revision, post["audio_source"])
+    speed = float(st.get("narrator_speed") or 1.1)
+    system = _system_prompt(st, target, revision, post["audio_source"], speed)
     user = f"Topic: {post['topic']}\nBrief: {post['brief'] or '(none)'}"
     input_sha = hashlib.sha256("\x1f".join([system, user, model]).encode()).hexdigest()
 
     writer: ScriptWriter = WRITER_FACTORY(key)
-    try:
-        out, usage = writer.write(model=model, system=system, user=user)
-    except Exception as e:  # noqa: BLE001 - classified below
-        raise _classify_openai_error(e) from e
 
-    problems = validate(out, target, narrated=narrated)
+    def call(prompt: str):
+        try:
+            return writer.write(model=model, system=system, user=prompt)
+        except Exception as e:  # noqa: BLE001 - classified below
+            raise _classify_openai_error(e) from e
+
+    out, usage = call(user)
+    problems = validate(out, target, narrated=narrated, speed=speed)
+    # A draft that breaks a rule goes back with exactly what to fix: asking again
+    # from scratch tends to repeat the same mistake (seen: one line too long, 3x).
+    for _ in range(REPAIR_ROUNDS):
+        if not problems:
+            break
+        out, more = call(f"{user}\n\n## Your previous draft\n{out.model_dump_json()}\n\n"
+                         "## Fix this draft\nIt broke these rules. Return the complete script again "
+                         "with exactly these problems fixed and everything else kept:\n"
+                         + "\n".join(f"- {p}" for p in problems))
+        usage = Usage(more.model, usage.input_tokens + more.input_tokens,
+                      usage.output_tokens + more.output_tokens)
+        problems = validate(out, target, narrated=narrated, speed=speed)
     if problems:
         raise Retryable("script failed validation: " + "; ".join(problems), stage="validate",
                         detail={"problems": problems})

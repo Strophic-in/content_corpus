@@ -109,8 +109,8 @@ def as_user(owner, uid, sql, params=()):
 
 def approved_narrated_post(owner, uid) -> tuple[str, str]:
     slot = date(2033, 1, 1) + timedelta(days=uuid.uuid4().int % 3000)
-    pid = owner.execute("insert into posts (user_id, topic, slot_date, audio_source) values (%s, 'glow', %s, 'kokoro') "
-                        "returning id", (uid, slot)).fetchone()["id"]
+    pid = owner.execute("insert into posts (user_id, topic, slot_date, audio_source, target_seconds) "
+                        "values (%s, 'glow', %s, 'kokoro', 15) returning id", (uid, slot)).fetchone()["id"]
     as_user(owner, uid, "select api.generate_script(%s)", (pid,))
     cpu().tick()                                                       # write_script
     sid = owner.execute("select id from scripts where post_id = %s", (pid,)).fetchone()["id"]
@@ -145,6 +145,22 @@ def test_narration_sets_shot_lengths_and_unlocks_render(s3, owner, user):
     # Pressing Render again while it is queued is refused — no second GPU job.
     with pytest.raises(Exception, match="only an approved post can be rendered"):
         as_user(owner, user, "select api.request_render(%s)", (pid,))
+
+
+def test_a_line_too_long_for_one_shot_fails_the_post_clearly(s3, owner, user, monkeypatch):
+    pid, sid = approved_narrated_post(owner, user)
+
+    def slow(text, voice, speed, out):
+        fake_speak(text, voice, speed, out)
+        return 12.0                                    # a 12 s line + pause cannot fit a 12 s shot
+
+    monkeypatch.setattr(narrate, "SPEAK", slow)
+    cpu().tick()
+    p = owner.execute("select status, error from posts where id = %s", (pid,)).fetchone()
+    assert p["status"] == "failed" and p["error"]["stage"] == "narration_too_long"
+    assert "takes 12.0s to say" in p["error"]["message"]
+    assert owner.execute("select count(*) as n from storage_objects where post_id = %s",
+                         (pid,)).fetchone()["n"] == 0  # nothing stored for the line that cannot fit
 
 
 def test_narrate_is_resumable(s3, owner, user, monkeypatch):

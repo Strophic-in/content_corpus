@@ -37,12 +37,14 @@ def _script(seconds=(8, 8, 8), words=6) -> ScriptOut:
 class FakeWriter:
     calls = 0
     outputs: list[ScriptOut] = []
+    prompts: list[str] = []
 
     def __init__(self, api_key: str):
         assert api_key == "sk-test-key"
 
     def write(self, *, model, system, user):
         FakeWriter.calls += 1
+        FakeWriter.prompts.append(user)
         assert "Topic: " in user and "## Channel" in system
         out = FakeWriter.outputs.pop(0) if FakeWriter.outputs else _script()
         return out, Usage(model=model, input_tokens=100, output_tokens=200)
@@ -50,7 +52,7 @@ class FakeWriter:
 
 @pytest.fixture(autouse=True)
 def fake_llm(monkeypatch):
-    FakeWriter.calls, FakeWriter.outputs = 0, []
+    FakeWriter.calls, FakeWriter.outputs, FakeWriter.prompts = 0, [], []
     monkeypatch.setattr(write_script, "WRITER_FACTORY", FakeWriter)
 
 
@@ -140,18 +142,30 @@ def test_auto_approve_goes_straight_to_planning(owner, user):
     assert owner.execute("select count(*) as n from shots where post_id = %s", (pid,)).fetchone()["n"] == 3
 
 
-def test_invalid_script_is_retried_then_succeeds(owner, user):
+def test_invalid_draft_is_repaired_in_the_same_attempt(owner, user):
     FakeWriter.outputs = [_script(seconds=(30,)), _script()]   # 30 s shot is out of range
+    pid = new_post(owner, user)
+    as_user(owner, user, "select api.generate_script(%s)", (pid,))
+    runner().tick()
+    assert post(owner, pid)["status"] == "awaiting_approval"
+    assert FakeWriter.calls == 2
+    fix = FakeWriter.prompts[1]                                 # the draft and what to fix, sent back
+    assert "## Your previous draft" in fix and "shot 1 is 30s; make it 3-12s" in fix
+
+
+def test_draft_still_invalid_after_repairs_is_retried(owner, user):
+    bad = _script(seconds=(30,))
+    FakeWriter.outputs = [bad] * (1 + write_script.REPAIR_ROUNDS) + [_script()]
     pid = new_post(owner, user)
     job = as_user(owner, user, "select (api.generate_script(%s)).id as id", (pid,))
     runner().tick()
     j = owner.execute("select * from jobs where id = %s", (job["id"],)).fetchone()
     assert j["state"] == "queued" and j["error"]["stage"] == "validate"
-    assert post(owner, pid)["status"] == "scripting"
+    assert post(owner, pid)["status"] == "scripting" and FakeWriter.calls == 3
     owner.execute("update jobs set not_before = now() where id = %s", (job["id"],))  # skip backoff
     runner().tick()
     assert post(owner, pid)["status"] == "awaiting_approval"
-    assert FakeWriter.calls == 2
+    assert FakeWriter.calls == 4
 
 
 def test_missing_key_fails_fast_with_readable_reason(owner, user):
@@ -216,7 +230,8 @@ def _narrated(audio='Heartbeat thumps, a low whoosh.') -> ScriptOut:
     out = _script(seconds=(8, 8, 8))
     for i, sh in enumerate(out.shots):
         sh.audio = audio
-        sh.narration = f"This is fact number {i + 1}, told to you fast and clearly."
+        sh.narration = (f"This is fact number {i + 1}, told to you clearly, with a short pause, "
+                        "so that every single word lands on time.")
     return out
 
 
@@ -253,13 +268,38 @@ def test_narrated_pipeline_uses_voiceover_prompts(owner, user):
         assert "speech" in sh["negative_prompt"] and "fact number" not in sh["prompt"]  # narration stays out
 
 
-def test_narrated_shot_with_dialogue_is_rejected_then_retried(owner, user):
+def test_narrated_shot_with_dialogue_is_repaired(owner, user):
     FakeWriter.outputs = [_narrated(audio='A man says: "hello there"'), _narrated()]
     pid = new_narrated_post(owner, user)
-    job = as_user(owner, user, "select (api.generate_script(%s)).id as id", (pid,))
-    runner().tick()
-    j = owner.execute("select state, error from jobs where id = %s", (job["id"],)).fetchone()
-    assert j["state"] == "queued" and "sound effects only" in j["error"]["message"]
-    owner.execute("update jobs set not_before = now() where id = %s", (job["id"],))
+    as_user(owner, user, "select api.generate_script(%s)", (pid,))
     runner().tick()
     assert post(owner, pid)["status"] == "awaiting_approval"
+    assert "sound effects only" in FakeWriter.prompts[1]
+
+
+def test_narration_must_fit_one_shot_not_the_guessed_seconds(owner, user):
+    """Live failure: 27 words "for 7s" was rejected, though the voice sets the length
+    and 27 words fit one shot; 35 words do not fit any shot."""
+    fits = _narrated()
+    fits.shots[1].seconds = 7
+    fits.shots[1].narration = " ".join(["word"] * 27)
+    FakeWriter.outputs = [fits]
+    pid = new_narrated_post(owner, user)
+    as_user(owner, user, "select api.generate_script(%s)", (pid,))
+    runner().tick()
+    assert post(owner, pid)["status"] == "awaiting_approval" and FakeWriter.calls == 1
+
+    too_long = _narrated()
+    too_long.shots[2].narration = " ".join(["word"] * 35)
+    FakeWriter.outputs = [too_long, _narrated()]
+    pid = new_narrated_post(owner, user)
+    as_user(owner, user, "select api.generate_script(%s)", (pid,))
+    runner().tick()
+    assert post(owner, pid)["status"] == "awaiting_approval" and FakeWriter.calls == 3
+    assert "shot 3 narration is 35 words but at most 30 fit one shot" in FakeWriter.prompts[2]
+
+
+def test_prompt_states_the_word_cap(owner, user):
+    from corpus.script.llm import narration_word_cap
+    system = write_script._system_prompt({}, 40, "", "kokoro", speed=1.1)
+    assert f"At most {narration_word_cap(1.1) - 5} words" in system and "{" not in system
