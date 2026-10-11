@@ -1,0 +1,12 @@
+# Build context for the worker image is the repo root.
+.git
+.env
+.env.*
+secrets/
+supabase/
+apps/
+**/node_modules
+**/.venv
+**/__pycache__
+**/.pytest_cache
+*.log

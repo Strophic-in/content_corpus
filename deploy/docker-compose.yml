@@ -1,0 +1,70 @@
+# Content Corpus on one box: the web app and the two worker lanes.
+#
+#   deploy/deploy.sh                          # pull, migrate, build, (re)start
+#   cd deploy && docker compose --env-file ../.env logs -f worker-gpu
+#
+# --env-file ../.env matters: compose reads ${…} values (KOKORO_MODELS_DIR) from it.
+#
+# See docs/DEPLOY.md. Configuration is the repo-root .env (never in the images).
+# Postgres (VibeDB) and nginx run on the host; containers reach the database
+# through host.docker.internal. Nothing here listens publicly: nginx proxies
+# https://content-corpus.strophic.in to the web app on 127.0.0.1:3400.
+
+name: content-corpus
+
+x-worker: &worker
+  build:
+    context: ..
+    dockerfile: worker/Dockerfile
+  image: content-corpus-worker:latest
+  restart: unless-stopped
+  env_file: ../.env
+  extra_hosts: ["host.docker.internal:host-gateway"]
+  # The box is shared: yield CPU to other services when they are busy, but use
+  # all of it when they are idle (cpu_shares only applies under contention).
+  cpu_shares: 512
+  mem_limit: 3g
+  volumes:
+    # Segments waiting for assembly, the Whisper model, notes about Race pods.
+    - corpus-cache:/home/worker/.cache
+    # Kokoro voice model, shared read-only with Voicer (KOKORO_MODELS_DIR in .env).
+    - ${KOKORO_MODELS_DIR:?set KOKORO_MODELS_DIR in .env}:/models/kokoro:ro
+
+services:
+  web:
+    build: ../apps/web
+    image: content-corpus-web:latest
+    restart: unless-stopped
+    env_file: ../.env
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    ports: ["127.0.0.1:3400:3000"]
+    cpu_shares: 512
+    mem_limit: 768m
+
+  worker-cpu:
+    <<: *worker
+    environment:
+      CORPUS_LANE: cpu
+      CORPUS_WAKE_PORT: "8787"
+      CORPUS_WORKER_ID: cpu-vm
+      CORPUS_VERSION: ${CORPUS_VERSION:-unknown}
+      CORPUS_MODELS_DIR: /models
+
+  worker-gpu:
+    <<: *worker
+    environment:
+      CORPUS_LANE: gpu
+      CORPUS_WAKE_PORT: "8788"
+      CORPUS_WORKER_ID: gpu-vm
+      CORPUS_VERSION: ${CORPUS_VERSION:-unknown}
+      CORPUS_MODELS_DIR: /models
+      # The SSH key Race pods accept (secrets/race_ssh_key, owned by uid 10001, mode 600).
+      CORPUS_SSH_KEY: /run/secrets/race_ssh_key
+      CORPUS_SSH_KNOWN_HOSTS: /home/worker/.cache/race_known_hosts
+    volumes:
+      - corpus-cache:/home/worker/.cache
+      - ${KOKORO_MODELS_DIR:?set KOKORO_MODELS_DIR in .env}:/models/kokoro:ro
+      - ../secrets/race_ssh_key:/run/secrets/race_ssh_key:ro
+
+volumes:
+  corpus-cache:

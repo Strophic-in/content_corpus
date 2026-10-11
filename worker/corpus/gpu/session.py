@@ -17,6 +17,7 @@ the models, so the next session on that host skips the download.
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import time
@@ -30,6 +31,12 @@ COMFYUI_TEMPLATE = "3"
 POD_DISK_GB = 70
 SSH_OPTS = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=15", "-o", "StrictHostKeyChecking=accept-new",
             "-o", "ServerAliveInterval=30"]
+# In a container: the key registered with Race (mounted read-only) and a writable
+# known_hosts. Unset, ssh uses ~/.ssh as usual.
+if os.environ.get("CORPUS_SSH_KEY"):
+    SSH_OPTS += ["-i", os.environ["CORPUS_SSH_KEY"], "-o", "IdentitiesOnly=yes"]
+if os.environ.get("CORPUS_SSH_KNOWN_HOSTS"):
+    SSH_OPTS += ["-o", f"UserKnownHostsFile={os.environ['CORPUS_SSH_KNOWN_HOSTS']}"]
 
 Log = Callable[[str], None]
 

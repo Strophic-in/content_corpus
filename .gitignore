@@ -12,3 +12,4 @@ node_modules/
 *.tsbuildinfo
 # Superseded Supabase drafts (replaced by db/); kept locally, not published.
 supabase/
+secrets/
