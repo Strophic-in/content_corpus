@@ -243,9 +243,19 @@ def dialogue_words(clip: Path, hint: str,
     """What the characters in a shot say, as heard (biased by the intended dialogue)."""
     with tempfile.TemporaryDirectory() as tmp:
         wav = Path(tmp) / "speech.wav"
-        subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", str(clip), "-vn", "-ac", "1", "-ar", "16000",
-                        str(wav)], check=True)
+        _run(["ffmpeg", "-y", "-v", "error", "-i", str(clip), "-vn", "-ac", "1", "-ar", "16000", str(wav)])
         return word_timings(wav, hint)
+
+
+class FfmpegError(RuntimeError):
+    """ffmpeg/ffprobe failed; the message carries the tool's own last error lines."""
+
+
+def _run(cmd: list[str], cwd: Path | None = None) -> None:
+    r = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, errors="replace")
+    if r.returncode != 0:
+        tail = " | ".join(ln.strip() for ln in r.stderr.strip().splitlines()[-4:])
+        raise FfmpegError(f"{cmd[0]} failed: {tail or f'exit {r.returncode}'}")
 
 
 def _has_audio(p: Path) -> bool:
@@ -277,9 +287,9 @@ def build_segment(clip: Path, out_video: Path, out_audio: Path, *, narration: Pa
             # A relative fontsdir: ffmpeg's filter syntax mangles Windows drive paths.
             shutil.copytree(FONTS_DIR, work / "fonts")
             vf += ",ass=captions.ass:fontsdir=fonts"
-        subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", str(clip.resolve()), "-vf", vf, "-an",
-                        "-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p",
-                        str(out_video.resolve())], check=True, cwd=work)
+        _run(["ffmpeg", "-y", "-v", "error", "-i", str(clip.resolve()), "-vf", vf, "-an",
+              "-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p",
+              str(out_video.resolve())], cwd=work)
     frames = _frames(out_video)
     samples = frames * RATE // FPS                 # the picture's exact length, in samples
 
@@ -294,28 +304,71 @@ def build_segment(clip: Path, out_video: Path, out_audio: Path, *, narration: Pa
     else:
         graph += "[bed]anull[mix];"
     graph += f"[mix]apad=whole_len={samples},atrim=end_sample={samples}[out]"
-    subprocess.run(["ffmpeg", "-y", "-v", "error", *inputs, "-filter_complex", graph, "-map", "[out]",
-                    "-c:a", "pcm_s16le", "-ar", str(RATE), str(out_audio)], check=True)
+    _run(["ffmpeg", "-y", "-v", "error", *inputs, "-filter_complex", graph, "-map", "[out]",
+          "-c:a", "pcm_s16le", "-ar", str(RATE), str(out_audio)])
     return {"frames": frames, "seconds": frames / FPS, "caption_words": len(words or [])}
 
 
-def join_segments(segments: list[tuple[Path, Path]], out: Path) -> dict:
-    """Finished segments → the reel. The pictures are copied as they are; the sound is
-    joined, normalised to -14 LUFS once over the whole reel, and encoded to AAC."""
+# Loudness to YouTube's target, once over the whole reel. The explicit stereo layout,
+# before the filters and on the encoder, matters: WAV stores no channel layout,
+# and ffmpeg 5.1 (Debian 12, the worker image) then fails to set up loudnorm ->
+# AAC with "Cannot select channel layout" — newer ffmpeg does not, which is how
+# this reached production (2026-10-11, after an 8-shot render).
+SOUND_FILTERS = (f"aformat=sample_fmts=fltp:sample_rates={RATE}:channel_layouts=stereo,"
+                 f"loudnorm=I=-14:TP=-1.5:LRA=11,aresample={RATE}")
+SOUND_CODEC = ["-ch_layout", "stereo", "-c:a", "aac", "-b:a", "160k"]
+
+
+def _listing(path: Path, files: list[Path]) -> Path:
+    """An ffmpeg concat-demuxer list of `files` (absolute paths, quotes escaped)."""
+    quote = chr(39)
+    lines = (f"file {quote}{f.resolve().as_posix().replace(quote, quote + chr(92) + quote + quote)}{quote}"
+             for f in files)
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
+
+
+def _check_reel(out: Path, frames: int) -> float:
+    """Raise unless `out` has every frame and sound for its whole length."""
+    got = _frames(out)
+    if got != frames:
+        raise FfmpegError(f"joined reel has {got} frames, expected {frames}")
+    r = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "a:0", "-show_entries",
+                        "stream=duration", "-of", "csv=p=0", str(out)], capture_output=True, text=True)
+    sound = float((r.stdout.strip() or "0").split(",")[0] or 0)
+    if abs(sound - frames / FPS) > 0.25:
+        raise FfmpegError(f"joined reel's sound is {sound:.2f}s for {frames / FPS:.2f}s of picture")
+    return frames / FPS
+
+
+def join_segments(segments: list[tuple[Path, Path]], out: Path, log: Callable[[str], None] = print) -> dict:
+    """Finished segments -> the reel, checked before it is returned.
+
+    The sound is joined as one stream (the segments' WAVs are sample-exact), made
+    stereo explicitly, normalised once and encoded to AAC. The pictures are copied
+    as they are. If that fast join fails or comes out wrong, the pictures are
+    re-encoded instead: slower, but a render is never lost to the final step.
+    """
+    frames = sum(_frames(v) for v, _ in segments)
     with tempfile.TemporaryDirectory() as tmp:
-        listing = Path(tmp) / "pictures.txt"
-        listing.write_text("".join("file '{}'\n".format(v.resolve().as_posix().replace("'", "'\''"))
-                                   for v, _ in segments), encoding="utf-8")
-        inputs = ["-f", "concat", "-safe", "0", "-i", str(listing)]
-        for _, a in segments:
-            inputs += ["-i", str(a)]
-        n = len(segments)
-        sound = ("".join(f"[{k + 1}:a]" for k in range(n))
-                 + f"concat=n={n}:v=0:a=1,loudnorm=I=-14:TP=-1.5:LRA=11,aresample={RATE}[aout]")
-        subprocess.run(["ffmpeg", "-y", "-v", "error", *inputs, "-filter_complex", sound,
-                        "-map", "0:v", "-map", "[aout]", "-c:v", "copy", "-c:a", "aac", "-b:a", "160k",
-                        "-movflags", "+faststart", str(out)], check=True)
-    return {"seconds": round(probe_duration(out), 2), "shots": n}
+        work = Path(tmp)
+        pictures = _listing(work / "pictures.txt", [v for v, _ in segments])
+        sounds = _listing(work / "sounds.txt", [a for _, a in segments])
+        sound = work / "sound.m4a"
+        _run(["ffmpeg", "-y", "-v", "error", "-f", "concat", "-safe", "0", "-i", str(sounds),
+              "-af", SOUND_FILTERS, *SOUND_CODEC, str(sound)])
+        try:
+            _run(["ffmpeg", "-y", "-v", "error", "-f", "concat", "-safe", "0", "-i", str(pictures),
+                  "-i", str(sound), "-map", "0:v", "-map", "1:a", "-c", "copy", "-movflags", "+faststart",
+                  str(out)])
+            seconds, how = _check_reel(out, frames), "copy"
+        except FfmpegError as e:
+            log(f"fast join failed ({e}); re-encoding the pictures instead")
+            _run(["ffmpeg", "-y", "-v", "error", "-f", "concat", "-safe", "0", "-i", str(pictures),
+                  "-i", str(sound), "-map", "0:v", "-map", "1:a", "-c:v", "libx264", "-preset", "veryfast",
+                  "-crf", "18", "-pix_fmt", "yuv420p", "-c:a", "copy", "-movflags", "+faststart", str(out)])
+            seconds, how = _check_reel(out, frames), "re-encode"
+    return {"seconds": round(seconds, 2), "shots": len(segments), "join": how}
 
 
 def shifted(words: Words, by: float) -> Words:

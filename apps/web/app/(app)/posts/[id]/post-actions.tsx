@@ -38,7 +38,7 @@ export function GenerateButton({ postId, regenerate }: { postId: string; regener
   );
 }
 
-export function RenderButton({ postId, retry }: { postId: string; retry: boolean }) {
+export function RenderButton({ postId, retry, label }: { postId: string; retry: boolean; label?: string }) {
   const [state, setState] = useState<ActionState>(null);
   const [pending, start] = useTransition();
   return (
@@ -48,7 +48,7 @@ export function RenderButton({ postId, retry }: { postId: string; retry: boolean
         onClick={() => start(async () => setState(await requestRender(postId)))}
         className="w-fit rounded-md bg-accent px-4 py-2 text-sm font-medium text-accent-foreground disabled:opacity-60"
       >
-        {pending ? "Starting…" : retry ? "Try rendering again" : "Render reel"}
+        {pending ? "Starting…" : label ?? (retry ? "Try rendering again" : "Render reel")}
       </button>
       <ErrorNote state={state} />
     </div>

@@ -42,7 +42,8 @@ def run(ctx: JobContext) -> dict:
     built = [build_segment.ensure_segment(post, s, style, hint) for s in shots]
     with tempfile.TemporaryDirectory() as tmp:
         out = Path(tmp) / "final.mp4"
-        info = media.join_segments([(v, a) for v, a, _ in built], out)
+        info = media.join_segments([(v, a) for v, a, _ in built], out,
+                                   log=lambda m: print(f"[assemble {script_id}] {m}", flush=True))
         info["segments_ready"] = sum(cached for _, _, cached in built)
         key = f"{storage.post_prefix(post['user_id'], post['id'])}/final/{script_id}.mp4"
         stored = storage.put_file(key, out, kind="final", user_id=post["user_id"], post_id=post["id"],
@@ -64,8 +65,11 @@ def on_give_up(ctx: JobContext, err: dict) -> None:
         post = c.execute("select id, status from posts where approved_script_id = %s for update",
                          (ctx.payload["script_id"],)).fetchone()
         if post and post["status"] == "post_processing":
+            # The expensive part (the GPU) is done and stored: say so, and how to finish.
+            message = (f"Couldn't join the finished shots into the reel ({err.get('message')}). "
+                       "Your rendered shots are safe in storage; press Retry assembly, no GPU needed.")
             c.execute("update posts set status = 'failed', error = %s where id = %s",
-                      (Jsonb({"stage": err.get("stage"), "message": err.get("message")}), post["id"]))
+                      (Jsonb({"stage": "assemble", "message": message}), post["id"]))
             db.log_event(c, post["id"], "post_processing", "failed", "system", "assembly gave up")
 
 

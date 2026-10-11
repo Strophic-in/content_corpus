@@ -375,6 +375,41 @@ def test_render_then_assemble_to_a_ready_reel(s3, owner, user, gpu, tmp_path, se
                            "reel assembled"]
 
 
+def test_a_failed_join_is_retried_without_the_gpu(s3, owner, user, gpu, monkeypatch):
+    """Live incident: 8 shots rendered, then the final join failed on the server's
+    ffmpeg. The shots must stay usable: retrying re-joins them, never re-renders."""
+    pid, sid = approved_narrated_post(owner, user)
+    cpu_all().tick()
+    as_user(owner, user, "select api.request_render(%s)", (pid,))
+    assert gpu_lane().tick()
+    real_join = media.join_segments
+
+    def broken(*a, **k):
+        raise media.FfmpegError("ffmpeg failed: Cannot select channel layout")
+
+    monkeypatch.setattr(media, "join_segments", broken)
+    for _ in range(3):                                                 # assemble gives up
+        drain(cpu_all())
+        owner.execute("update jobs set not_before = now() where kind = 'assemble' and post_id = %s", (pid,))
+    p = owner.execute("select status, error from posts where id = %s", (pid,)).fetchone()
+    assert p["status"] == "failed" and p["error"]["stage"] == "assemble"
+    assert "rendered shots are safe" in p["error"]["message"] and "channel layout" in p["error"]["message"]
+
+    monkeypatch.setattr(media, "join_segments", real_join)
+    rendered = list(gpu.rendered)
+    job = as_user(owner, user, "select * from api.request_render(%s)", (pid,))   # Retry assembly
+    assert (job["lane"], job["kind"], job["state"]) == ("cpu", "assemble", "queued")
+    assert not gpu_lane().tick()                                       # nothing for the GPU to do
+    assert drain(cpu_all()) == ["assemble"]
+    assert gpu.rendered == rendered                                    # no shot rendered twice
+    assert owner.execute("select status from posts where id = %s", (pid,)).fetchone()["status"] == "ready"
+
+
+def test_the_image_selftest_passes():
+    from corpus import selftest
+    assert selftest.main() == 0
+
+
 def test_assemble_builds_segments_the_cache_lost(s3, owner, user, gpu, segment_cache):
     pid, sid = approved_narrated_post(owner, user)
     cpu_all().tick()                                                   # narrate

@@ -27,7 +27,10 @@ export default async function PostPage({ params }: { params: Promise<{ id: strin
   const live = scripts.find((s) => ["awaiting_approval", "approved", "draft"].includes(s.state));
   const older = scripts.filter((s) => s !== live);
   const badge = statusBadge(post.status);
-  const canGenerate = ["draft", "awaiting_approval", "failed"].includes(post.status);
+  // After a failed final join the paid-for shots are all stored: the way forward is
+  // Retry assembly (in the render panel), not a new script that would leave them behind.
+  const canGenerate = ["draft", "awaiting_approval", "failed"].includes(post.status) &&
+    post.error?.stage !== "assemble";
 
   return (
     <div className="flex flex-col gap-6">
@@ -166,6 +169,14 @@ async function RenderPanel({ post, shots }: { post: PostRow; shots: ShotRow[] })
     if (narrated && voiced < shots.length)
       return <section className={box}><h2 className="font-medium">Recording narration · {voiced} of {shots.length}</h2>
         <p className="text-muted">Each shot&apos;s length is set by its narration line.</p></section>;
+    if (post.status === "failed" && rendered === shots.length)
+      return (
+        <section className={box}>
+          <h2 className="font-medium">All {shots.length} shots are rendered — only the final join failed</h2>
+          <p className="text-muted">They are stored safely. Retrying only re-joins them on the server: no GPU, no cost.</p>
+          <RenderButton postId={post.id} retry label="Retry assembly (no GPU)" />
+        </section>
+      );
     return (
       <section className={box}>
         <h2 className="font-medium">Ready to render</h2>
