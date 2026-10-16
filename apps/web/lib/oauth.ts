@@ -73,7 +73,7 @@ async function json(r: Response, what: string) {
   const body = await r.json().catch(() => ({}));
   if (!r.ok) {
     // The provider's error code only; never tokens or secrets.
-    const code = body?.error?.message ?? body?.error_description ?? body?.error ?? r.status;
+    const code = body?.error?.message ?? body?.error_message ?? body?.error_description ?? body?.error ?? r.status;
     throw new Error(`${what} failed: ${typeof code === "string" ? code : JSON.stringify(code)}`);
   }
   return body;
@@ -98,11 +98,14 @@ export async function exchange(p: Platform, code: string): Promise<Connected> {
       scopes: String(tok.scope ?? "").split(" ").filter(Boolean),
     };
   }
-  const short = await json(await fetch("https://api.instagram.com/oauth/access_token", {
+  const tok = await json(await fetch("https://api.instagram.com/oauth/access_token", {
     method: "POST",
     body: new URLSearchParams({ client_id: process.env.INSTAGRAM_APP_ID!, client_secret: process.env.INSTAGRAM_APP_SECRET!,
                                 grant_type: "authorization_code", redirect_uri: redirectUri(p), code }),
   }), "Instagram token exchange");
+  // Meta documents this reply wrapped in a `data` list but has sent it flat too.
+  const short = tok.data?.[0] ?? tok;
+  if (!short.access_token) throw new Error("Instagram token exchange returned no token");
   const long = await json(await fetch(`https://graph.instagram.com/access_token?${new URLSearchParams({
     grant_type: "ig_exchange_token", client_secret: process.env.INSTAGRAM_APP_SECRET!, access_token: short.access_token,
   })}`), "Instagram long-lived token");
