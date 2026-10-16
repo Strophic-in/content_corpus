@@ -23,6 +23,12 @@ export async function switchChannel(channelId: string): Promise<void> {
                                                      maxAge: 60 * 60 * 24 * 365 });
 }
 
+/** From the Discover home: make the channel the active one and show its idea cards. */
+export async function openChannel(channelId: string): Promise<void> {
+  await switchChannel(channelId);
+  redirect(`/discover/${channelId}`);
+}
+
 const ChannelInput = z.object({
   name: z.string().trim().min(1, "Give the channel a name.").max(80),
   niche: z.string().trim().max(500),

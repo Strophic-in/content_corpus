@@ -62,17 +62,30 @@ export function BottomTabs() {
   );
 }
 
+/** Switch the active channel. On a channel's Discover deck, go to the new channel's
+ *  deck (its URL names the channel); anywhere else, re-render for the new channel. */
+function useSwitch() {
+  const router = useRouter();
+  const path = usePathname();
+  const [pending, start] = useTransition();
+  const go = (id: string) => start(async () => {
+    await switchChannel(id);
+    if (path.startsWith("/discover/")) router.push(`/discover/${id}`);
+    else router.refresh();
+  });
+  return [pending, go] as const;
+}
+
 /** The channel name as a tap-to-switch picker, for page titles (phones have no top bar). */
 export function ChannelPicker({ channels, activeId }: { channels: { id: string; name: string }[]; activeId: string }) {
-  const router = useRouter();
-  const [pending, start] = useTransition();
+  const [pending, go] = useSwitch();
   const name = channels.find((c) => c.id === activeId)?.name ?? "";
   if (channels.length < 2) return <span className="font-medium text-foreground">{name}</span>;
   return (
     <span className="relative inline-flex items-center font-medium text-foreground">
       {name}<span aria-hidden className="ml-0.5 text-muted">▾</span>
       <select aria-label="Switch channel" value={activeId} disabled={pending}
-              onChange={(e) => start(async () => { await switchChannel(e.target.value); router.refresh(); })}
+              onChange={(e) => go(e.target.value)}
               className="absolute inset-0 cursor-pointer opacity-0">
         {channels.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
       </select>
@@ -81,13 +94,12 @@ export function ChannelPicker({ channels, activeId }: { channels: { id: string; 
 }
 
 export function ChannelSwitcher({ channels, activeId }: { channels: { id: string; name: string }[]; activeId: string }) {
-  const router = useRouter();
-  const [pending, start] = useTransition();
+  const [pending, go] = useSwitch();
   if (channels.length < 2)
     return <span className="max-w-[45vw] truncate text-sm font-medium">{channels[0]?.name}</span>;
   return (
     <select aria-label="Channel" value={activeId} disabled={pending}
-            onChange={(e) => start(async () => { await switchChannel(e.target.value); router.refresh(); })}
+            onChange={(e) => go(e.target.value)}
             className="max-w-[45vw] truncate rounded-md border border-border bg-background px-2 py-1 text-sm font-medium outline-none focus:border-accent">
       {channels.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
     </select>

@@ -1,63 +1,86 @@
+import Link from "next/link";
+
 import { workspace } from "@/lib/channels";
 import { asUser } from "@/lib/db";
 import { requireUser } from "@/lib/session";
 
-import { ChannelPicker } from "../nav";
+import { openChannel } from "../channel-actions";
 import { AutoRefresh } from "../posts/[id]/post-actions";
-import { Deck, type IdeaCard } from "./deck";
 
 export const metadata = { title: "Discover · Content Corpus" };
 
-function host(url: string) {
-  try {
-    return new URL(url).hostname.replace(/^www\./, "");
-  } catch {
-    return url;
-  }
-}
+type ChannelCard = {
+  id: string; name: string; niche: string; new_ideas: number; looking: boolean; scheduled: number;
+  accounts: { platform: "youtube" | "instagram"; handle: string | null; status: string }[];
+};
 
-export default async function DiscoverPage() {
+const PLATFORM = { youtube: "YouTube", instagram: "Instagram" } as const;
+
+// The home screen: every channel with its waiting ideas. Tapping one opens its
+// cards, and makes it the channel the rest of the app (calendar, library) shows.
+export default async function DiscoverHome() {
   const user = await requireUser();
-  const { channels, active, formats } = await workspace(user.id);
-  const data = await asUser(user.id, async (db) => {
-    const ideas = (await db.query(
-      `select i.id, i.title, i.hook, i.brief, i.why_now, i.sources, f.name as format_name
-         from ideas i left join formats f on f.id = i.format_id
-        where i.channel_id = $1 and i.status = 'new' order by i.created_at, i.id`, [active.id])).rows;
-    const looking = (await db.query(
-      `select count(*)::int as n from jobs where kind = 'suggest_ideas' and state in ('queued','claimed')
-          and not_before <= now() + interval '1 minute'
-          and payload->>'format_id' in (select id::text from formats where channel_id = $1)`, [active.id])).rows[0].n;
-    // The next free day at the channel's usual time: the schedule sheet's suggestion.
-    const next = (await db.query(
-      `select to_char(d, 'YYYY-MM-DD') as day from generate_series(
-                (now() at time zone $2)::date + 1, (now() at time zone $2)::date + 60, interval '1 day') d
-        where not exists (select 1 from posts p where p.channel_id = $1 and p.slot_date = d::date)
-        limit 1`, [active.id, active.timezone])).rows[0]?.day as string | undefined;
-    const today = (await db.query("select to_char(now() at time zone $1, 'YYYY-MM-DD') as d",
-                                  [active.timezone])).rows[0].d as string;
-    return { ideas, looking, next, today };
-  });
-
-  const cards: IdeaCard[] = data.ideas.map((i) => ({
-    id: i.id, title: i.title, hook: i.hook, brief: i.brief, whyNow: i.why_now, format: i.format_name ?? "",
-    sources: (i.sources as { url: string }[]).map((s) => ({ url: s.url, label: host(s.url) })),
-  }));
-  const fallbackFormat = formats.find((f) => f.is_default) ?? formats[0];
+  await workspace(user.id);                     // first visit: creates a channel if there is none
+  const channels = await asUser(user.id, async (db) => (await db.query(
+    `select c.id, c.name, c.niche,
+            (select count(*) from ideas i where i.channel_id = c.id and i.status = 'new')::int as new_ideas,
+            exists (select 1 from jobs j where j.kind = 'suggest_ideas' and j.state in ('queued','claimed')
+                      and j.not_before <= now() + interval '1 minute'
+                      and j.payload->>'format_id' in (select f.id::text from formats f where f.channel_id = c.id)
+                   ) as looking,
+            (select count(*) from posts p where p.channel_id = c.id and p.status = 'scheduled')::int as scheduled,
+            coalesce((select json_agg(json_build_object('platform', a.platform, 'handle', a.handle, 'status', a.status)
+                                      order by a.platform)
+                        from channel_accounts a where a.channel_id = c.id), '[]') as accounts
+       from channels c order by c.is_default desc, c.name`)).rows as ChannelCard[]);
 
   return (
-    <div className="mx-auto flex w-full max-w-md flex-col gap-4">
-      {data.looking > 0 && <AutoRefresh everyMs={5000} />}
-      <Deck
-        key={active.id}
-        picker={<ChannelPicker channels={channels.map(({ id, name }) => ({ id, name }))} activeId={active.id} />}
-        cards={cards}
-        looking={data.looking > 0}
-        channel={{ name: active.name, timezone: active.timezone }}
-        formats={formats.map((f) => ({ id: f.id, name: f.name }))}
-        defaultFormatId={fallbackFormat?.id ?? ""}
-        suggestion={{ date: data.next ?? data.today, time: active.default_publish_time, min: data.today }}
-      />
+    <div className="mx-auto flex w-full max-w-2xl flex-col gap-5">
+      {channels.some((c) => c.looking) && <AutoRefresh everyMs={5000} />}
+      <div className="flex items-end justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">Discover</h1>
+          <p className="text-sm text-muted">Pick a channel to swipe through its ideas.</p>
+        </div>
+        <Link href="/channels" className="rounded-full border border-border px-3 py-1.5 text-sm font-medium hover:border-accent">
+          + Channel
+        </Link>
+      </div>
+      <ul className="grid gap-3 sm:grid-cols-2">
+        {channels.map((c) => (
+          <li key={c.id}>
+            <form action={openChannel.bind(null, c.id)}>
+              <button className="flex w-full flex-col gap-3 rounded-2xl border border-border bg-surface p-4 text-left transition hover:border-accent active:scale-[.99]">
+                <span className="flex items-center gap-3">
+                  <span aria-hidden
+                        className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-linear-to-br from-indigo-500 via-purple-500 to-pink-500 text-lg font-semibold text-white">
+                    {c.name.trim().charAt(0).toUpperCase() || "?"}
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block truncate font-medium">{c.name}</span>
+                    {c.niche && <span className="line-clamp-2 text-sm text-muted">{c.niche}</span>}
+                  </span>
+                </span>
+                <span className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+                  <span className={c.new_ideas ? "font-medium text-accent" : "text-muted"}>
+                    {c.looking ? "Finding ideas…" : `${c.new_ideas || "No"} new idea${c.new_ideas === 1 ? "" : "s"}`}
+                  </span>
+                  {c.scheduled > 0 && <span className="text-muted">{c.scheduled} scheduled</span>}
+                </span>
+                <span className="flex flex-wrap gap-1.5">
+                  {c.accounts.length === 0 && <span className="text-xs text-muted">No accounts connected</span>}
+                  {c.accounts.map((a) => (
+                    <span key={a.platform}
+                          className={`rounded-full px-2 py-0.5 text-xs ${a.status === "connected" ? "bg-ok/15 text-ok" : "bg-warn/15 text-warn"}`}>
+                      {PLATFORM[a.platform]}{a.handle ? ` ${a.handle}` : ""}{a.status === "connected" ? "" : " · reconnect"}
+                    </span>
+                  ))}
+                </span>
+              </button>
+            </form>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
