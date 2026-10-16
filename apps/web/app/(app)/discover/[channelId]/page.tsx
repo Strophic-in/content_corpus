@@ -30,7 +30,7 @@ type Row = {
                         identifiable_people?: boolean } } | null;
 };
 
-/** Categories take turns, so a busy one can't bury the rest. */
+/** Categories take turns (newest first within each), so a busy one can't bury the rest. */
 function roundRobin(rows: Row[]): Row[] {
   const groups = new Map<string, Row[]>();
   for (const r of rows) {
@@ -82,7 +82,7 @@ export default async function ChannelDeckPage({ params }: { params: Promise<{ ch
     )).rows as { id: string; name: string; color: string }[];
     const ideas = (await db.query(
       `select id, title, hook, brief, why_now, category_id, media_state, created_at, media, items, sources, analysis
-         from ideas where channel_id = $1 and status = 'new' order by created_at, id`, [channelId])).rows as Row[];
+         from ideas where channel_id = $1 and status = 'new' order by created_at desc, id`, [channelId])).rows as Row[];
     const accounts = (await db.query(
       "select platform from channel_accounts where channel_id = $1 and status = 'connected' order by platform",
       [channelId])).rows as { platform: "youtube" | "instagram" }[];
