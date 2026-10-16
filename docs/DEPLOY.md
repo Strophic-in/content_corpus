@@ -8,6 +8,7 @@ Everything runs on one always-on box (an Oracle Cloud Ampere A1: arm64, Ubuntu
 | Web app | container `web` → `127.0.0.1:3400` → nginx → `https://content-corpus.strophic.in` |
 | cpu lane (scripts, narration, segments, assembly) | container `worker-cpu` |
 | gpu lane (rents Race GPUs over the API + SSH) | container `worker-gpu` |
+| publish lane (posts reels to YouTube and Instagram) | container `worker-publish` |
 | Database | VibeDB's Postgres on the host, reached as `host.docker.internal` |
 | Kokoro voice model | Voicer's `backend/models/`, mounted read-only (one copy on the box) |
 | Idea memory (Qdrant) | HealMem's Qdrant, collection `content_corpus_memory`; worker-cpu joins the `healmem_vector` network |
@@ -15,7 +16,8 @@ Everything runs on one always-on box (an Oracle Cloud Ampere A1: arm64, Ubuntu
 
 The containers publish nothing except the web app on localhost. The web app and
 the workers wake each other over the compose network
-(`http://worker-cpu:8787/wake`, `http://worker-gpu:8788/wake`). All three have
+(`http://worker-cpu:8787/wake`, `http://worker-gpu:8788/wake`,
+`http://worker-publish:8789/wake`). All of them have
 `cpu_shares: 512`, so they yield to the box's other services under contention
 and use the whole CPU when it is idle.
 
@@ -48,7 +50,7 @@ Run these as the deploy user (`hafeez`, in the `docker` group) unless marked `su
      connection never leaves the machine, and VibeDB allows plain connections
      only from Docker's private range.
    - `BETTER_AUTH_URL=https://content-corpus.strophic.in`
-   - `CORPUS_WAKE_URL=http://worker-cpu:8787/wake,http://worker-gpu:8788/wake`
+   - `CORPUS_WAKE_URL=http://worker-cpu:8787/wake,http://worker-gpu:8788/wake,http://worker-publish:8789/wake`
    - `KOKORO_MODELS_DIR=/home/hafeez/strophic/voicer/backend/models`
      (it must hold `kokoro-v1.0.onnx` and `voices-v1.0.bin`).
 

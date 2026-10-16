@@ -122,6 +122,43 @@ export async function requestRender(postId: string): Promise<ActionState> {
   return { ok: true };
 }
 
+const PublishInput = z.object({
+  platforms: z.array(z.enum(["youtube", "instagram"])).min(1, "Choose where to post it."),
+  // Wall-clock time in the post's timezone (a datetime-local value); none = now.
+  at: z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?$/, "Pick a date and time.").nullable(),
+  youtube_privacy: z.enum(["private", "unlisted", "public"]).nullable(),
+});
+
+/** Post a finished reel now, or schedule it, to the chosen platforms. */
+export async function requestPublish(postId: string, input: z.input<typeof PublishInput>): Promise<ActionState> {
+  const user = await requireUser();
+  const parsed = PublishInput.safeParse(input);
+  if (!parsed.success) return { ok: false, error: parsed.error.issues[0].message };
+  const { platforms, at, youtube_privacy } = parsed.data;
+  try {
+    await asUser(user.id, (db) => db.query(
+      `select api.request_publish($1, $2::text[],
+                                  (select $3::timestamp at time zone publish_tz from posts where id = $1), $4)`,
+      [postId, platforms, at, youtube_privacy]));
+  } catch (err) {
+    return { ok: false, error: friendly(err) };
+  }
+  await wakeWorker();
+  refresh();
+  return { ok: true };
+}
+
+export async function cancelPublish(postId: string, platform: "youtube" | "instagram"): Promise<ActionState> {
+  const user = await requireUser();
+  try {
+    await asUser(user.id, (db) => db.query("select api.cancel_publish($1, $2)", [postId, platform]));
+  } catch (err) {
+    return { ok: false, error: friendly(err) };
+  }
+  refresh();
+  return { ok: true };
+}
+
 export async function rejectScript(scriptId: string, _: ActionState, form: FormData): Promise<ActionState> {
   const user = await requireUser();
   const note = String(form.get("note") ?? "").trim().slice(0, 1000) || null;

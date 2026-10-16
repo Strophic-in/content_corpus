@@ -3,7 +3,9 @@
 import { useRouter } from "next/navigation";
 import { useActionState, useEffect, useState, useTransition } from "react";
 
-import { approveScript, deletePost, generateScript, rejectScript, requestRender, type ActionState } from "../../actions";
+import {
+  approveScript, cancelPublish, deletePost, generateScript, rejectScript, requestPublish, requestRender, type ActionState,
+} from "../../actions";
 
 /** Re-render the server page every few seconds while work is in flight. */
 export function AutoRefresh({ everyMs = 3000 }: { everyMs?: number }) {
@@ -116,5 +118,94 @@ export function DeletePostButton({ postId }: { postId: string }) {
       </div>
       <ErrorNote state={state} />
     </div>
+  );
+}
+
+type Platform = "youtube" | "instagram";
+const NAMES: Record<Platform, string> = { youtube: "YouTube", instagram: "Instagram" };
+const input = "rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:border-accent";
+
+/** Choose platforms, then post now (after a second click) or at a time. */
+export function PublishForm({ postId, platforms, youtubePrivacy, plannedLocal, tz }: {
+  postId: string; platforms: Platform[]; youtubePrivacy: string; plannedLocal: string | null; tz: string;
+}) {
+  const [chosen, setChosen] = useState<Platform[]>(platforms);
+  const [privacy, setPrivacy] = useState(youtubePrivacy);
+  const [at, setAt] = useState(plannedLocal ?? "");
+  const [confirming, setConfirming] = useState(false);
+  const [state, setState] = useState<ActionState>(null);
+  const [pending, start] = useTransition();
+  const where = chosen.map((p) => NAMES[p]).join(" and ");
+  const go = (when: string | null) => start(async () => {
+    setConfirming(false);
+    setState(await requestPublish(postId, {
+      platforms: chosen, at: when, youtube_privacy: chosen.includes("youtube") ? (privacy as "private") : null,
+    }));
+  });
+  const toggle = (p: Platform) => setChosen((c) => (c.includes(p) ? c.filter((x) => x !== p) : [...c, p]));
+  return (
+    <div className="flex flex-col gap-3 border-t border-border pt-4">
+      <fieldset className="flex flex-wrap gap-x-5 gap-y-2">
+        <legend className="mb-2 text-muted">Post to</legend>
+        {platforms.map((p) => (
+          <label key={p} className="flex items-center gap-2">
+            <input type="checkbox" checked={chosen.includes(p)} onChange={() => toggle(p)} className="size-4 accent-accent" />
+            {NAMES[p]}
+          </label>
+        ))}
+      </fieldset>
+      {chosen.includes("youtube") && (
+        <label className="flex flex-wrap items-center gap-2">
+          <span className="text-muted">YouTube visibility</span>
+          <select value={privacy} onChange={(e) => setPrivacy(e.target.value)} className={input}>
+            <option value="public">Public</option>
+            <option value="unlisted">Unlisted</option>
+            <option value="private">Private</option>
+          </select>
+        </label>
+      )}
+      {confirming ? (
+        <div className="flex flex-col gap-2 rounded-lg bg-background p-3">
+          <p>Post this reel to {where} now?</p>
+          <div className="flex gap-2">
+            <button disabled={pending} onClick={() => go(null)}
+                    className="rounded-md bg-accent px-4 py-2 font-medium text-accent-foreground disabled:opacity-60">
+              {pending ? "Starting…" : "Yes, post now"}
+            </button>
+            <button onClick={() => setConfirming(false)} className="rounded-md border border-border px-4 py-2">Not yet</button>
+          </div>
+        </div>
+      ) : (
+        <div className="flex flex-wrap items-center gap-2">
+          <button disabled={pending || !chosen.length} onClick={() => setConfirming(true)}
+                  className="rounded-md bg-accent px-4 py-2 font-medium text-accent-foreground disabled:opacity-60">
+            Post now
+          </button>
+          <span className="text-muted">or at</span>
+          <input type="datetime-local" step={60} value={at} onChange={(e) => setAt(e.target.value)}
+                 aria-label="Date and time to post" className={input} />
+          <button disabled={pending || !chosen.length || !at} onClick={() => go(at)}
+                  className="rounded-md border border-border px-4 py-2 font-medium disabled:opacity-60">
+            {pending ? "Scheduling…" : "Schedule"}
+          </button>
+        </div>
+      )}
+      <p className="text-xs text-muted">Times are in {tz}. The caption is the script&apos;s title, description and hashtags.</p>
+      <ErrorNote state={state} />
+    </div>
+  );
+}
+
+export function CancelPublishButton({ postId, platform }: { postId: string; platform: Platform }) {
+  const [state, setState] = useState<ActionState>(null);
+  const [pending, start] = useTransition();
+  return (
+    <>
+      <button disabled={pending} onClick={() => start(async () => setState(await cancelPublish(postId, platform)))}
+              className="text-sm text-danger hover:underline disabled:opacity-60">
+        {pending ? "Cancelling…" : "Cancel"}
+      </button>
+      <ErrorNote state={state} />
+    </>
   );
 }

@@ -9,7 +9,7 @@ import "./env";
  * waits for its next scheduled check, and the UI shows it as queued.
  */
 export async function wakeWorker(): Promise<void> {
-  // Comma-separated: one wake URL per worker process (cpu lane, gpu lane).
+  // Comma-separated: one wake URL per worker process (cpu, gpu and publish lanes).
   const urls = (process.env.CORPUS_WAKE_URL ?? "").split(",").map((u) => u.trim()).filter(Boolean);
   const token = process.env.CORPUS_WAKE_TOKEN;
   if (!urls.length || !token) return;

@@ -93,9 +93,11 @@ def _error_json(exc: BaseException, stage: str, detail: dict | None = None) -> d
 
 
 class Runner:
-    def __init__(self, lane: str, handlers: dict[str, Handler]):
+    def __init__(self, lane: str, handlers: dict[str, Handler],
+                 upkeep: Callable[[], None] | None = None):
         self.lane = lane
         self.handlers = handlers
+        self.upkeep = upkeep
         self.s = settings()
         self.wake = threading.Event()
 
@@ -147,6 +149,11 @@ class Runner:
                 log.warning("reaped lease: %s %s -> %s", r["kind"], r["job_id"], r["new_state"])
             if db.schedule_daily_ideas():
                 log.info("queued today's idea batches")
+        if self.upkeep:
+            try:
+                self.upkeep()
+            except Exception:  # noqa: BLE001 - housekeeping must not stop the lane
+                log.exception("upkeep failed")
         job = db.claim(self.lane, self.s.version, list(self.handlers))
         if not job:
             return False

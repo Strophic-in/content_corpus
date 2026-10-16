@@ -4,16 +4,21 @@ import { notFound } from "next/navigation";
 import { workspace } from "@/lib/channels";
 import { asUser } from "@/lib/db";
 import { postDetail, type PostRow, type ScriptRow, type ShotRow } from "@/lib/posts";
+import { PLATFORM_NAMES, publishInfo, type PublishTarget } from "@/lib/publish";
 import { signedUrl } from "@/lib/r2";
 import { requireUser } from "@/lib/session";
 import { IN_FLIGHT, statusBadge } from "@/lib/status";
 
 import { PostForm } from "../post-form";
-import { AutoRefresh, DeletePostButton, GenerateButton, RenderButton, ReviewActions } from "./post-actions";
+import {
+  AutoRefresh, CancelPublishButton, DeletePostButton, GenerateButton, PublishForm, RenderButton, ReviewActions,
+} from "./post-actions";
 
 export const metadata = { title: "Post · Content Corpus" };
 
 const EDITABLE = new Set(["draft", "awaiting_approval", "failed"]);
+// A finished reel: playable, and postable.
+const FINISHED = new Set(["ready", "scheduled", "published", "needs_review"]);
 
 function fmt(d: Date) {
   return new Intl.DateTimeFormat("en-IN", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Kolkata" }).format(d);
@@ -79,6 +84,8 @@ export default async function PostPage({ params }: { params: Promise<{ id: strin
 
       {post.approved_script_id && <RenderPanel post={post} shots={shots} />}
 
+      {post.final_key && FINISHED.has(post.status) && <PublishPanel post={post} userId={user.id} />}
+
       {EDITABLE.has(post.status) && (
         <details className="rounded-xl border border-border bg-surface p-5">
           <summary className="cursor-pointer text-sm font-medium">Edit post</summary>
@@ -129,7 +136,7 @@ async function RenderPanel({ post, shots }: { post: PostRow; shots: ShotRow[] })
   const seconds = shots.reduce((t, s) => t + (s.num_frames - 1) / s.fps, 0);
   const box = "flex flex-col gap-2 rounded-xl border border-border bg-surface p-5 text-sm";
 
-  if (post.status === "ready" || post.status === "scheduled" || post.status === "published") {
+  if (FINISHED.has(post.status)) {
     const [play, download] = post.final_key
       ? await Promise.all([signedUrl(post.final_key), signedUrl(post.final_key, 3600, `${post.slot_date}.mp4`)])
       : [null, null];
@@ -196,6 +203,70 @@ async function RenderPanel({ post, shots }: { post: PostRow; shots: ShotRow[] })
     );
   }
   return null;
+}
+
+async function PublishPanel({ post, userId }: { post: PostRow; userId: string }) {
+  const info = await publishInfo(userId, post.id, post.channel_id);
+  const pending = (t: PublishTarget) => t.job?.state === "queued" || t.job?.state === "claimed";
+  const busy = info.targets.some((t) => t.job?.state === "claimed" || (t.job?.state === "queued" && t.job.due));
+  const open = info.targets.filter((t) => t.account?.status === "connected" && t.attempt?.state !== "live" && !pending(t));
+  const when = (d: Date) => new Intl.DateTimeFormat("en-IN", { dateStyle: "medium", timeStyle: "short", timeZone: info.tz })
+    .format(new Date(d));
+  const channelPage = post.channel_id ? `/channels/${post.channel_id}` : "/channels";
+
+  function state(t: PublishTarget) {
+    const name = PLATFORM_NAMES[t.platform];
+    if (t.attempt?.state === "live")
+      return (
+        <span>
+          <span className="text-ok">Posted</span>
+          {t.attempt.privacy && t.attempt.privacy !== "public" && <span className="text-muted"> · {t.attempt.privacy}</span>}
+          {t.attempt.remote_url && (
+            <> · <a href={t.attempt.remote_url} target="_blank" rel="noreferrer" className="text-accent hover:underline">
+              View on {name} ↗</a></>
+          )}
+        </span>
+      );
+    if (t.job?.state === "claimed") return <span className="text-accent">Posting now…</span>;
+    if (t.job?.state === "queued")
+      return t.job.due ? (
+        <span className="text-accent">{t.job.error ? "Retrying shortly…" : "Starting…"}</span>
+      ) : (
+        <span className="flex flex-wrap items-center gap-2">
+          <span>Scheduled for {when(t.job.not_before)}{t.job.privacy ? ` · ${t.job.privacy}` : ""}</span>
+          <CancelPublishButton postId={post.id} platform={t.platform} />
+        </span>
+      );
+    if (!t.account) return <span className="text-muted">Not connected · <Link href={channelPage} className="text-accent hover:underline">connect</Link></span>;
+    if (t.account.status !== "connected")
+      return <span className="text-warn">Access expired · <Link href={channelPage} className="hover:underline">reconnect</Link></span>;
+    if (t.job?.state === "needs_review")
+      return <span className="text-warn">Not sure it went out — check {name}. Posting again checks first, so it won&apos;t post twice.</span>;
+    if (t.job && ["failed", "dead"].includes(t.job.state) && t.job.error?.message)
+      return <span className="text-danger">{t.job.error.message}</span>;
+    if (t.job?.state === "cancelled") return <span className="text-muted">Cancelled</span>;
+    return <span className="text-muted">Not posted</span>;
+  }
+
+  return (
+    <section className="flex flex-col gap-3 rounded-xl border border-border bg-surface p-5 text-sm">
+      {busy && <AutoRefresh everyMs={4000} />}
+      <h2 className="font-medium">Post it</h2>
+      <ul className="flex flex-col divide-y divide-border">
+        {info.targets.map((t) => (
+          <li key={t.platform} className="flex flex-wrap items-baseline gap-x-3 gap-y-1 py-2">
+            <span className="w-24 shrink-0 font-medium">{PLATFORM_NAMES[t.platform]}</span>
+            {t.account?.handle && <span className="text-muted">{t.account.handle}</span>}
+            <span className="min-w-0 basis-full sm:basis-auto">{state(t)}</span>
+          </li>
+        ))}
+      </ul>
+      {open.length > 0 && (
+        <PublishForm postId={post.id} platforms={open.map((t) => t.platform)} youtubePrivacy={info.youtubePrivacy}
+                     plannedLocal={info.plannedLocal} tz={info.tz} />
+      )}
+    </section>
+  );
 }
 
 function ScriptCard({ script, narrated }: { script: ScriptRow; narrated: boolean }) {

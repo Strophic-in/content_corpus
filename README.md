@@ -7,12 +7,12 @@ cards you swipe: right to schedule one, left to skip it. You can also add topics
 to the calendar yourself. OpenAI writes each one up as a short script, and you
 approve it. Rented GPUs then render the shots with LTX-2.5. A local
 voice model narrates, captions are timed to the word, and a finished 9:16 reel is
-ready to download. Publishing to YouTube Shorts comes next. A 40-second reel costs
+posted to YouTube Shorts and Instagram Reels, at once or at a scheduled time. A 40-second reel costs
 about **₹15 of GPU time** and is ready a few minutes after you click *Render*.
 
-> Status: owner-only and in active development. Planning, scripting, rendering and
-> assembly work end to end. YouTube publishing and the production deploy are in
-> progress.
+> Status: owner-only and in active development, deployed at
+> content-corpus.strophic.in. Ideas, scripting, rendering, assembly and publishing to
+> YouTube and Instagram work end to end.
 
 ---
 
@@ -45,7 +45,7 @@ flowchart LR
     G --> H["Preview, download<br/>YouTube Shorts"]
 ```
 
-Every step is a job in a Postgres queue, run by one of two worker processes
+Every step is a job in a Postgres queue, run by one of three worker processes
 (*lanes*):
 
 | Job | Lane | What it does |
@@ -56,6 +56,7 @@ Every step is a job in a Postgres queue, run by one of two worker processes
 | `render_post` | gpu | Rents the cheapest usable GPU (and a second one if a cached pod is free), drives ComfyUI over an SSH tunnel, and uploads each shot. The pod is always paused afterwards. |
 | `build_segment` | cpu | While the GPU renders the next shot, burns captions into the finished one and cuts its sound to the frame. |
 | `assemble` | cpu | Joins the segments (no re-encode), normalises the loudness to −14 LUFS once, and stores the reel. |
+| `publish_post` | publish | Posts the reel to the channel's YouTube (resumable upload) or Instagram (Reels), now or at its scheduled time. Every step is recorded first, so a crash resumes the same upload and never posts twice. |
 
 A post moves `draft → scripting → awaiting_approval → approved →
 queued_for_render → rendering → rendered → post_processing → ready`, and the web
@@ -144,6 +145,7 @@ cd apps/web && npm install && npx next dev   # on Windows, add --webpack if Turb
 # Workers: one process per lane (from worker/)
 CORPUS_LANE=cpu python -m corpus
 CORPUS_LANE=gpu CORPUS_WAKE_PORT=8788 python -m corpus
+CORPUS_LANE=publish CORPUS_WAKE_PORT=8789 python -m corpus
 ```
 
 The Kokoro voice files and the Whisper model download on first use into

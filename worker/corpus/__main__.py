@@ -5,8 +5,8 @@ from __future__ import annotations
 import logging
 
 from .config import settings
-from .handlers import (assemble, build_segment, narrate, plan_shots, render_post, suggest_ideas,
-                       write_script)
+from .handlers import (assemble, build_segment, narrate, plan_shots, publish_post, render_post,
+                       suggest_ideas, write_script)
 from .runner import Runner
 
 HANDLERS = {
@@ -24,7 +24,15 @@ HANDLERS = {
     "gpu": {
         "render_post": render_post.HANDLER,
     },
-    "publish": {},
+    # Its own process too: an upload must never wait behind a render or a script.
+    "publish": {
+        "publish_post": publish_post.HANDLER,
+    },
+}
+
+# Housekeeping each lane does on every tick, besides claiming work.
+UPKEEP = {
+    "publish": publish_post.upkeep,
 }
 
 
@@ -32,7 +40,7 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     lane = settings().lane
-    Runner(lane, HANDLERS[lane]).run_forever()
+    Runner(lane, HANDLERS[lane], upkeep=UPKEEP.get(lane)).run_forever()
 
 
 if __name__ == "__main__":

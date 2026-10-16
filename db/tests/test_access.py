@@ -417,3 +417,106 @@ def test_daily_ideas_are_scheduled_once_per_channel_per_day(alice, owner):
                          "and payload->>'format_id' = %s", (str(fid),)).fetchall()
         assert jobs == [("queued", "daily")]
         o.execute("delete from jobs where kind = 'suggest_ideas' and payload->>'format_id' = %s", (str(fid),))
+
+
+# ── publishing (0012) ─────────────────────────────────────────────────────────
+
+@contextmanager
+def web_session(user_id: str):
+    """corpus_web with each statement committed — for steps the worker (another
+    connection) has to see."""
+    with psycopg.connect(WEB, autocommit=True) as c:
+        c.execute("select set_config('app.user_id', %s, false)", (user_id,))
+        yield c
+
+
+def _finished_post(o, uid: str, *, platforms=("youtube",)) -> tuple[uuid.UUID, uuid.UUID]:
+    """A post with its reel assembled, on a channel with `platforms` connected."""
+    ch = o.execute("insert into channels (user_id, name) values (%s, %s) returning id",
+                   (uid, f"ch-{uuid.uuid4().hex[:6]}")).fetchone()[0]
+    for pf in platforms:
+        o.execute("""insert into channel_accounts (user_id, channel_id, platform, external_id, token_ciphertext)
+                     values (%s, %s, %s, 'ext', 'v1.x.y')""", (uid, ch, pf))
+    pid = o.execute("""insert into posts (user_id, channel_id, topic, slot_date, publish_at)
+                       values (%s, %s, 'reel', %s, now() + interval '3 days') returning id""",
+                    (uid, ch, _slot())).fetchone()[0]
+    o.execute("update posts set status = 'ready', final_key = 'k/final.mp4' where id = %s", (pid,))
+    return pid, ch
+
+
+def _post_status(o, pid) -> str:
+    return o.execute("select status from posts where id = %s", (pid,)).fetchone()[0]
+
+
+def _publish_job(o, pid, pf="youtube"):
+    return o.execute("select state, not_before, payload from jobs where dedupe_key = %s",
+                     (f"publish:{pid}:{pf}",)).fetchone()
+
+
+def test_publishing_follows_its_jobs_and_never_posts_twice(alice, owner):
+    pid, _ = _finished_post(owner, alice)
+    with web_session(alice) as c:
+        c.execute("select api.request_publish(%s, array['youtube'], now() + interval '2 days', 'unlisted')", (pid,))
+        state, at, payload = _publish_job(owner, pid)
+        assert state == "queued" and payload == {"platform": "youtube", "privacy": "unlisted"}
+        assert _post_status(owner, pid) == "scheduled"
+
+        c.execute("select api.request_publish(%s, array['youtube'])", (pid,))       # now, instead
+        state, now_at, _ = _publish_job(owner, pid)
+        assert state == "queued" and now_at < at                                     # same job, moved
+        assert owner.execute("select count(*) from jobs where post_id = %s", (pid,)).fetchone()[0] == 1
+
+        c.execute("select api.cancel_publish(%s, 'youtube')", (pid,))
+        assert _publish_job(owner, pid)[0] == "cancelled" and _post_status(owner, pid) == "ready"
+
+        c.execute("select api.request_publish(%s, array['youtube'])", (pid,))       # revived
+        assert _post_status(owner, pid) == "scheduled"
+        # The worker posts it: a live attempt, then the job succeeds.
+        owner.execute("insert into publish_attempts (post_id, platform, state, remote_id) "
+                      "values (%s, 'youtube', 'live', 'vid1')", (pid,))
+        owner.execute("update jobs set state = 'succeeded' where dedupe_key = %s", (f"publish:{pid}:youtube",))
+        assert _post_status(owner, pid) == "published"
+
+        with pytest.raises(psycopg.errors.ObjectNotInPrerequisiteState, match="already posted on YouTube"):
+            c.execute("select api.request_publish(%s, array['youtube'])", (pid,))
+        with pytest.raises(psycopg.errors.ObjectNotInPrerequisiteState, match="nothing is waiting"):
+            c.execute("select api.cancel_publish(%s, 'youtube')", (pid,))
+
+
+def test_an_unknown_outcome_waits_for_a_human_then_can_run_again(alice, owner):
+    pid, _ = _finished_post(owner, alice)
+    with web_session(alice) as c:
+        c.execute("select api.request_publish(%s, array['youtube'])", (pid,))
+        owner.execute("update jobs set state = 'needs_review' where dedupe_key = %s", (f"publish:{pid}:youtube",))
+        assert _post_status(owner, pid) == "needs_review"
+        c.execute("select api.request_publish(%s, array['youtube'])", (pid,))
+        assert _publish_job(owner, pid)[0] == "queued" and _post_status(owner, pid) == "scheduled"
+
+
+@pytest.mark.parametrize("platforms, at, privacy, error", [
+    (["instagram"], None, None, "connect Instagram to this channel first"),
+    ([], None, None, "choose where to post"),
+    (["tiktok"], None, None, "unknown platform"),
+    (["youtube"], None, "secret", "visibility must be"),
+    (["youtube"], "2099-01-01T00:00:00Z", None, "within the next 180 days"),
+])
+def test_publish_requests_are_checked(alice, owner, platforms, at, privacy, error):
+    pid, _ = _finished_post(owner, alice)
+    with pytest.raises(psycopg.Error, match=error):
+        with web(alice) as c:
+            c.execute("select api.request_publish(%s, %s::text[], %s, %s)", (pid, platforms, at, privacy))
+
+
+def test_only_a_finished_reel_of_your_own_can_be_posted(alice, bob, owner):
+    pid, _ = _finished_post(owner, alice)
+    with pytest.raises(psycopg.errors.NoDataFound):                    # not bob's post
+        with web(bob) as c:
+            c.execute("select api.request_publish(%s, array['youtube'])", (pid,))
+    owner.execute("update posts set status = 'approved' where id = %s", (pid,))
+    with pytest.raises(psycopg.errors.ObjectNotInPrerequisiteState, match="only a finished reel"):
+        with web(alice) as c:
+            c.execute("select api.request_publish(%s, array['youtube'])", (pid,))
+    with pytest.raises(psycopg.errors.InsufficientPrivilege):          # jobs only through the api
+        with web(alice) as c:
+            c.execute("insert into jobs (user_id, lane, kind, dedupe_key) values (%s, 'publish', 'publish_post', 'x')",
+                      (alice,))
