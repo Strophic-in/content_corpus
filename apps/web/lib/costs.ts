@@ -10,9 +10,10 @@ export const DEFAULT_PRICES: Record<string, [number, number, number]> = {
   "gpt-5-mini": [0.25, 0.025, 2], "gpt-5": [1.25, 0.125, 10],
 };
 
+/** A list price applies to that model and its dated snapshots, never to a model that
+ *  merely shares a prefix ("gpt-5.6-luna" is not "gpt-5"). */
 export function defaultPrice(model: string): [number, number, number] | null {
-  const name = Object.keys(DEFAULT_PRICES).sort((a, b) => b.length - a.length).find((n) => model.startsWith(n));
-  return name ? DEFAULT_PRICES[name] : null;
+  return DEFAULT_PRICES[model.replace(/-\d{4}-\d{2}-\d{2}$/, "")] ?? null;
 }
 
 export type CostRow = {

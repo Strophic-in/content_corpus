@@ -34,6 +34,18 @@ class VideoAnalysis(BaseModel):
     spoken_language: str            # "none" when nobody speaks
 
 
+class SafetyCheck(BaseModel):
+    sexual: bool
+    sexual_minors: bool
+    graphic_violence: bool
+    self_harm: bool
+
+
+SAFETY_INSTRUCTIONS = ("You screen social-media posts before a news editor sees them. Answer only from what is "
+                       "shown: is any of it sexual (nudity included), sexual content involving minors, graphic "
+                       "violence (injury, blood, a dead body), or self-harm?")
+
+
 def data_url(path: Path) -> str:
     return "data:image/jpeg;base64," + base64.b64encode(path.read_bytes()).decode()
 
@@ -51,6 +63,21 @@ class OpenAIVision:
         r = self.client.moderations.create(model=MODERATION_MODEL, input=parts).results[0]
         cats = {k for k, v in r.categories.model_dump(by_alias=True).items() if v}
         return {"flagged": bool(r.flagged), "categories": sorted(cats)}
+
+    def safety(self, model: str, text: str, image: Path | None) -> tuple[dict, Usage]:
+        """The moderation verdict from a chat model, for keys that may not call /moderations."""
+        content: list[dict] = [{"type": "input_text", "text": text[:4000]}]
+        if image is not None:
+            content.append({"type": "input_image", "image_url": data_url(image), "detail": "low"})
+        resp = self.client.responses.parse(model=model, instructions=SAFETY_INSTRUCTIONS,
+                                           input=[{"role": "user", "content": content}], text_format=SafetyCheck)
+        out = resp.output_parsed
+        if out is None:
+            raise Unparsed("the safety check returned no verdict", Usage.of(resp))
+        cats = [name for name, hit in (("sexual", out.sexual), ("sexual/minors", out.sexual_minors),
+                                       ("violence/graphic", out.graphic_violence), ("self-harm", out.self_harm))
+                if hit]
+        return {"flagged": bool(cats), "categories": cats, "by": model}, Usage.of(resp)
 
     def describe(self, model: str, sheet: Path, title: str) -> tuple[VideoAnalysis, Usage]:
         resp = self.client.responses.parse(

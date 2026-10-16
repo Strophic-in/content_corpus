@@ -14,6 +14,7 @@ swallowed.
 from __future__ import annotations
 
 import logging
+import re
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
@@ -48,9 +49,10 @@ def _price(c, user_id: str, model: str | None) -> dict | None:
                         where user_id = %s and model = %s""", (user_id, model)).fetchone()
     if row and row["input_per_m"] is not None:
         return {k: float(v) if v is not None else None for k, v in row.items()}
-    # Longest default whose name the model starts with: "gpt-4o-mini-2024-07-18" → gpt-4o-mini.
-    for name in sorted(DEFAULT_PRICES, key=len, reverse=True):
-        if model.startswith(name):
+    # A list price applies to that model and its dated snapshots ("gpt-4o-mini-2024-07-18"),
+    # never to another model that merely shares a prefix ("gpt-5.6-luna" is not "gpt-5").
+    for name in DEFAULT_PRICES:
+        if model == name or re.fullmatch(re.escape(name) + r"-\d{4}-\d{2}-\d{2}", model):
             i, ci, o = DEFAULT_PRICES[name]
             return {"input_per_m": i, "cached_input_per_m": ci, "output_per_m": o,
                     "per_image": row["per_image"] if row else None}

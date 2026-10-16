@@ -98,9 +98,10 @@ def _record_outcomes(outcomes: list[sources.Outcome]) -> None:
 
 
 def _has_media(it: feeds.Item) -> bool:
+    """A picture may be had: Reddit media, or an article's lead picture (og:image)."""
     if it.media_hint in ("video", "image", "gallery"):
         return True
-    return it.media_hint == "link" and bool(it.extra.get("thumbnail") or it.url)
+    return it.media_hint in ("link", "") and (bool(it.extra.get("thumbnail")) or it.url.startswith("http"))
 
 
 def _item_json(it: feeds.Item) -> dict:

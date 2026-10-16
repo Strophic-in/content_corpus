@@ -412,3 +412,48 @@ def test_gpu_time_and_unknown_models_are_recorded(user):
         rows = {r["kind"]: r for r in c.execute("select kind, inr_paise, usd_micros from costs where user_id = %s",
                                                 (user["id"],))}
     assert rows["gpu"]["inr_paise"] == 3450 and rows["llm"]["usd_micros"] is None
+
+
+class Forbidden(Exception):
+    status_code = 403            # what OpenAI answers a restricted key on /moderations
+
+
+def test_a_key_that_cannot_moderate_falls_back_to_a_safety_check(s3, user, media_web, monkeypatch):
+    class Restricted(FakeVision):
+        def moderate(self, text, image):
+            raise Forbidden("this key may not call /moderations")
+
+        def safety(self, model, text, image):
+            return {"flagged": False, "categories": [], "by": model}, Usage(model, 300, 20)
+    monkeypatch.setattr(attach_media, "VISION", Restricted)
+    iid = _idea(user, {**VIDEO_ITEM, "media_hint": "image", "link": "https://i.redd.it/x.jpg"})
+    _attach(iid)
+    with db.conn() as c:
+        assert c.execute("select media_state from ideas where id = %s", (iid,)).fetchone()["media_state"] == "ready"
+        cost = c.execute("select kind, model from costs where user_id = %s", (user["id"],)).fetchone()
+    assert cost == {"kind": "moderation", "model": "gpt-4.1-nano"}       # the vision model, checked and billed
+
+
+def test_a_feed_story_gets_its_articles_lead_picture(s3, user, media_web, monkeypatch, clips):
+    page = '<html><head><meta property="og:image" content="https://i.redd.it/lead.jpg"></head></html>'
+    iid = _idea(user, {"title": "Parliament passes the data bill", "media_hint": "", "url": "https://news.test/a"})
+    table_client = _routes({
+        "https://news.test/": httpx.Response(200, text=page, headers={"content-type": "text/html"}),
+        "https://i.redd.it/": httpx.Response(200, content=clips["jpg"], headers={"content-type": "image/jpeg"}),
+        "https://preview.test/": httpx.Response(200, content=clips["jpg"], headers={"content-type": "image/jpeg"}),
+    })
+    monkeypatch.setattr(attach_media.httpx, "Client", lambda **kw: table_client)
+    _attach(iid)
+    with db.conn() as c:
+        row = c.execute("select media_state, media from ideas where id = %s", (iid,)).fetchone()
+    assert row["media_state"] == "ready" and row["media"][0]["origin"] == "article"
+    assert row["media"][0]["credit"] == "news.test"
+
+
+def test_list_prices_apply_only_to_their_own_model(user):
+    costs.record_llm(Usage("gpt-5.6-luna", 10, 10), user_id=user["id"], note="other")
+    costs.record_llm(Usage("gpt-4o-mini-2024-07-18", 1_000_000, 0), user_id=user["id"], note="dated")
+    with db.conn() as c:
+        got = {r["note"]: r["usd_micros"] for r in c.execute(
+            "select note, usd_micros from costs where user_id = %s", (user["id"],))}
+    assert got == {"other": None, "dated": 150_000}

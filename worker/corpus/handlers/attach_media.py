@@ -56,7 +56,8 @@ def run(ctx: JobContext) -> dict:
         return {"skipped": "no longer waiting for media"}
     items = idea["items"] or []
     item = next((i for i in items if i.get("media_hint") in ("video", "image", "gallery")), None) or \
-        next((i for i in items if i.get("media_hint") == "link"), None)
+        next((i for i in items if i.get("media_hint") in ("link", "")
+              and str(i.get("url") or "").startswith("http")), None)
     if item is None:
         sweep.set_media(idea["id"], [], "none")
         return {"media": "none"}
@@ -64,7 +65,8 @@ def run(ctx: JobContext) -> dict:
     if not key:                                   # nothing may be shown unchecked
         sweep.set_media(idea["id"], [], "none", {"note": "no OpenAI key to check media with"})
         return {"media": "none", "why": "no key"}
-    st = db.one("select vision_model from app_settings where user_id = %s", (idea["user_id"],)) or {}
+    st = db.one("select vision_model, script_model from app_settings where user_id = %s",
+                (idea["user_id"],)) or {}
     vision = VISION(key)
     billed = dict(user_id=idea["user_id"], channel_id=idea["channel_id"], category_id=idea["category_id"],
                   job_id=ctx.job.get("id"))
@@ -79,10 +81,24 @@ def run(ctx: JobContext) -> dict:
                 thumb = media.download_image(client, item["thumbnail"], work / "thumb.jpg")
             except Exception:  # noqa: BLE001 - moderation can run on the text alone
                 thumb = None
+        text = f"{idea['title']}\n{item.get('title', '')}\n{item.get('summary', '')}"
         try:
-            mod = vision.moderate(f"{idea['title']}\n{item.get('title', '')}\n{item.get('summary', '')}", thumb)
+            mod = vision.moderate(text, thumb)
         except Exception as e:  # noqa: BLE001 - never show media that wasn't checked
-            raise Retryable(f"moderation unavailable: {e}", stage="moderation", retry_in=300) from e
+            if getattr(e, "status_code", None) not in (401, 403, 404):
+                raise Retryable(f"moderation unavailable: {e}", stage="moderation", retry_in=300) from e
+            # This key may not call /moderations (a restricted key): ask a chat model instead.
+            model = st.get("vision_model") or st.get("script_model")
+            if not model:
+                sweep.set_media(idea["id"], [], "none", {"note": "this key can't run moderation"})
+                return {"media": "none", "why": "no moderation"}
+            try:
+                mod, usage = vision.safety(model, text, thumb)
+            except Exception as e2:  # noqa: BLE001
+                if getattr(e2, "usage", None) is not None:
+                    costs.record_llm(e2.usage, kind="moderation", note="unparsable safety check", **billed)
+                raise Retryable(f"safety check unavailable: {e2}", stage="moderation", retry_in=300) from e2
+            costs.record_llm(usage, kind="moderation", note="safety check", **billed)
         analysis = {"moderation": mod}
         v = verdict(mod)
         if v == "remove":
