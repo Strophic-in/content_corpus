@@ -1,5 +1,7 @@
 import Link from "next/link";
 
+import { siteUrl } from "@/lib/site";
+
 export const metadata = {
   title: "Content Corpus — AI short-video studio by Strophic",
   description: "Content Corpus finds fresh video ideas, makes narrated vertical videos with AI, and publishes them to "
@@ -30,6 +32,7 @@ const GOOGLE_ACCESS = [
 // The homepage Google's OAuth verification reviews: public, names the app as the
 // consent screen does, says what it is for and why it asks for each permission.
 export default function HomePage() {
+  const site = siteUrl();
   return (
     <main className="mx-auto flex w-full max-w-4xl flex-col gap-16 px-4 pt-10 pb-20">
       <section className="max-w-2xl">
@@ -45,7 +48,7 @@ export default function HomePage() {
         </p>
         <div className="mt-6 flex flex-wrap gap-3">
           <Link href="/login" className="rounded-lg bg-accent px-4 py-2 font-medium text-accent-foreground">Sign in</Link>
-          <Link href="/privacy" className="rounded-lg border border-border bg-surface px-4 py-2 font-medium">
+          <Link href={`${site}/privacy`} className="rounded-lg border border-border bg-surface px-4 py-2 font-medium">
             Privacy policy
           </Link>
         </div>
@@ -105,8 +108,8 @@ export default function HomePage() {
           <li>Data from your Google and Instagram accounts is never sent to AI models or used to train them.</li>
         </ul>
         <p className="mt-4 text-sm">
-          The <Link href="/privacy" className="underline">privacy policy</Link> explains exactly what is stored, for how
-          long, and how to delete it. Use is subject to the <Link href="/terms" className="underline">terms of service</Link>.
+          The <Link href={`${site}/privacy`} className="underline">privacy policy</Link> explains exactly what is stored, for how
+          long, and how to delete it. Use is subject to the <Link href={`${site}/terms`} className="underline">terms of service</Link>.
         </p>
       </section>
     </main>

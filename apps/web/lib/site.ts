@@ -14,3 +14,10 @@ export function contactEmail(): string | undefined {
     || process.env.AUTH_ALLOWED_EMAILS?.split(",")[0]?.trim()
     || undefined;
 }
+
+// The public address, e.g. https://content-corpus.strophic.in. Google matches the
+// homepage's privacy-policy link against the consent screen's URL, so the public
+// pages link to it absolutely.
+export function siteUrl(): string {
+  return (process.env.BETTER_AUTH_URL ?? "").replace(/\/$/, "");
+}

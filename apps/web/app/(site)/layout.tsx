@@ -2,7 +2,7 @@ import { getSessionCookie } from "better-auth/cookies";
 import { headers } from "next/headers";
 import Link from "next/link";
 
-import { contactEmail } from "@/lib/site";
+import { contactEmail, siteUrl } from "@/lib/site";
 
 // The public face: homepage, privacy policy and terms, readable without signing in
 // (Google's verification rejects a homepage behind a login). Rendered per request
@@ -10,6 +10,7 @@ import { contactEmail } from "@/lib/site";
 export default async function SiteLayout({ children }: LayoutProps<"/">) {
   const signedIn = Boolean(getSessionCookie(await headers()));
   const contact = contactEmail();
+  const site = siteUrl();
   return (
     <div className="flex flex-1 flex-col pt-[env(safe-area-inset-top)]">
       <header className="mx-auto flex w-full max-w-4xl items-center gap-3 px-4 py-4">
@@ -31,8 +32,8 @@ export default async function SiteLayout({ children }: LayoutProps<"/">) {
       <footer className="border-t border-border pb-[env(safe-area-inset-bottom)]">
         <div className="mx-auto flex w-full max-w-4xl flex-wrap items-center gap-x-5 gap-y-2 px-4 py-6 text-sm text-muted">
           <span>© 2026 Strophic · Content Corpus</span>
-          <Link href="/privacy" className="hover:text-foreground">Privacy policy</Link>
-          <Link href="/terms" className="hover:text-foreground">Terms of service</Link>
+          <Link href={`${site}/privacy`} className="hover:text-foreground">Privacy policy</Link>
+          <Link href={`${site}/terms`} className="hover:text-foreground">Terms of service</Link>
           {contact && <a href={`mailto:${contact}`} className="hover:text-foreground">{contact}</a>}
         </div>
       </footer>
