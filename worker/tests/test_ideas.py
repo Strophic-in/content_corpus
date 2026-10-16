@@ -47,8 +47,8 @@ class FakeMemory:
             self.points.pop(str(i), None)
 
 
-def idea(title, brief="An explainer."):
-    return Idea(title=title, hook=f"{title}?", brief=brief, why_now="Evergreen", sources=[])
+def idea(title, brief="An explainer.", items=()):
+    return Idea(title=title, hook=f"{title}?", brief=brief, why_now="Evergreen", items=list(items))
 
 
 class FakeWriter:
@@ -70,8 +70,8 @@ def mem(monkeypatch):
     monkeypatch.setattr(suggest_ideas, "WRITER_FACTORY", FakeWriter)
     monkeypatch.setattr(suggest_ideas, "EMBED", fake_embed)
     monkeypatch.setattr(suggest_ideas, "MEMORY", lambda log: m)
-    monkeypatch.setattr(suggest_ideas, "FETCH", lambda sources, log: [
-        feeds.Item("ScienceDaily", "Microplastics found in placentas", "A study found...", "https://x.test/a")])
+    monkeypatch.setattr(suggest_ideas, "FETCH", lambda rows, **kw: ([
+        feeds.Item("ScienceDaily", "Microplastics found in placentas", "A study found...", "https://x.test/a")], []))
     return m
 
 
@@ -93,6 +93,7 @@ def channel():
                         (uid, ch, "Ideas for {channel_name} ({channel_niche}). Trends:\n{trends}\n"
                                   "Avoid:\n{avoid}\nSkipped:\n{rejected}\nGive {count}. JSON like {\"x\": 1}")
                         ).fetchone()["id"]
+        c.execute("update categories set ideas_per_batch = 3 where channel_id = %s", (ch,))  # "General", by trigger
     yield uid, ch, fid
     with db.conn() as c:
         c.execute('delete from "user" where id = %s', (uid,))
@@ -127,7 +128,8 @@ def test_only_new_ideas_are_kept_and_remembered(mem, channel):
     assert {p["kind"] for p in mem.points.values()} == {"idea"} and len(mem.points) == 3
     system = FakeWriter.systems[0]
     assert "Ideas for Cutaway (3D explainers)" in system and "Microplastics found in placentas" in system
-    assert "Give 7" in system and '{"x": 1}' in system            # count + extra; other braces left alone
+    assert "Give 6" in system and '{"x": 1}' in system            # count + extra; other braces left alone
+    assert "## Category: General" in system and "`items` lists the numbers" in system   # added to old prompts
 
 
 def test_a_later_batch_never_repeats_and_learns_from_skips(mem, channel):
@@ -179,7 +181,7 @@ def test_unreachable_memory_still_gives_ideas(channel, monkeypatch):
     FakeWriter.outputs, FakeWriter.systems = [[idea("How lightning finds its path")]], []
     monkeypatch.setattr(suggest_ideas, "WRITER_FACTORY", FakeWriter)
     monkeypatch.setattr(suggest_ideas, "EMBED", fake_embed)
-    monkeypatch.setattr(suggest_ideas, "FETCH", lambda sources, log: [])
+    monkeypatch.setattr(suggest_ideas, "FETCH", lambda rows, **kw: ([], []))
     monkeypatch.setattr(suggest_ideas, "MEMORY",
                         lambda log: memory.connect("http://127.0.0.1:9", "k", log))   # nothing listens there
     run_batch(uid, fid)

@@ -22,11 +22,12 @@ import json
 import os
 import tempfile
 import threading
+import time
 from pathlib import Path
 
 from psycopg.types.json import Jsonb
 
-from .. import db, storage
+from .. import costs, db, storage
 from ..config import settings
 from ..gpu import render, session
 from ..race import RaceClient
@@ -86,6 +87,59 @@ def _remember_models(pod_id: int | None, has_models: bool) -> None:
 _notes_lock = threading.Lock()
 
 
+class _Rates:
+    """What a pod costs an hour, in paise: the rate Race quotes for its slice or GPU
+    (remembered, since a busy GPU drops off the offers list), else the owner's
+    configured rate."""
+
+    def __init__(self, race, fallback_paise: int | None):
+        self.fallback = fallback_paise
+        self.by_slice: dict[int, int] = {}
+        self.by_gpu: dict[str, int] = {}
+        self.gpu_of: dict[int, str] = {}
+        notes = _rate_notes()
+        self.by_gpu.update(notes)
+        try:
+            for o in race.gpus():
+                if o.get("hourly_rate") is not None and (o.get("currency") or "INR") == "INR":
+                    paise = round(float(o["hourly_rate"]) * 100)
+                    self.by_slice[int(o["slice_id"])] = paise
+                    self.by_gpu[str(o.get("gpu_name", ""))] = paise
+            for p in race.pods():
+                self.gpu_of[int(p["id"])] = str(p.get("gpu") or "")
+        except Exception:  # noqa: BLE001 - the fallback rate applies
+            pass
+        _save_rate_notes(self.by_gpu)
+
+    def gpu(self, pod_id: int) -> str:
+        return self.gpu_of.get(pod_id, "")
+
+    def paise_h(self, pod_id: int, slice_id: int | None = None) -> int | None:
+        if slice_id is not None and slice_id in self.by_slice:
+            return self.by_slice[slice_id]
+        name = self.gpu(pod_id)
+        # A pod's GPU reads "NVIDIA RTX 5090-SLICE-2"; offers read "NVIDIA RTX 5090".
+        for gpu, paise in sorted(self.by_gpu.items(), key=lambda kv: -len(kv[0])):
+            if gpu and name.startswith(gpu):
+                return paise
+        return self.fallback
+
+
+def _rate_notes() -> dict[str, int]:
+    try:
+        return json.loads((settings().cache_dir / "race_rates.json").read_text())
+    except (OSError, ValueError):
+        return {}
+
+
+def _save_rate_notes(rates: dict[str, int]) -> None:
+    try:
+        (settings().cache_dir / "race_rates.json").parent.mkdir(parents=True, exist_ok=True)
+        (settings().cache_dir / "race_rates.json").write_text(json.dumps(rates))
+    except OSError:
+        pass
+
+
 def _set_post(post_id, status: str, reason: str, error: dict | None = None) -> None:
     with db.tx() as c:
         old = c.execute("select status from posts where id = %s for update", (post_id,)).fetchone()["status"]
@@ -114,7 +168,19 @@ def run(ctx: JobContext) -> dict:
         race = RACE()
         slices = [int(x) for x in os.environ.get("CORPUS_RACE_SLICES", "5,16,11").split(",") if x]
         cached = _cache_pods(race)
-        pod = ACQUIRE(race, resume_ids=cached, slices=slices, name="corpus-render", log=log)
+        with db.conn() as c:
+            fallback = (c.execute("select gpu_rate_paise_per_hour as r from app_settings where user_id = %s",
+                                  (post["user_id"],)).fetchone() or {}).get("r")
+        rates = _Rates(race, fallback)
+
+        def bill(pod_id: int, seconds: float, slice_id: int | None, note: str | None = None,
+                 confirmed: bool = True) -> None:
+            costs.record_gpu(user_id=post["user_id"], post_id=post["id"], job_id=ctx.job.get("id"),
+                             pod_id=pod_id, gpu=rates.gpu(pod_id) or None, seconds=seconds,
+                             rate_paise_h=rates.paise_h(pod_id, slice_id), confirmed=confirmed, note=note)
+
+        pod = ACQUIRE(race, resume_ids=cached, slices=slices, name="corpus-render", log=log,
+                      on_billed=lambda pid, s, sl, note: bill(pid, s, sl, note))
         if pod is None:
             _set_post(post["id"], "queued_for_render", "waiting for a GPU",
                       {"stage": "no_gpu", "message": "Waiting for a free GPU — retrying every 10 minutes."})
@@ -160,7 +226,8 @@ def run(ctx: JobContext) -> dict:
             r, p = (race, pod) if main else (RACE(), None)
             try:
                 if not main:
-                    p = ACQUIRE(r, resume_ids=[pid], slices=[], name="corpus-render", log=plog)
+                    p = ACQUIRE(r, resume_ids=[pid], slices=[], name="corpus-render", log=plog,
+                                on_billed=lambda i, s, sl, note: bill(i, s, sl, note))
                     if p is None:
                         return
                 if queue.remaining() == 0:
@@ -184,7 +251,14 @@ def run(ctx: JobContext) -> dict:
             finally:
                 queue.leave(who)
                 if p is not None:
-                    RELEASE(r, p, keep_cache=True, log=plog)
+                    confirmed = True
+                    try:
+                        RELEASE(r, p, keep_cache=True, log=plog)
+                    except Exception as e:  # noqa: BLE001 - recorded; the pod may still be billing
+                        confirmed = False
+                        plog(f"pause failed: {e}")
+                    bill(p.id, time.time() - getattr(p, "started", time.time()),
+                         getattr(p, "slice_id", None), None, confirmed)
 
         crew = [(True, pod.id)] + [(False, pid) for pid in helpers]
         for _, pid in crew:                    # joined up front: a shot the main pod fails waits

@@ -81,7 +81,8 @@ grant select, insert, update, delete on "user", "session", "account", "verificat
 -- Read access; rows are scoped by the RLS policies in 0004_rls.sql.
 grant select on app_settings, caption_styles, render_batches, posts, scripts, shots,
                 jobs, publish_attempts, post_events, workers, lane_config,
-                storage_objects, storage_config, channels, formats, format_versions, ideas
+                storage_objects, storage_config, channels, formats, format_versions, ideas,
+                categories, category_sources, costs, prices, fx_rates
   to corpus_web;
 
 -- Settings rows are created by api.ensure_settings(); the form edits intent only.
@@ -89,7 +90,8 @@ grant update (timezone, auto_approve, default_publish_time, youtube_category_id,
               youtube_privacy, caption_style_id, gpu_autopause, channel_name,
               channel_niche, channel_audience, channel_voice, script_language,
               default_reel_seconds, script_model, openai_models, default_audio_source,
-              narrator_voice, narrator_speed)
+              narrator_voice, narrator_speed, pipeline_mode, auto_spend_cap_paise_day,
+              vision_model, usd_inr_override)
   on app_settings to corpus_web;
 
 -- Key vault: write-only from the web's point of view. The ciphertext column is
@@ -154,6 +156,24 @@ grant update (external_id, handle, display_name, avatar_url, token_ciphertext, t
               scopes, status, updated_at)
   on channel_accounts to corpus_web;
 grant delete on channel_accounts to corpus_web;
+
+-- Categories and their sources: the owner edits what a category covers and where
+-- it looks. A source's status, fetch times and errors are the ideas worker's.
+grant insert (user_id, channel_id, name, color, brief, keywords, format_id, ideas_per_batch, enabled)
+  on categories to corpus_web;
+grant update (name, color, brief, keywords, format_id, ideas_per_batch, enabled)
+  on categories to corpus_web;
+grant delete on categories to corpus_web;
+grant insert (user_id, category_id, kind, value, options, enabled) on category_sources to corpus_web;
+grant update (kind, value, options, enabled) on category_sources to corpus_web;
+grant delete on category_sources to corpus_web;
+
+-- Model prices are the owner's to set; the cost ledger and exchange rates are
+-- written by workers only (a role that could edit `costs` could hide spending).
+grant insert (user_id, model, input_per_m, cached_input_per_m, output_per_m, per_image, updated_at)
+  on prices to corpus_web;
+grant update (input_per_m, cached_input_per_m, output_per_m, per_image, updated_at) on prices to corpus_web;
+grant delete on prices to corpus_web;
 
 -- Scripts: text fields of a draft only. `state` is excluded, so approval cannot
 -- be self-served — it goes through api.approve_script.

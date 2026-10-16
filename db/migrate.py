@@ -1,7 +1,12 @@
 """Apply db/migrations/*.sql in order, then re-apply db/access.sql. From the repo root:
 
-    worker/.venv/Scripts/python db/migrate.py            # apply pending + access
-    worker/.venv/Scripts/python db/migrate.py --status   # list, change nothing
+    worker/.venv/Scripts/python db/migrate.py --target test   # apply pending + access
+    worker/.venv/Scripts/python db/migrate.py --status        # list, change nothing
+
+--target test|prod is required to change anything, and must match the database:
+test databases are named *_test (db/dev/test_db.sh makes corpus_test); anything
+else is production. The laptop's .env holds the production URL, so a bare run
+once migrated production by accident (2026-10-16); now it refuses instead.
 
 Connects with DATABASE_URL_UNPOOLED — the owner role's *direct* URL (port 5432
 on VibeDB), because DDL does not belong behind a transaction pooler. Each
@@ -58,9 +63,20 @@ def main() -> int:
         print("DATABASE_URL_UNPOOLED is not set (the owner's direct URL, not the pooler)")
         return 2
     status_only = "--status" in sys.argv
+    target = sys.argv[sys.argv.index("--target") + 1] if "--target" in sys.argv[:-1] else None
+    if not status_only and target not in ("test", "prod"):
+        print("say which database this is: --target test or --target prod")
+        return 2
 
     files = sorted(MIGRATIONS.glob("*.sql"))
     with psycopg.connect(url, autocommit=True) as conn:
+        dbname = conn.execute("select current_database()").fetchone()[0]
+        is_test = dbname.endswith("_test")
+        if not status_only and is_test != (target == "test"):
+            print(f"refusing: --target {target}, but the database is {dbname!r} "
+                  f"({'a test' if is_test else 'the production'} database)")
+            return 2
+        print(f"database {dbname} ({'test' if is_test else 'production'})")
         conn.execute("""
             create table if not exists public.schema_migrations (
               name       text primary key,

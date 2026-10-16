@@ -9,11 +9,14 @@ import { wakeWorker } from "@/lib/wake";
 
 import type { ActionState } from "../actions";
 
-/** "Find ideas": the agent reads today's trends and suggests a fresh batch. */
-export async function requestIdeas(formatId: string): Promise<ActionState> {
+/** "More ideas": the agent reads one category's sources (or every category's) and
+ *  suggests a fresh batch. */
+export async function requestIdeas(target: { categoryId: string } | { channelId: string }): Promise<ActionState> {
   const user = await requireUser();
   try {
-    await asUser(user.id, (db) => db.query("select api.request_ideas($1)", [formatId]));
+    await asUser(user.id, (db) => "categoryId" in target
+      ? db.query("select api.request_category_ideas($1)", [target.categoryId])
+      : db.query("select api.request_channel_ideas($1)", [target.channelId]));
   } catch (err) {
     return { ok: false, error: friendly(err) };
   }
@@ -28,19 +31,21 @@ export async function requestIdeas(formatId: string): Promise<ActionState> {
  * agent reads before its next batch.
  */
 export async function decideIdea(ideaId: string, accept: boolean, date: string | null, time: string | null,
-                                 reason: string | null): Promise<ActionState & { postId?: string }> {
+                                 reason: string | null, platforms: string[] | null,
+                                 ): Promise<ActionState & { postId?: string }> {
   const user = await requireUser();
   if (accept && !(date && /^\d{4}-\d{2}-\d{2}$/.test(date) && time && /^\d{2}:\d{2}(:\d{2})?$/.test(time)))
     return { ok: false, error: "Pick a date and time." };
   try {
     const postId = await asUser(user.id, async (db) => {
       const r = await db.query(
-        `select (api.decide_idea($1, $2,
+        `select (api.decide_idea_v2($1, $2,
                    case when $2 then ($3::date + $4::time) at time zone
                      (select c.timezone from ideas i join channels c on c.id = i.channel_id where i.id = $1)
                    end,
-                   $5)).post_id`,
-        [ideaId, accept, date, time, reason?.slice(0, 200) || null],
+                   $5, $6::text[])).post_id`,
+        [ideaId, accept, date, time, reason?.slice(0, 200) || null,
+         platforms?.filter((p) => p === "youtube" || p === "instagram") ?? null],
       );
       return r.rows[0]?.post_id as string | undefined;
     });

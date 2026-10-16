@@ -21,7 +21,7 @@ import os
 import re
 import subprocess
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Callable
 
 from ..race import RaceClient, RaceError
@@ -48,6 +48,9 @@ class Pod:
     port: int
     web_url: str
     fresh: bool          # deployed now (True) or resumed with its cache (False)
+    # Billing: Race charges from the resume/deploy call until pause/terminate.
+    started: float = field(default_factory=time.time)
+    slice_id: int | None = None
 
 
 def _parse_ssh(cmd: str) -> tuple[str, int]:
@@ -94,16 +97,20 @@ def _pod_by_name(race: RaceClient, name: str) -> dict:
 
 
 def acquire(race: RaceClient, *, resume_ids: list[int], slices: list[int], name: str,
-            log: Log = print) -> Pod | None:
-    """Cheapest usable pod, or None when every option is busy or short of disk."""
+            log: Log = print, on_billed: Callable[[int, float, int | None, str], None] | None = None
+            ) -> Pod | None:
+    """Cheapest usable pod, or None when every option is busy or short of disk.
+    on_billed(pod_id, seconds, slice_id, note) reports a pod that was paid for but
+    not returned (a fresh one found unusable and terminated)."""
     for pid in resume_ids:
+        t_start = time.time()
         try:
             r = race.resume(str(pid))
         except RaceError as e:
             log(f"resume {pid}: {e.message}")
             continue
         host, port = _parse_ssh(r.get("ssh_command"))
-        pod = Pod(pid, host, port, r.get("web_url", ""), fresh=False)
+        pod = Pod(pid, host, port, r.get("web_url", ""), fresh=False, started=t_start)
         _wait_ssh(pod)
         log(f"resumed pod {pid} on {host} (models cached there)")
         return pod
@@ -111,6 +118,7 @@ def acquire(race: RaceClient, *, resume_ids: list[int], slices: list[int], name:
     need = models.TOTAL_BYTES + models.MARGIN_BYTES
     for slice_id in slices:
         t0 = time.monotonic()
+        t_start = time.time()
         try:
             race.deploy(str(slice_id), COMFYUI_TEMPLATE, disk_gb=POD_DISK_GB, name=name)
         except RaceError as e:
@@ -118,7 +126,8 @@ def acquire(race: RaceClient, *, resume_ids: list[int], slices: list[int], name:
             continue
         p = _pod_by_name(race, name)
         host, port = _parse_ssh(p.get("ssh_command"))
-        pod = Pod(int(p["id"]), host, port, p.get("web_url", ""), fresh=True)
+        pod = Pod(int(p["id"]), host, port, p.get("web_url", ""), fresh=True, started=t_start,
+                  slice_id=slice_id)
         try:
             _wait_ssh(pod)
             free = host_free_bytes(pod)
@@ -133,6 +142,8 @@ def acquire(race: RaceClient, *, resume_ids: list[int], slices: list[int], name:
         race.terminate(str(pod.id))
         log(f"slice {slice_id}: pod {pod.id} on {host} unusable ({why}); terminated after "
             f"{time.monotonic() - t0:.0f}s")
+        if on_billed:
+            on_billed(pod.id, time.time() - t_start, slice_id, f"unusable ({why}); terminated")
     return None
 
 

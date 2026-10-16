@@ -26,7 +26,9 @@ export default async function DiscoverHome() {
             (select count(*) from ideas i where i.channel_id = c.id and i.status = 'new')::int as new_ideas,
             exists (select 1 from jobs j where j.kind = 'suggest_ideas' and j.state in ('queued','claimed')
                       and j.not_before <= now() + interval '1 minute'
-                      and j.payload->>'format_id' in (select f.id::text from formats f where f.channel_id = c.id)
+                      and (j.payload->>'channel_id' = c.id::text
+                           or j.payload->>'category_id' in (select k.id::text from categories k
+                                                              where k.channel_id = c.id))
                    ) as looking,
             (select count(*) from posts p where p.channel_id = c.id and p.status = 'scheduled')::int as scheduled,
             coalesce((select json_agg(json_build_object('platform', a.platform, 'handle', a.handle, 'status', a.status)

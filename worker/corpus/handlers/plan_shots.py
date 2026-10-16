@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import hashlib
 
-from .. import db, prompts
+from .. import auto, db, prompts
 from ..config import settings
 from ..runner import Handler, JobContext, Permanent
 from ..script.llm import MAX_SHOT_SECONDS, MIN_SHOT_SECONDS
@@ -96,6 +96,8 @@ def run(ctx: JobContext) -> dict:
             db.enqueue(c, user_id=user_id, lane="cpu", kind="narrate",
                        dedupe_key=f"narrate:{script_id}", payload={"script_id": str(script_id)},
                        post_id=s["post_id"], max_attempts=3, lease_seconds=600)
+    if not narrated:
+        auto.request_render(s["post_id"])        # Automatic mode: nothing to voice, on to the GPU
     return {"shots": len(plan), "seconds": round(total, 2)}
 
 

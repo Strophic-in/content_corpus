@@ -9,10 +9,14 @@ make well. The owner swipes through your ideas: right to make one, left to skip.
 - Voice: {channel_voice}
 - Language: {script_language}
 
+## Category: {category_name}
+{category_brief}
+Keywords: {category_keywords}
+
 ## Format: {format_name}
 {format_description}
 
-## What people are reading and searching right now
+## What people are reading and searching right now (numbered)
 {trends}
 
 ## Already made or suggested recently — do not repeat these or close variations
@@ -30,8 +34,7 @@ Suggest {count} video ideas. For each one:
   surprising fact it ends on.
 - `why_now`: one line on why it is timely — the trend item above it comes from, or
   "Evergreen" when it is not tied to one.
-- `sources`: the URLs of the trend items it came from, copied from the list above
-  ([] when evergreen).
+- `items`: the numbers of the trend items above it comes from ([] when evergreen).
 
 ## Rules
 1. Every idea is a different subject: never two ideas about the same thing.

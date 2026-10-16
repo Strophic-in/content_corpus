@@ -65,6 +65,24 @@ class Usage:
     model: str
     input_tokens: int
     output_tokens: int
+    cached_input_tokens: int = 0
+
+    @classmethod
+    def of(cls, resp) -> "Usage":
+        """From an OpenAI Responses API reply."""
+        u = resp.usage
+        details = getattr(u, "input_tokens_details", None)
+        return cls(model=resp.model, input_tokens=getattr(u, "input_tokens", 0) or 0,
+                   output_tokens=getattr(u, "output_tokens", 0) or 0,
+                   cached_input_tokens=getattr(details, "cached_tokens", 0) or 0)
+
+
+class Unparsed(ValueError):
+    """The model answered (and was billed) but not in the requested shape."""
+
+    def __init__(self, message: str, usage: Usage):
+        super().__init__(message)
+        self.usage = usage
 
 
 class ScriptWriter(Protocol):
@@ -82,10 +100,8 @@ class OpenAIScriptWriter:
                                            text_format=ScriptOut)
         out = resp.output_parsed
         if out is None:
-            raise ValueError("model returned no parsable script")
-        u = resp.usage
-        return out, Usage(model=resp.model, input_tokens=getattr(u, "input_tokens", 0),
-                          output_tokens=getattr(u, "output_tokens", 0))
+            raise Unparsed("model returned no parsable script", Usage.of(resp))
+        return out, Usage.of(resp)
 
 
 def validate(out: ScriptOut, target_seconds: int, narrated: bool = False, speed: float = 1.1) -> list[str]:

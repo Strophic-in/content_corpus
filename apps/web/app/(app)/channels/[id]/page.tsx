@@ -6,6 +6,8 @@ import { asUser } from "@/lib/db";
 import { configured } from "@/lib/oauth";
 import { requireUser } from "@/lib/session";
 
+import { AutoRefresh } from "../../posts/[id]/post-actions";
+import { CategoriesSection, type CategoryData } from "../categories";
 import { ChannelForm, ChannelMenu, ConnectionCard } from "../channel-forms";
 
 export const metadata = { title: "Channel · Content Corpus" };
@@ -20,10 +22,27 @@ export default async function ChannelPage({ params, searchParams }: {
     const channel = (await db.query(`select ${CHANNEL_COLS} from channels where id = $1`, [id])).rows[0] as Channel | undefined;
     if (!channel) return null;
     const accounts = (await db.query(`select ${ACCOUNT_COLS} from channel_accounts where channel_id = $1`, [id])).rows as Account[];
-    return { channel, accounts };
+    const formats = (await db.query("select id, name from formats where channel_id = $1 order by is_default desc, name",
+                                    [id])).rows as { id: string; name: string }[];
+    // Each category with its sources, whether a check is running, and the latest suggestions.
+    const categories = (await db.query(
+      `select k.id, k.name, k.color, k.brief, k.keywords, k.format_id, k.ideas_per_batch, k.enabled,
+              coalesce((select json_agg(json_build_object('id', s.id, 'kind', s.kind, 'value', s.value,
+                                 'enabled', s.enabled, 'status', s.status, 'last_items', s.last_items,
+                                 'last_error', s.last_error) order by s.created_at)
+                          from category_sources s where s.category_id = k.id), '[]') as sources,
+              exists (select 1 from jobs j where j.kind = 'check_sources' and j.state in ('queued','claimed')
+                        and j.payload->>'category_id' = k.id::text) as checking,
+              (select json_build_object('state', j.state, 'result', j.result) from jobs j
+                where j.kind = 'suggest_sources' and j.payload->>'category_id' = k.id::text
+                order by j.created_at desc limit 1) as suggestion
+         from categories k where k.channel_id = $1 order by k.created_at`, [id])).rows as CategoryData[];
+    return { channel, accounts, formats, categories };
   });
   if (!data) notFound();
-  const { channel, accounts } = data;
+  const { channel, accounts, formats, categories } = data;
+  const busy = categories.some((c) => c.checking || c.sources.some((s) => s.status === "new") ||
+                                      ["queued", "claimed"].includes(c.suggestion?.state ?? ""));
   const { connected, connect_error } = await searchParams;
 
   return (
@@ -49,6 +68,9 @@ export default async function ChannelPage({ params, searchParams }: {
           ))}
         </div>
       </section>
+
+      {busy && <AutoRefresh everyMs={5000} />}
+      <CategoriesSection channelId={channel.id} categories={categories} formats={formats} />
 
       <section className="rounded-2xl border border-border bg-surface p-5">
         <h2 className="font-medium">Profile</h2>

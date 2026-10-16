@@ -14,8 +14,9 @@ import json
 import re
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
 from typing import Callable
 
 import httpx
@@ -39,6 +40,26 @@ class Item:
     title: str
     summary: str
     url: str
+    published: datetime | None = None
+    rank: int = 0                       # position in its feed (Reddit's top-of-day: the score proxy)
+    media_hint: str = ""                # video | image | gallery | link | self ("" = unknown)
+    # Everything else about the item (a Reddit post's subreddit, author, media link...).
+    extra: dict = field(default_factory=dict, compare=False, hash=False)
+
+
+def _when(text: str | None) -> datetime | None:
+    """RFC 822 (RSS) or ISO 8601 (Atom), always timezone-aware; None if unreadable."""
+    text = (text or "").strip()
+    if not text:
+        return None
+    try:
+        dt = parsedate_to_datetime(text)
+    except (TypeError, ValueError, IndexError):
+        try:
+            dt = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
 
 
 def _text(s: str | None) -> str:
@@ -79,6 +100,7 @@ def parse(source: str, url: str, body: str) -> list[Item]:
             link = next((c.get("href") for c in el if _local(c.tag) == "link" and c.get("href")), "")
             body_el = fields.get("summary") if fields.get("summary") is not None else fields.get("content")
             summary = _text(body_el.text if body_el is not None else "")
+            stamp = fields.get("published") if fields.get("published") is not None else fields.get("updated")
         else:                 # RSS; Google Trends adds <ht:news_item> children
             link = (fields.get("link").text or "").strip() if fields.get("link") is not None else ""
             summary = _text(fields.get("description").text if fields.get("description") is not None else "")
@@ -88,7 +110,9 @@ def parse(source: str, url: str, body: str) -> list[Item]:
             news_url = next((n.text for n in el.iter() if _local(n.tag) == "news_item_url" and n.text), "")
             if news_url and "trends.google" in link:
                 link = news_url.strip()
-        out.append(Item(source, title, summary, link))
+            stamp = fields.get("pubDate") if fields.get("pubDate") is not None else fields.get("date")
+        out.append(Item(source, title, summary, link, published=_when(stamp.text if stamp is not None else None),
+                        rank=len(out)))
     return out
 
 
@@ -123,8 +147,21 @@ def fetch_all(sources: list[dict], log: Callable[[str], None] = print,
     return out
 
 
+def _age(dt: datetime | None) -> str:
+    if dt is None:
+        return ""
+    hours = (datetime.now(timezone.utc) - dt).total_seconds() / 3600
+    return f", {max(0, round(hours))}h ago" if hours < 48 else f", {round(hours / 24)}d ago"
+
+
 def as_prompt(items: list[Item], limit: int = 70) -> str:
+    """Numbered, so the model can say which items an idea came from. A media hint
+    (video, image) tells it which stories come with footage or pictures."""
     if not items:
         return "(no trend feeds answered today — suggest strong evergreen ideas)"
-    return "\n".join(f"- [{i.source}] {i.title}" + (f" — {i.summary}" if i.summary else "")
-                     + (f" ({i.url})" if i.url else "") for i in items[:limit])
+    lines = []
+    for n, i in enumerate(items[:limit], 1):
+        media = f" · {i.media_hint}" if i.media_hint in ("video", "image", "gallery") else ""
+        lines.append(f"{n}. [{i.source}{media}{_age(i.published)}] {i.title}"
+                     + (f" — {i.summary}" if i.summary else "") + (f" ({i.url})" if i.url else ""))
+    return "\n".join(lines)

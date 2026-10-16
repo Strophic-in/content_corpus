@@ -9,6 +9,7 @@ Everything runs on one always-on box (an Oracle Cloud Ampere A1: arm64, Ubuntu
 | cpu lane (scripts, narration, segments, assembly) | container `worker-cpu` |
 | gpu lane (rents Race GPUs over the API + SSH) | container `worker-gpu` |
 | publish lane (posts reels to YouTube and Instagram) | container `worker-publish` |
+| ideas lane (Reddit, news sites, trends; card media) | container `worker-ideas` |
 | Database | VibeDB's Postgres on the host, reached as `host.docker.internal` |
 | Kokoro voice model | Voicer's `backend/models/`, mounted read-only (one copy on the box) |
 | Idea memory (Qdrant) | HealMem's Qdrant, collection `content_corpus_memory`; worker-cpu joins the `healmem_vector` network |
@@ -17,7 +18,7 @@ Everything runs on one always-on box (an Oracle Cloud Ampere A1: arm64, Ubuntu
 The containers publish nothing except the web app on localhost. The web app and
 the workers wake each other over the compose network
 (`http://worker-cpu:8787/wake`, `http://worker-gpu:8788/wake`,
-`http://worker-publish:8789/wake`). All of them have
+`http://worker-publish:8789/wake,http://worker-ideas:8790/wake`, `http://worker-ideas:8790/wake`). All of them have
 `cpu_shares: 512`, so they yield to the box's other services under contention
 and use the whole CPU when it is idle.
 

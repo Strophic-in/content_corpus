@@ -64,10 +64,13 @@ def test_put_get_delete_through_the_ledger(s3, owner, user, tmp_path):
 
 
 def test_full_bucket_refuses_before_uploading(s3, owner, user, tmp_path):
-    cap = owner.execute("select cap_bytes from storage_config").fetchone()["cap_bytes"]
-    used = owner.execute("select private.storage_used() as u").fetchone()["u"]
+    # Real media gets the cap minus the idea-card budget (0013).
+    cfg = owner.execute("select cap_bytes - idea_media_cap_bytes as room from storage_config").fetchone()
+    used = owner.execute("""select coalesce(sum(bytes), 0)::bigint as u from storage_objects
+                             where state in ('reserved','stored') and kind <> 'idea_media'""").fetchone()["u"]
     filler = f"u/{user}/filler"
-    owner.execute("select private.reserve_storage(%s, %s, 'other', %s)", (filler, cap - used - 100, user))
+    assert owner.execute("select ok from private.reserve_storage(%s, %s, 'other', %s)",
+                         (filler, cfg["room"] - used - 100, user)).fetchone()["ok"]
     try:
         src = tmp_path / "big.mp4"
         src.write_bytes(b"y" * 1000)
@@ -92,3 +95,25 @@ def test_failed_upload_releases_its_reservation(s3, owner, user, tmp_path, monke
     with pytest.raises(RuntimeError):
         storage.put_file(key, src, kind="shot", user_id=user)
     assert owner.execute("select count(*) as n from storage_objects where key = %s", (key,)).fetchone()["n"] == 0
+
+
+def test_idea_previews_have_their_own_budget(s3, owner, user, tmp_path):
+    """A deck full of previews is refused by its own budget, never by the reel's."""
+    budget = owner.execute("select idea_media_cap_bytes as b from storage_config").fetchone()["b"]
+    used = owner.execute("""select coalesce(sum(bytes), 0)::bigint as u from storage_objects
+                             where state in ('reserved','stored') and kind = 'idea_media'""").fetchone()["u"]
+    filler = f"u/{user}/ideas/filler"
+    assert owner.execute("select ok from private.reserve_storage(%s, %s, 'idea_media', %s)",
+                         (filler, budget - used - 100, user)).fetchone()["ok"]
+    try:
+        src = tmp_path / "preview.mp4"
+        src.write_bytes(b"p" * 1000)
+        with pytest.raises(storage.StorageFull):
+            storage.put_file(f"u/{user}/ideas/x/0.mp4", src, kind="idea_media", user_id=user)
+        assert owner.execute("select full_since from storage_config").fetchone()["full_since"] is None
+        final = tmp_path / "final.mp4"
+        final.write_bytes(b"f" * 1000)
+        storage.put_file(f"u/{user}/p/test/final/y.mp4", final, kind="final", user_id=user)   # still fits
+    finally:
+        owner.execute("delete from storage_objects where key = %s", (filler,))
+        owner.execute("delete from storage_objects where key like %s", (f"u/{user}/p/test/final/%",))

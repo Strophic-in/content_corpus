@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { workspace } from "@/lib/channels";
 import { asUser } from "@/lib/db";
 import { postDetail, type PostRow, type ScriptRow, type ShotRow } from "@/lib/posts";
+import { postCosts, rupees } from "@/lib/costs";
 import { PLATFORM_NAMES, publishInfo, type PublishTarget } from "@/lib/publish";
 import { signedUrl } from "@/lib/r2";
 import { requireUser } from "@/lib/session";
@@ -111,6 +112,8 @@ export default async function PostPage({ params }: { params: Promise<{ id: strin
           </ul>
         </details>
       )}
+
+      <CostPanel postId={post.id} userId={user.id} />
 
       {events.length > 0 && (
         <section className="text-sm">
@@ -266,6 +269,58 @@ async function PublishPanel({ post, userId }: { post: PostRow; userId: string })
                      plannedLocal={info.plannedLocal} tz={info.tz} />
       )}
     </section>
+  );
+}
+
+const COST_LABEL: Record<string, string> = {
+  llm: "Writing", vision: "Reading the video", moderation: "Moderation", image: "Image", gpu: "GPU", tts: "Voice",
+};
+
+async function CostPanel({ postId, userId }: { postId: string; userId: string }) {
+  const { rows, share, fx } = await postCosts(userId, postId);
+  const shareInr = share && share.batch ? (rupees({ ...share, inr_paise: null }, fx) ?? 0) / share.batch : 0;
+  if (!rows.length && !shareInr) return null;
+  const inr = (n: number) => `₹${n.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const total = rows.reduce((t, r) => t + (rupees(r, fx) ?? 0), 0) + shareInr;
+  const unpriced = rows.filter((r) => rupees(r, fx) == null).length;
+  return (
+    <details className="rounded-xl border border-border bg-surface p-5 text-sm">
+      <summary className="flex cursor-pointer items-baseline gap-2">
+        <span className="font-medium">Cost</span>
+        <span className="ml-auto font-semibold tabular-nums">{inr(total)}</span>
+      </summary>
+      <ul className="mt-3 flex flex-col gap-1.5">
+        {shareInr > 0 && (
+          <li className="flex gap-2 text-muted">
+            <span>Finding the idea <span className="text-xs">(share of a batch of {share!.batch})</span></span>
+            <span className="ml-auto tabular-nums">{inr(shareInr)}</span>
+          </li>
+        )}
+        {rows.map((r, i) => {
+          const q = r.quantity;
+          const what = r.kind === "gpu"
+            ? `${r.model ?? "GPU"} · pod ${q.pod} · ${(Number(q.seconds) / 60).toFixed(1)} min` +
+              (q.rate_paise_h ? ` at ₹${(Number(q.rate_paise_h) / 100).toFixed(0)}/h` : "")
+            : `${r.model} · ${Number(q.input ?? 0).toLocaleString("en-IN")} in / ${Number(q.output ?? 0).toLocaleString("en-IN")} out`;
+          const amount = rupees(r, fx);
+          return (
+            <li key={i} className="flex flex-wrap gap-x-2 text-muted">
+              <span className="text-foreground">{COST_LABEL[r.kind] ?? r.kind}{r.note ? ` · ${r.note}` : ""}</span>
+              <span className="text-xs">{what}</span>
+              <span className="ml-auto tabular-nums">
+                {amount != null ? inr(amount) : "price unknown"}
+                {r.usd_micros != null && <span className="ml-1 text-xs">(${(Number(r.usd_micros) / 1e6).toFixed(4)})</span>}
+              </span>
+            </li>
+          );
+        })}
+      </ul>
+      {unpriced > 0 && (
+        <p className="mt-2 text-xs text-warn">
+          {unpriced} charge{unpriced === 1 ? " has" : "s have"} no price yet — <Link href="/settings" className="underline">set the model&apos;s price</Link>.
+        </p>
+      )}
+    </details>
   );
 }
 

@@ -329,3 +329,43 @@ def test_prompt_states_the_word_cap(owner, user):
     from corpus.script.llm import narration_word_cap
     system = write_script._system_prompt({}, 40, "", "kokoro", speed=1.1)
     assert f"At most {narration_word_cap(1.1) - 5} words" in system and "{" not in system
+
+
+# ── Automatic mode (0013) ─────────────────────────────────────────────────────
+
+class FakeReviewer:
+    verdicts: list = []
+    sources: list[str] = []
+
+    def __init__(self, api_key: str):
+        assert api_key == "sk-test-key"
+
+    def review(self, *, model, script, sources):
+        FakeReviewer.sources.append(sources)
+        return FakeReviewer.verdicts.pop(0), Usage(model=model, input_tokens=50, output_tokens=10)
+
+
+def test_automatic_mode_holds_what_the_desk_editor_flags_and_renders_the_rest(owner, user, monkeypatch):
+    from corpus.script.review import DeskReview
+    owner.execute("update app_settings set pipeline_mode = 'auto' where user_id = %s", (user,))
+    monkeypatch.setattr(write_script, "REVIEWER_FACTORY", FakeReviewer)
+    FakeReviewer.verdicts = [DeskReview(ok=False, issues=["names a minor"]), DeskReview(ok=True, issues=[])]
+
+    held = new_post(owner, user)
+    as_user(owner, user, "select api.generate_script(%s)", (held,))
+    runner().tick()
+    assert post(owner, held)["status"] == "awaiting_approval"            # waits for the owner
+    assert owner.execute("select reason from post_events where post_id = %s and actor = 'system:auto'",
+                         (held,)).fetchone()["reason"] == "held for your review: names a minor"
+    notes = [r["note"] for r in owner.execute("select note from costs where post_id = %s order by id", (held,))]
+    assert notes == ["script", "desk review"]
+
+    clean = new_post(owner, user)
+    as_user(owner, user, "select api.generate_script(%s)", (clean,))
+    runner().tick()                                                      # write_script: reviewed, approved
+    assert post(owner, clean)["status"] == "approved"
+    runner().tick()                                                      # plan_shots → render, by itself
+    assert post(owner, clean)["status"] == "queued_for_render"
+    assert owner.execute("select lane from jobs where post_id = %s and kind = 'render_post'",
+                         (clean,)).fetchone()["lane"] == "gpu"
+    owner.execute("delete from jobs where post_id = %s and kind = 'render_post'", (clean,))

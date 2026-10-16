@@ -364,3 +364,19 @@ def test_handler_keeps_a_half_done_upload_open_for_the_next_run(owner, user, fak
     Runner("publish", {"publish_post": publish_post.HANDLER}).tick()
     assert fake.sessions_opened == 1 and bytes(fake.received) == VIDEO   # resumed, not restarted
     assert _status(owner, pid) == "published"
+
+
+def test_automatic_posts_schedule_themselves_on_their_connected_platforms(owner, user):
+    from corpus import auto
+    owner.execute("update app_settings set pipeline_mode = 'auto' where user_id = %s", (user,))
+    pid = _ready_post(owner, user)                                       # YouTube connected, Instagram not
+    owner.execute("update posts set platforms = '{youtube,instagram}', publish_at = now() + interval '2 hours' "
+                  "where id = %s", (pid,))
+    assert auto.request_publish(pid, log=lambda m: None)
+    jobs = owner.execute("""select j.payload->>'platform' as platform, j.not_before = p.publish_at as on_time
+                              from jobs j join posts p on p.id = j.post_id
+                             where j.post_id = %s and j.lane = 'publish'""", (pid,)).fetchall()
+    assert jobs == [{"platform": "youtube", "on_time": True}] and _status(owner, pid) == "scheduled"
+    manual = _ready_post(owner, user)
+    owner.execute("update posts set pipeline_mode = 'manual' where id = %s", (manual,))
+    assert not auto.request_publish(manual, log=lambda m: None)          # manual posts wait for a click

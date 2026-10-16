@@ -109,8 +109,9 @@ export default function PrivacyPage() {
         <li>Oracle Cloud hosts the server, the database and the narration model.</li>
         <li>Cloudflare serves the website and stores the generated video files in private storage (R2).</li>
         <li>
-          OpenAI writes ideas and scripts. It receives topics, prompts and your channel&apos;s description, never your
-          Google or Instagram data.
+          OpenAI writes ideas and scripts, and checks and describes public posts, pictures and videos found on Reddit
+          and news sites. It receives topics, prompts, those public posts and your channel&apos;s description, never
+          your Google or Instagram data.
         </li>
         <li>A GPU rental service renders video shots from their text descriptions. It receives no account data.</li>
         <li>

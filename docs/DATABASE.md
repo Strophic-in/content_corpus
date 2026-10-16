@@ -28,7 +28,7 @@ Put the URLs in the repo-root `.env` (and the web ones in Vercel):
 | `DATABASE_URL_UNPOOLED` | owner, **direct** (5432) — `db/migrate.py` |
 | `WEB_DATABASE_URL` | `corpus_web`, **pooled** (6432) — web app |
 
-Then: `worker/.venv/Scripts/python db/migrate.py`
+Then: `worker/.venv/Scripts/python db/migrate.py --target prod` (the flag must match the database: `*_test` databases are `--target test`)
 
 The web app uses node-postgres, which treats `sslmode=require` as full
 certificate verification — the server needs the installer's `--letsencrypt`

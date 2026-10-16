@@ -13,14 +13,16 @@ import hashlib
 
 from psycopg.types.json import Jsonb
 
-from .. import channels, db, prompts, vault
+from .. import channels, costs, db, prompts, vault
 from ..config import settings
 from ..runner import Handler, JobContext, Permanent, Retryable
 from ..script.llm import (NARRATOR_WORDS_PER_SECOND, OpenAIScriptWriter, ScriptWriter, Usage,
                           narration_word_cap, validate)
+from ..script.review import OpenAIReviewer
 
 # Swapped out by tests; production always talks to OpenAI with the user's key.
 WRITER_FACTORY = OpenAIScriptWriter
+REVIEWER_FACTORY = OpenAIReviewer
 # Extra calls per attempt that hand the model its own draft and the rules it broke.
 REPAIR_ROUNDS = 2
 
@@ -110,12 +112,18 @@ def run(ctx: JobContext) -> dict:
     input_sha = hashlib.sha256("\x1f".join([system, user, model]).encode()).hexdigest()
 
     writer: ScriptWriter = WRITER_FACTORY(key)
+    billed = dict(user_id=post["user_id"], post_id=post_id, channel_id=post.get("channel_id"),
+                  category_id=post.get("category_id"), job_id=ctx.job.get("id"))
 
     def call(prompt: str):
         try:
-            return writer.write(model=model, system=system, user=prompt)
+            out, u = writer.write(model=model, system=system, user=prompt)
         except Exception as e:  # noqa: BLE001 - classified below
+            if getattr(e, "usage", None) is not None:          # answered, so it was billed
+                costs.record_llm(e.usage, note="unparsable script", **billed)
             raise _classify_openai_error(e) from e
+        costs.record_llm(u, note="script", **billed)              # every call, repairs included
+        return out, u
 
     out, usage = call(user)
     problems = validate(out, target, narrated=narrated, speed=speed)
@@ -129,13 +137,19 @@ def run(ctx: JobContext) -> dict:
                          "with exactly these problems fixed and everything else kept:\n"
                          + "\n".join(f"- {p}" for p in problems))
         usage = Usage(more.model, usage.input_tokens + more.input_tokens,
-                      usage.output_tokens + more.output_tokens)
+                      usage.output_tokens + more.output_tokens,
+                      usage.cached_input_tokens + more.cached_input_tokens)
         problems = validate(out, target, narrated=narrated, speed=speed)
     if problems:
         raise Retryable("script failed validation: " + "; ".join(problems), stage="validate",
                         detail={"problems": problems})
 
     shot_plan = [s.model_dump() for s in out.shots]
+    # Automatic mode: nobody reads the script before it ships, so the desk editor does.
+    held: list[str] = []
+    if post.get("pipeline_mode") == "auto" and post.get("auto_approve"):
+        held = _desk_review(key, model, out, post, billed)
+
     with db.tx() as c:
         locked = c.execute("select status, auto_approve from posts where id = %s for update",
                            (post_id,)).fetchone()
@@ -159,10 +173,32 @@ def run(ctx: JobContext) -> dict:
         db.log_event(c, post_id, "scripting", "awaiting_approval",
                      f"worker:{settings().worker_id}", "script written",
                      {"script_id": str(script_id), "version": version, "model": usage.model})
-        if locked["auto_approve"]:
+        if locked["auto_approve"] and not held:
             c.execute("select private.approve_script(%s, 'system:auto_approve')", (script_id,))
-    return {"script_id": str(script_id), "auto_approved": bool(locked["auto_approve"]),
+        elif held:
+            db.log_event(c, post_id, "awaiting_approval", "awaiting_approval", "system:auto",
+                         "held for your review: " + "; ".join(held)[:500], {"issues": held})
+    return {"script_id": str(script_id), "auto_approved": bool(locked["auto_approve"]) and not held,
+            "held": held,
             "shots": len(shot_plan), "tokens": usage.input_tokens + usage.output_tokens}
+
+
+def _desk_review(key: str, model: str, out, post: dict, billed: dict) -> list[str]:
+    """[] when the script may be approved unattended; else what stops it."""
+    with db.conn() as c:
+        items = c.execute("select items from ideas where post_id = %s", (post["id"],)).fetchone()
+    lines = [f"Topic: {post['topic']}", f"Brief: {post['brief'] or '(none)'}"]
+    for it in (items or {}).get("items") or []:
+        lines.append(f"- {it.get('source', '')}: {it.get('title', '')} — {it.get('summary', '')} ({it.get('url', '')})")
+    try:
+        verdict, usage = REVIEWER_FACTORY(key).review(model=model, script=out.model_dump_json(),
+                                                     sources="\n".join(lines))
+    except Exception as e:  # noqa: BLE001 - unreviewed means held, never approved
+        if getattr(e, "usage", None) is not None:
+            costs.record_llm(e.usage, note="unparsable desk review", **billed)
+        return [f"the desk editor could not be reached ({type(e).__name__})"]
+    costs.record_llm(usage, note="desk review", **billed)
+    return [] if verdict.ok else (verdict.issues or ["the desk editor flagged it without saying why"])
 
 
 def on_give_up(ctx: JobContext, err: dict) -> None:

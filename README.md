@@ -45,11 +45,13 @@ flowchart LR
     G --> H["Preview, download<br/>YouTube Shorts"]
 ```
 
-Every step is a job in a Postgres queue, run by one of three worker processes
+Every step is a job in a Postgres queue, run by one of four worker processes
 (*lanes*):
 
 | Job | Lane | What it does |
 |---|---|---|
+| `suggest_ideas` | ideas | Per category: reads its Reddit communities (keyless feeds, one rate-limited request), news sites, searches and trends; drops junk and stale items; one model call picks stories (or none); a novelty memory drops repeats. |
+| `attach_media` | ideas | Gives a card its picture or video: moderation first, then a small preview (≤480p, faststart) and a vision description of what the video shows. |
 | `write_script` | cpu | OpenAI writes the script (hook, shots, narration, look) and an honest self-review. |
 | `plan_shots` | cpu | Turns the approved script into shot prompts with fixed seeds, sized for LTX (704×1280, 8n+1 frames). |
 | `narrate` | cpu | Kokoro voices each line on the CPU. Each line's length sets its shot's length, and Whisper times every word for the captions. |
@@ -137,7 +139,8 @@ cp .env.example .env                      # fill in; see comments in the file
 # Workers + migrations
 python -m venv worker/.venv
 worker/.venv/bin/pip install -r worker/requirements.txt -r worker/requirements-dev.txt
-worker/.venv/bin/python db/migrate.py     # needs DATABASE_URL_UNPOOLED
+worker/.venv/bin/python db/migrate.py --target prod   # needs DATABASE_URL_UNPOOLED
+bash db/dev/test.sh                                    # all tests, on the throwaway test DB
 
 # Web app → http://localhost:3000
 cd apps/web && npm install && npx next dev   # on Windows, add --webpack if Turbopack crashes
@@ -146,6 +149,7 @@ cd apps/web && npm install && npx next dev   # on Windows, add --webpack if Turb
 CORPUS_LANE=cpu python -m corpus
 CORPUS_LANE=gpu CORPUS_WAKE_PORT=8788 python -m corpus
 CORPUS_LANE=publish CORPUS_WAKE_PORT=8789 python -m corpus
+CORPUS_LANE=ideas CORPUS_WAKE_PORT=8790 python -m corpus
 ```
 
 The Kokoro voice files and the Whisper model download on first use into

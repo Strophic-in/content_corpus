@@ -28,5 +28,5 @@ alter default privileges for role app_owner grant all on functions to corpus_tes
 SQL
 
 PY=worker/.venv/bin/python; [ -x "$PY" ] || PY=worker/.venv/Scripts/python
-DATABASE_URL_UNPOOLED="postgres://app_owner:localdev@127.0.0.1:$PORT/corpus_test" "$PY" db/migrate.py
+DATABASE_URL_UNPOOLED="postgres://app_owner:localdev@127.0.0.1:$PORT/corpus_test" "$PY" db/migrate.py --target test
 echo "test database ready on 127.0.0.1:$PORT"

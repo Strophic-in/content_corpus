@@ -106,7 +106,8 @@ export async function userSettings(userId: string) {
         `select timezone, auto_approve, default_publish_time::text as default_publish_time,
                 youtube_privacy, channel_name, channel_niche, channel_audience, channel_voice,
                 script_language, default_reel_seconds, script_model, openai_models,
-                default_audio_source, narrator_voice, narrator_speed::float8 as narrator_speed
+                default_audio_source, narrator_voice, narrator_speed::float8 as narrator_speed,
+                pipeline_mode, auto_spend_cap_paise_day, vision_model, usd_inr_override::float8 as usd_inr_override
            from app_settings`,
       )
     ).rows[0];

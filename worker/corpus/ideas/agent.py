@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
-from ..script.llm import Usage
+from ..script.llm import Unparsed, Usage
 
 
 class Idea(BaseModel):
@@ -12,7 +12,9 @@ class Idea(BaseModel):
     hook: str
     brief: str
     why_now: str
-    sources: list[str]
+    # Numbers of the trend items it came from (the list in the prompt is numbered);
+    # their links, posts and media follow the idea onto its card.
+    items: list[int]
 
 
 class IdeasOut(BaseModel):
@@ -29,7 +31,5 @@ class OpenAIIdeaWriter:
         resp = self.client.responses.parse(model=model, instructions=system, input=user, text_format=IdeasOut)
         out = resp.output_parsed
         if out is None:
-            raise ValueError("model returned no parsable ideas")
-        u = resp.usage
-        return out, Usage(model=resp.model, input_tokens=getattr(u, "input_tokens", 0),
-                          output_tokens=getattr(u, "output_tokens", 0))
+            raise Unparsed("model returned no parsable ideas", Usage.of(resp))
+        return out, Usage.of(resp)

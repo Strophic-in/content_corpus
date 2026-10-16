@@ -224,7 +224,7 @@ class FakeGPU:
         pods = [{"id": i, "name": "corpus-render", "status": "stopped", "vram": v} for i, v in self.cached]
         return type("R", (), {"pods": lambda _self: pods})()
 
-    def acquire(self, race, *, resume_ids, slices, name, log):
+    def acquire(self, race, *, resume_ids, slices, name, log, on_billed=None):
         for pid in resume_ids:
             if pid not in self.busy:
                 with self._lock:
@@ -440,6 +440,11 @@ def test_two_gpus_share_the_shots(s3, owner, user, gpu):
     assert sorted(gpu.released) == [(32, True), (96, True)]            # both paused afterwards
     res = owner.execute("select result from jobs where kind = 'render_post' and post_id = %s", (pid,)).fetchone()
     assert set(res["result"]["pods"]) == {"pod 96", "pod 32"}
+    # Each pod's billed time is on the post's bill, at the fallback rate (no Race offers here).
+    bills = owner.execute("""select (quantity->>'pod')::int as pod, inr_paise, quantity->>'confirmed' as ok
+                               from costs where post_id = %s and kind = 'gpu' order by 1""", (pid,)).fetchall()
+    assert [b["pod"] for b in bills] == [32, 96] and all(b["ok"] == "true" for b in bills)
+    assert all(b["inr_paise"] is not None for b in bills)
 
 
 def test_a_busy_or_unready_helper_is_skipped(s3, owner, user, gpu):

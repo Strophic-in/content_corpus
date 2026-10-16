@@ -5,8 +5,9 @@ from __future__ import annotations
 import logging
 
 from .config import settings
-from .handlers import (assemble, build_segment, narrate, plan_shots, publish_post, render_post,
-                       suggest_ideas, write_script)
+from . import upkeep
+from .handlers import (assemble, attach_media, build_segment, check_sources, narrate, plan_shots, publish_post,
+                       render_post, suggest_ideas, write_script)
 from .runner import Runner
 
 HANDLERS = {
@@ -16,7 +17,14 @@ HANDLERS = {
         "narrate": narrate.HANDLER,
         "build_segment": build_segment.HANDLER,
         "assemble": assemble.HANDLER,
+    },
+    # The only process that contacts Reddit and arbitrary URLs: its rate-limit waits
+    # and downloads never hold up scripts, segments or assembly.
+    "ideas": {
         "suggest_ideas": suggest_ideas.HANDLER,
+        "attach_media": attach_media.HANDLER,
+        "check_sources": check_sources.CHECK_HANDLER,
+        "suggest_sources": check_sources.SUGGEST_HANDLER,
     },
     # The gpu lane runs on the same always-on box as cpu, as its own process: it
     # rents and drives the Race GPU remotely, and a long render must not block
@@ -33,6 +41,7 @@ HANDLERS = {
 # Housekeeping each lane does on every tick, besides claiming work.
 UPKEEP = {
     "publish": publish_post.upkeep,
+    "ideas": upkeep.ideas_lane,
 }
 
 

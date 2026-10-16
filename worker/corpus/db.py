@@ -96,6 +96,11 @@ def next_due(lanes: list[str]) -> datetime | None:
 _enqueued_lanes: set[str] = set()
 
 
+def note_enqueued(lane: str) -> None:
+    """Work queued for `lane` by other means (a private.* function, a trigger)."""
+    _enqueued_lanes.add(lane)
+
+
 def take_enqueued_lanes() -> set[str]:
     lanes = set(_enqueued_lanes)
     _enqueued_lanes.clear()

@@ -17,6 +17,7 @@ from datetime import date, timedelta
 
 import psycopg
 import pytest
+from psycopg.types.json import Jsonb
 
 OWNER = os.environ.get("TEST_DATABASE_URL_OWNER",
                        "postgres://app_owner:localdev@127.0.0.1:55442/corpus_test")
@@ -201,8 +202,10 @@ def test_key_vault_is_write_only(alice):
 # ── storage cap ───────────────────────────────────────────────────────────────
 
 def test_storage_cap_refuses_and_alerts_then_clears(owner):
-    cap = owner.execute("select cap_bytes from storage_config").fetchone()[0]
-    used = owner.execute("select private.storage_used()").fetchone()[0]
+    # Real media may use the cap minus the idea-card budget (0013).
+    cap = owner.execute("select cap_bytes - idea_media_cap_bytes from storage_config").fetchone()[0]
+    used = owner.execute("""select coalesce(sum(bytes), 0)::bigint from storage_objects
+                             where state in ('reserved','stored') and kind <> 'idea_media'""").fetchone()[0]
     k1, k2 = f"t/{uuid.uuid4()}", f"t/{uuid.uuid4()}"
     try:
         ok = owner.execute("select ok from private.reserve_storage(%s, %s, 'other')",
@@ -405,18 +408,24 @@ def test_swiping_schedules_a_post_or_records_why_not(alice, owner):
             c.execute("select api.decide_idea(%s, true, now())", (ids[0],))  # no second swipe
 
 
-def test_daily_ideas_are_scheduled_once_per_channel_per_day(alice, owner):
+def test_daily_ideas_are_scheduled_once_per_category_per_day(alice, owner):
     with psycopg.connect(OWNER, autocommit=True) as o:
         ch = o.execute("insert into channels (user_id, name) values (%s, 'daily') returning id",
                        (alice,)).fetchone()[0]
-        fid = o.execute("insert into formats (user_id, channel_id, name, idea_prompt, script_prompt, is_default) "
-                        "values (%s, %s, 'daily', 'i', 's', true) returning id", (alice, ch)).fetchone()[0]
+        o.execute("insert into formats (user_id, channel_id, name, idea_prompt, script_prompt, is_default) "
+                  "values (%s, %s, 'daily', 'i', 's', true)", (alice, ch))             # brings "General"
+        o.execute("insert into categories (user_id, channel_id, name) values (%s, %s, 'World')", (alice, ch))
+        o.execute("insert into categories (user_id, channel_id, name, enabled) values (%s, %s, 'Off', false)",
+                  (alice, ch))
         o.execute("select private.schedule_daily_ideas()")
         o.execute("select private.schedule_daily_ideas()")
-        jobs = o.execute("select state, payload->>'trigger' from jobs where kind = 'suggest_ideas' "
-                         "and payload->>'format_id' = %s", (str(fid),)).fetchall()
-        assert jobs == [("queued", "daily")]
-        o.execute("delete from jobs where kind = 'suggest_ideas' and payload->>'format_id' = %s", (str(fid),))
+        jobs = o.execute("""select k.name, j.lane, j.state, j.payload->>'trigger', j.not_before
+                              from jobs j join categories k on k.id::text = j.payload->>'category_id'
+                             where j.kind = 'suggest_ideas' and k.channel_id = %s order by j.not_before""",
+                         (ch,)).fetchall()
+        assert [(n, lane, st, t) for n, lane, st, t, _ in jobs] == [
+            ("General", "ideas", "queued", "daily"), ("World", "ideas", "queued", "daily")]
+        assert (jobs[1][4] - jobs[0][4]).total_seconds() == 180                    # staggered
 
 
 # ── publishing (0012) ─────────────────────────────────────────────────────────
@@ -520,3 +529,130 @@ def test_only_a_finished_reel_of_your_own_can_be_posted(alice, bob, owner):
         with web(alice) as c:
             c.execute("insert into jobs (user_id, lane, kind, dedupe_key) values (%s, 'publish', 'publish_post', 'x')",
                       (alice,))
+
+
+# ── categories, costs, Manual/Automatic (0013) ────────────────────────────────
+
+def test_a_first_format_brings_a_general_category_with_its_sources(alice, owner):
+    sources = [{"name": "TIL", "url": "https://www.reddit.com/r/todayilearned+space/top/.rss?t=day"},
+               {"name": "Trends", "url": "https://trends.google.com/trending/rss?geo=IN"},
+               {"name": "Wiki", "url": "https://api.wikimedia.org/feed/v1/wikipedia/en/featured/{yesterday}"},
+               {"name": "NASA", "url": "https://www.nasa.gov/news-release/feed/"}]
+    with psycopg.connect(OWNER, autocommit=True) as o:
+        ch = o.execute("insert into channels (user_id, name) values (%s, 'fresh') returning id", (alice,)).fetchone()[0]
+        fid = o.execute("insert into formats (user_id, channel_id, name, idea_prompt, script_prompt, sources) "
+                        "values (%s, %s, 'f', 'i', 's', %s) returning id",
+                        (alice, ch, Jsonb(sources))).fetchone()[0]
+        cat = o.execute("select id, name, format_id from categories where channel_id = %s", (ch,)).fetchall()
+        assert [(n, f) for _, n, f in cat] == [("General", fid)]
+        got = o.execute("select kind, value, options from category_sources where category_id = %s order by kind, value",
+                        (cat[0][0],)).fetchall()
+        assert got == [("google_trends", "IN", {}),
+                       ("reddit", "space", {"sort": "top", "t": "day"}),
+                       ("reddit", "todayilearned", {"sort": "top", "t": "day"}),
+                       ("rss", "https://www.nasa.gov/news-release/feed/", {"name": "NASA"}),
+                       ("wikipedia", "en", {})]
+
+
+def test_categories_belong_to_their_channel_and_owner(alice, bob, owner):
+    with psycopg.connect(OWNER, autocommit=True) as o:
+        theirs = o.execute("insert into channels (user_id, name) values (%s, 'theirs') returning id",
+                           (bob,)).fetchone()[0]
+    with pytest.raises(psycopg.errors.InsufficientPrivilege):            # RLS: not your channel
+        with web(alice) as c:
+            c.execute("insert into categories (user_id, channel_id, name) values (%s, %s, 'x')", (alice, theirs))
+    with pytest.raises(psycopg.errors.ForeignKeyViolation):              # a format of another channel
+        with web(alice) as c:
+            a, b = _new_channel(c, alice, "A"), _new_channel(c, alice, "B")
+            f = _new_format(c, alice, "fa", a)
+            c.execute("insert into categories (user_id, channel_id, name, format_id) values (%s, %s, 'x', %s)",
+                      (alice, b, f))
+    with pytest.raises(psycopg.errors.CheckViolation):                   # reddit only via the limiter
+        with web(alice) as c:
+            k = c.execute("insert into categories (user_id, channel_id, name) values (%s, %s, 'x') returning id",
+                          (alice, _new_channel(c, alice))).fetchone()[0]
+            c.execute("insert into category_sources (user_id, category_id, kind, value) "
+                      "values (%s, %s, 'rss', 'https://old.reddit.com/r/news/.rss')", (alice, k))
+
+
+@pytest.mark.parametrize("stmt", [
+    "update category_sources set status = 'ok', last_items = 9 where user_id = %s",
+    "insert into costs (user_id, kind, provider) values (%s, 'llm', 'openai')",
+    "update posts set pipeline_mode = 'auto' where user_id = %s",
+    "update posts set media_choice = 'original' where user_id = %s",
+    "insert into fx_rates (day, usd_inr, source) select current_date + 1000, 1, %s",
+])
+def test_ledger_and_lifecycle_columns_are_not_writable(alice, stmt):
+    with pytest.raises(psycopg.errors.InsufficientPrivilege):
+        with web(alice) as c:
+            c.execute(stmt, (alice,))
+
+
+def _channel_with_idea(o, uid, *, connected=("youtube",)):
+    ch = o.execute("insert into channels (user_id, name) values (%s, %s) returning id",
+                   (uid, f"c-{uuid.uuid4().hex[:6]}")).fetchone()[0]
+    fid = o.execute("insert into formats (user_id, channel_id, name, idea_prompt, script_prompt, is_default) "
+                    "values (%s, %s, 'f', 'i', 's', true) returning id", (uid, ch)).fetchone()[0]
+    cat = o.execute("select id from categories where channel_id = %s", (ch,)).fetchone()[0]
+    for pf in connected:
+        o.execute("""insert into channel_accounts (user_id, channel_id, platform, external_id, token_ciphertext)
+                     values (%s, %s, %s, 'ext', 'v1.x.y')""", (uid, ch, pf))
+    idea = o.execute("insert into ideas (user_id, channel_id, format_id, category_id, title, brief) "
+                     "values (%s, %s, %s, %s, 'A story', 'Brief.') returning id", (uid, ch, fid, cat)).fetchone()[0]
+    return ch, cat, idea
+
+
+def test_automatic_mode_starts_the_script_when_you_swipe(alice, owner):
+    with psycopg.connect(OWNER, autocommit=True) as o:
+        o.execute("insert into app_settings (user_id, pipeline_mode) values (%s, 'auto')", (alice,))
+        _, cat, idea = _channel_with_idea(o, alice, connected=("youtube", "instagram"))
+    with web(alice) as c:
+        c.execute("select api.decide_idea_v2(%s, true, now() + interval '1 day')", (idea,))
+        post = c.execute("""select p.pipeline_mode, p.auto_approve, p.status, p.category_id, p.platforms
+                              from ideas i join posts p on p.id = i.post_id where i.id = %s""", (idea,)).fetchone()
+        assert post == ("auto", True, "scripting", cat, ["instagram", "youtube"])
+        assert c.execute("""select count(*) from jobs j join ideas i on i.post_id = j.post_id
+                             where i.id = %s and j.kind = 'write_script'""", (idea,)).fetchone()[0] == 1
+
+
+def test_manual_mode_waits_and_the_snapshot_cannot_be_changed_later(alice, owner):
+    with psycopg.connect(OWNER, autocommit=True) as o:
+        o.execute("insert into app_settings (user_id) values (%s)", (alice,))
+        _, _, idea = _channel_with_idea(o, alice)
+    with web(alice) as c:
+        c.execute("select api.decide_idea_v2(%s, true, now() + interval '1 day', null, array['youtube'])", (idea,))
+        pid = c.execute("select post_id from ideas where id = %s", (idea,)).fetchone()[0]
+        assert c.execute("select pipeline_mode, auto_approve, status from posts where id = %s",
+                         (pid,)).fetchone() == ("manual", False, "draft")
+        c.execute("update app_settings set pipeline_mode = 'auto'")              # flipping it later...
+        assert c.execute("select pipeline_mode from posts where id = %s", (pid,)).fetchone()[0] == "manual"
+
+
+def test_the_daily_spend_cap_stops_automatic_renders_only(alice, owner):
+    with psycopg.connect(OWNER, autocommit=True) as o:
+        o.execute("insert into app_settings (user_id, auto_spend_cap_paise_day) values (%s, 10000)", (alice,))
+        pid = o.execute("insert into posts (user_id, topic, slot_date) values (%s, 't', %s) returning id",
+                        (alice, _slot())).fetchone()[0]
+        sid = o.execute("insert into scripts (post_id, version, state) values (%s, 1, 'approved') returning id",
+                        (pid,)).fetchone()[0]
+        o.execute("update posts set status = 'approved', approved_script_id = %s, audio_source = 'ltx_native' "
+                  "where id = %s", (sid, pid))
+        o.execute("""insert into shots (post_id, script_id, idx, prompt, seed, width, height, num_frames)
+                     values (%s, %s, 0, 'p', 1, 704, 1280, 121)""", (pid, sid))
+        o.execute("insert into costs (user_id, kind, provider, inr_paise) values (%s, 'gpu', 'race', 12000)", (alice,))
+        with pytest.raises(psycopg.errors.ObjectNotInPrerequisiteState, match="spending limit"):
+            o.execute("select private.request_render(%s, 'system:auto')", (pid,))
+    with web(alice) as c:                                                      # by hand it still works
+        assert c.execute("select (api.request_render(%s)).kind", (pid,)).fetchone()[0] == "render_post"
+
+
+def test_category_idea_batches_are_yours_alone(alice, bob, owner):
+    with psycopg.connect(OWNER, autocommit=True) as o:
+        _, cat, _ = _channel_with_idea(o, alice)
+    with web(alice) as c:
+        j = c.execute("select lane, kind, payload->>'category_id' from api.request_category_ideas(%s)",
+                      (cat,)).fetchone()
+        assert j == ("ideas", "suggest_ideas", str(cat))
+    with pytest.raises(psycopg.errors.NoDataFound):
+        with web(bob) as c:
+            c.execute("select api.request_category_ideas(%s)", (cat,))

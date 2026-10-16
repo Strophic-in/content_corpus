@@ -25,7 +25,7 @@ load_dotenv(ROOT / ".env", override=False)
 # knows last week's pod-local latents are gone.
 BOOT_ID = secrets.token_hex(6)
 
-LANES = ("cpu", "gpu", "publish")
+LANES = ("cpu", "gpu", "publish", "ideas")
 
 
 def _git_sha() -> str:

@@ -11,6 +11,8 @@ Handlers raise one of three exceptions to say how a failure should be treated:
     Retryable   — try again (backoff and max_attempts are decided by finish_job)
     Permanent   — retrying cannot help (missing key, bad input); stop now
     NeedsReview — the outcome is unknown (publish lane); a human must decide
+    Defer       — not yet (something it waits for isn't ready); run again later
+                  without counting an attempt
 
 Anything else is treated as Retryable, with the traceback tail recorded.
 """
@@ -44,6 +46,14 @@ class Retryable(Exception):
 
 class Permanent(Retryable):
     """Not worth retrying. Finishes the job as dead regardless of attempts left."""
+
+
+class Defer(Exception):
+    """Come back in `retry_in` seconds. Not a failure: the attempt is given back."""
+
+    def __init__(self, message: str, *, retry_in: int = 60):
+        super().__init__(message)
+        self.retry_in = retry_in
 
 
 class NeedsReview(Exception):
@@ -190,6 +200,13 @@ class Runner:
         try:
             result = handler.run(ctx)
             db.finish(job["id"], "succeeded", result=result or {})
+        except Defer as e:
+            # Give the attempt back, then re-queue through the normal retry path.
+            with db.conn() as c:
+                c.execute("update jobs set attempts = greatest(attempts - 1, 0) where id = %s", (job["id"],))
+            db.finish(job["id"], "failed", error={"stage": "deferred", "message": str(e)[:500],
+                                                  "at": datetime.now(timezone.utc).isoformat()},
+                      retry_in=e.retry_in)
         except NeedsReview as e:
             db.finish(job["id"], "needs_review", error=_error_json(e, "needs_review", e.detail))
         except Permanent as e:

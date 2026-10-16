@@ -16,7 +16,7 @@ compose build
 # anything switches over: a broken toolchain stops here, not after a paid render.
 compose run --rm --no-deps -T worker-cpu python -m corpus.selftest < /dev/null
 # Migrations are idempotent (sha-tracked) and re-apply the web role's grants.
-compose run --rm --no-deps worker-cpu python /app/db/migrate.py
+compose run --rm --no-deps worker-cpu python /app/db/migrate.py --target prod
 compose up -d --remove-orphans
 compose ps
 echo "deployed $CORPUS_VERSION"

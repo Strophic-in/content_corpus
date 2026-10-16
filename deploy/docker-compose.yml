@@ -1,4 +1,4 @@
-# Content Corpus on one box: the web app and the three worker lanes.
+# Content Corpus on one box: the web app and the four worker lanes.
 #
 #   deploy/deploy.sh                          # pull, migrate, build, (re)start
 #   cd deploy && docker compose --env-file ../.env logs -f worker-gpu
@@ -70,6 +70,19 @@ services:
       - corpus-cache:/home/worker/.cache
       - ${KOKORO_MODELS_DIR:?set KOKORO_MODELS_DIR in .env}:/models/kokoro:ro
       - ../secrets/race_ssh_key:/run/secrets/race_ssh_key:ro
+
+  # Finds ideas: reads Reddit (rate-limited), news sites and trends; fetches and checks
+  # card media. The only container that contacts arbitrary URLs.
+  worker-ideas:
+    <<: *worker
+    mem_limit: 1g
+    networks: [default, vector]
+    environment:
+      CORPUS_LANE: ideas
+      CORPUS_WAKE_PORT: "8790"
+      CORPUS_WORKER_ID: ideas-vm
+      CORPUS_VERSION: ${CORPUS_VERSION:-unknown}
+      CORPUS_MODELS_DIR: /models
 
   # Posts finished reels to YouTube and Instagram, at once or at their scheduled time.
   worker-publish:

@@ -1,0 +1,78 @@
+"""Looking at a post before it reaches the owner's screen.
+
+moderate(): OpenAI's moderation model (free) on the post's text and preview
+picture, before any media is downloaded. Sexual content removes the idea;
+graphic violence keeps the story but not its pictures.
+
+describe(): one call to the owner's chosen vision model with a contact sheet
+(nine frames spread over the video, in one image — far cheaper than nine images),
+so the card, and later the script, know what the video shows, and whether it
+carries a news outlet's logo or watermark (a rights warning on the card).
+"""
+
+from __future__ import annotations
+
+import base64
+from pathlib import Path
+
+from pydantic import BaseModel
+
+from ..script.llm import Unparsed, Usage
+
+MODERATION_MODEL = "omni-moderation-latest"
+REMOVE = {"sexual", "sexual/minors"}              # never shown at all
+NO_MEDIA = {"violence/graphic", "self-harm", "self-harm/intent", "self-harm/instructions"}
+
+
+class VideoAnalysis(BaseModel):
+    summary: str                    # what happens, in two or three sentences
+    moments: list[str]              # what each part shows, in order
+    logos_or_watermarks: bool       # a broadcaster's logo, a watermark, a channel's name burned in
+    logo_names: list[str]
+    identifiable_people: bool
+    graphic: bool                   # injury, blood, a dead body
+    spoken_language: str            # "none" when nobody speaks
+
+
+def data_url(path: Path) -> str:
+    return "data:image/jpeg;base64," + base64.b64encode(path.read_bytes()).decode()
+
+
+class OpenAIVision:
+    def __init__(self, api_key: str):
+        from openai import OpenAI
+
+        self.client = OpenAI(api_key=api_key, timeout=90, max_retries=2)
+
+    def moderate(self, text: str, image: Path | None) -> dict:
+        parts: list[dict] = [{"type": "text", "text": text[:4000]}]
+        if image is not None:
+            parts.append({"type": "image_url", "image_url": {"url": data_url(image)}})
+        r = self.client.moderations.create(model=MODERATION_MODEL, input=parts).results[0]
+        cats = {k for k, v in r.categories.model_dump(by_alias=True).items() if v}
+        return {"flagged": bool(r.flagged), "categories": sorted(cats)}
+
+    def describe(self, model: str, sheet: Path, title: str) -> tuple[VideoAnalysis, Usage]:
+        resp = self.client.responses.parse(
+            model=model,
+            instructions=("You describe short videos for a news editor. The image is a 3x3 contact sheet of "
+                          "frames taken in order from one video (left to right, top to bottom). Be factual; "
+                          "do not guess names of people."),
+            input=[{"role": "user", "content": [
+                {"type": "input_text", "text": f"The post's title: {title[:300]}"},
+                {"type": "input_image", "image_url": data_url(sheet), "detail": "low"}]}],
+            text_format=VideoAnalysis)
+        out = resp.output_parsed
+        if out is None:
+            raise Unparsed("the vision model returned no analysis", Usage.of(resp))
+        return out, Usage.of(resp)
+
+
+def verdict(mod: dict) -> str:
+    """keep | no_media | remove."""
+    cats = set(mod.get("categories") or [])
+    if cats & REMOVE:
+        return "remove"
+    if cats & NO_MEDIA:
+        return "no_media"
+    return "keep"

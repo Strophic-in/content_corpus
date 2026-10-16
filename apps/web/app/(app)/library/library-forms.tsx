@@ -25,6 +25,7 @@ export function NewFormatForm() {
         <select name="template" className={input}>
           <option value="narrated">Narrated explainer (voice-over)</option>
           <option value="dialogue">Characters speak (on-screen dialogue)</option>
+          <option value="news">News explainer (news desk ideas, narrated)</option>
         </select>
       </label>
       <button disabled={pending} className="rounded-xl bg-accent px-4 py-2 text-sm font-medium text-accent-foreground disabled:opacity-60">
@@ -41,8 +42,6 @@ type FormatData = {
   script_prompt: string; sources: { name: string; url: string }[];
 };
 type Defaults = { idea_prompt: string; script_prompt: string; visual_style: string; sources: { name: string; url: string }[] };
-
-const sourcesText = (s: { name: string; url: string }[]) => s.map((x) => `${x.name} | ${x.url}`).join("\n");
 
 function PromptField({ label, hint, name, value, onChange, onReset, placeholders, rows }: {
   label: string; hint: string; name: string; value: string; onChange: (v: string) => void; onReset: () => void;
@@ -86,7 +85,6 @@ export function FormatEditor({ format, defaults, placeholders }: {
   const [state, action, pending] = useActionState<ActionState, FormData>(updateFormat.bind(null, format.id), null);
   const [v, setV] = useState({
     idea_prompt: format.idea_prompt, script_prompt: format.script_prompt, visual_style: format.visual_style,
-    sources: sourcesText(format.sources),
   });
   const set = (k: keyof typeof v) => (val: string) => setV((s) => ({ ...s, [k]: val }));
   return (
@@ -108,9 +106,6 @@ export function FormatEditor({ format, defaults, placeholders }: {
         <label className="flex flex-col gap-1 text-sm">Length (seconds)
           <input name="target_seconds" type="number" min={5} max={300} defaultValue={format.target_seconds} className={input} />
         </label>
-        <label className="flex flex-col gap-1 text-sm">Ideas per batch
-          <input name="ideas_per_batch" type="number" min={1} max={30} defaultValue={format.ideas_per_batch} className={input} />
-        </label>
       </section>
 
       <PromptField label="Look of every shot" name="visual_style" rows={4} value={v.visual_style}
@@ -124,9 +119,10 @@ export function FormatEditor({ format, defaults, placeholders }: {
                    onChange={set("script_prompt")} onReset={() => set("script_prompt")(defaults.script_prompt)}
                    placeholders={placeholders.script_prompt}
                    hint="Turns an accepted idea into the script: narration, shots, sound." />
-      <PromptField label="Trend sources" name="sources" rows={6} value={v.sources}
-                   onChange={set("sources")} onReset={() => set("sources")(sourcesText(defaults.sources))}
-                   hint="Free RSS/Atom feeds the agent reads, one per line as “Name | URL”. Wikipedia's most-read feed takes {yesterday} in its URL." />
+      <p className="rounded-2xl border border-dashed border-border p-4 text-sm text-muted">
+        Where ideas come from — Reddit communities, news sites, feeds — is set per category, on the channel&apos;s page
+        under Categories.
+      </p>
 
       <div className="sticky bottom-24 z-10 flex flex-col gap-2 rounded-2xl border border-border bg-surface/95 p-3 shadow-lg backdrop-blur md:bottom-4">
         <Feedback state={state} />

@@ -13,7 +13,7 @@ import shutil
 import tempfile
 from pathlib import Path
 
-from .. import db, storage
+from .. import auto, db, storage
 from ..config import settings
 from ..media import assemble as media
 from ..runner import Handler, JobContext, Permanent
@@ -55,6 +55,7 @@ def run(ctx: JobContext) -> dict:
         db.log_event(c, post["id"], "post_processing", "ready", f"worker:{settings().worker_id}",
                      "reel assembled", {**info, "bytes": stored["bytes"]})
     shutil.rmtree(build_segment.cache_dir(post["id"]), ignore_errors=True)
+    auto.request_publish(post["id"])             # Automatic mode: post it at the picked time
     return {**info, "final_key": key}
 
 

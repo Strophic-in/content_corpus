@@ -17,7 +17,8 @@ export default async function LibraryPage() {
         <h1 className="text-2xl font-semibold tracking-tight">Prompt library</h1>
         <p className="mt-1 text-sm text-muted">
           Formats for <ChannelPicker channels={channels.map(({ id, name }) => ({ id, name }))} activeId={active.id} /> — each kind of video it
-          makes, with every prompt that shapes it: ideas, scripts and the look of every shot.
+          makes, with every prompt that shapes it: ideas, scripts and the look of every shot. Where ideas come from is
+          set per category on the channel&apos;s page.
         </p>
       </div>
       <div className="grid gap-3 sm:grid-cols-2">
@@ -31,8 +32,7 @@ export default async function LibraryPage() {
             </div>
             <p className="line-clamp-2 text-sm text-muted">{f.description || "No description."}</p>
             <p className="text-xs text-muted">
-              {f.audio_source === "kokoro" ? "Narrated voice-over" : "Characters speak"} · {f.target_seconds}s ·{" "}
-              {f.sources.length} trend source{f.sources.length === 1 ? "" : "s"}
+              {f.audio_source === "kokoro" ? "Narrated voice-over" : "Characters speak"} · {f.target_seconds}s
             </p>
           </Link>
         ))}

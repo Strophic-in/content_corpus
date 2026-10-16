@@ -16,7 +16,7 @@ from pathlib import Path
 
 from psycopg.types.json import Jsonb
 
-from .. import db, storage
+from .. import auto, db, storage
 from ..config import settings
 from ..gpu import ltx25
 from ..media import assemble as media
@@ -81,6 +81,7 @@ def run(ctx: JobContext) -> dict:
     with db.conn() as c:
         db.log_event(c, post["id"], "approved", "approved", f"worker:{settings().worker_id}",
                      "narration recorded", {"voice": voice, "shots": done, "seconds": round(total, 2)})
+    auto.request_render(post["id"])              # Automatic mode: on to the GPU
     return {"voice": voice, "shots_voiced": done, "seconds": round(total, 2)}
 
 

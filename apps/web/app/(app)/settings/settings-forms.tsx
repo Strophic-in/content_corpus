@@ -1,8 +1,8 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
 
-import { saveOpenAIKey, saveSettings, type ActionState } from "../actions";
+import { saveOpenAIKey, savePrices, saveRedditKeys, saveSettings, type ActionState } from "../actions";
 
 const input = "rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:border-accent";
 
@@ -37,6 +37,7 @@ type Settings = {
   default_publish_time: string; youtube_privacy: string; auto_approve: boolean;
   default_audio_source: "kokoro" | "ltx_native";
   narrator_voice: string; narrator_speed: number;
+  pipeline_mode: "manual" | "auto"; auto_spend_cap_paise_day: number | null; vision_model: string | null;
 };
 
 // Mirrors worker/corpus/media/tts.py VOICES.
@@ -49,13 +50,14 @@ const VOICES: [string, string][] = [
 
 export function SettingsForm({ settings: s }: { settings: Settings }) {
   const [state, action, pending] = useActionState<ActionState, FormData>(saveSettings, null);
+  const [mode, setMode] = useState(s.pipeline_mode);
   return (
     <form action={action} className="flex flex-col gap-6">
       <section className="flex flex-col gap-4 rounded-xl border border-border bg-surface p-5">
         <div>
           <h2 className="font-medium">Writing &amp; narration</h2>
           <p className="mt-1 text-sm text-muted">
-            For every channel. Each channel's voice lives in Channels; each kind of video's prompts in its Library.
+            For every channel. Each channel&apos;s voice lives in Channels; each kind of video&apos;s prompts in its Library.
           </p>
         </div>
         <div className="grid gap-4 sm:grid-cols-2">
@@ -82,19 +84,63 @@ export function SettingsForm({ settings: s }: { settings: Settings }) {
             </>
           )}
         </label>
+        <label className="flex flex-col gap-1 text-sm">Vision model (reads Reddit videos for the cards)
+          {s.openai_models.length ? (
+            <select name="vision_model" defaultValue={s.vision_model ?? ""} className={input}>
+              <option value="">Don&apos;t describe videos</option>
+              {s.openai_models.map((m) => <option key={m} value={m}>{m}</option>)}
+            </select>
+          ) : <input type="hidden" name="vision_model" value="" />}
+          <span className="text-xs text-muted">
+            One call per video, on a sheet of nine frames: a small model (a “mini” or “nano”) is plenty and costs a
+            fraction of a cent.
+          </span>
+        </label>
+      </section>
+
+      <section className="flex flex-col gap-4 rounded-xl border border-border bg-surface p-5">
+        <div>
+          <h2 className="font-medium">After you accept an idea</h2>
+          <p className="mt-1 text-sm text-muted">
+            Applies to posts made from now on; a post keeps the mode it was made with.
+          </p>
+        </div>
+        <input type="hidden" name="pipeline_mode" value={mode} />
+        <div className="grid gap-2 sm:grid-cols-2">
+          {([["manual", "Manual", "You write, approve, render and post each one."],
+             ["auto", "Automatic", "Script, render and posting at the time you picked — no more clicks. A desk-editor check holds anything doubtful for you."]] as const)
+            .map(([v, label, hint]) => (
+              <button key={v} type="button" onClick={() => setMode(v)}
+                      className={`rounded-xl border p-3 text-left text-sm ${mode === v ? "border-accent bg-accent/10" : "border-border"}`}>
+                <span className="font-medium">{label}</span>
+                <span className="mt-1 block text-xs text-muted">{hint}</span>
+              </button>
+            ))}
+        </div>
+        {mode === "auto" ? (
+          <>
+            <input type="hidden" name="auto_approve" value={s.auto_approve ? "on" : ""} />
+            <label className="flex flex-col gap-1 text-sm sm:w-1/2">Daily spending limit for automatic renders (₹)
+              <input name="auto_spend_cap" type="number" min={0} step={1} className={input}
+                     defaultValue={s.auto_spend_cap_paise_day != null ? s.auto_spend_cap_paise_day / 100 : ""}
+                     placeholder="No limit" />
+              <span className="text-xs text-muted">Once today&apos;s OpenAI + GPU spend reaches it, new renders wait for you.</span>
+            </label>
+          </>
+        ) : (
+          <label className="flex items-start gap-3 text-sm">
+            <input type="hidden" name="auto_spend_cap" value={s.auto_spend_cap_paise_day != null ? s.auto_spend_cap_paise_day / 100 : ""} />
+            <input name="auto_approve" type="checkbox" defaultChecked={s.auto_approve} className="mt-1" />
+            <span>
+              Approve scripts automatically
+              <span className="block text-xs text-muted">Rendering and posting still wait for you.</span>
+            </span>
+          </label>
+        )}
       </section>
 
       <section className="flex flex-col gap-4 rounded-xl border border-border bg-surface p-5">
         <h2 className="font-medium">Publishing</h2>
-        <label className="flex items-start gap-3 text-sm">
-          <input name="auto_approve" type="checkbox" defaultChecked={s.auto_approve} className="mt-1" />
-          <span>
-            Auto-approve scripts for new posts
-            <span className="block text-xs text-muted">
-              Applies to posts created after you turn it on. Existing posts keep the setting they were created with.
-            </span>
-          </span>
-        </label>
         <div className="grid gap-4 sm:grid-cols-3">
           <label className="flex flex-col gap-1 text-sm">YouTube visibility
             <select name="youtube_privacy" defaultValue={s.youtube_privacy} className={input}>
@@ -104,15 +150,92 @@ export function SettingsForm({ settings: s }: { settings: Settings }) {
             </select>
           </label>
         </div>
-        <p className="text-xs text-muted">
-          Until YouTube approves this app’s API audit, YouTube keeps every upload private whatever is chosen here.
-        </p>
+        <p className="text-xs text-muted">The default for new posts; each post can choose its own when you post it.</p>
       </section>
 
       <div className="flex items-center gap-3">
         <button disabled={pending}
                 className="rounded-md bg-accent px-4 py-2 text-sm font-medium text-accent-foreground disabled:opacity-60">
           {pending ? "Saving…" : "Save settings"}
+        </button>
+        <Feedback state={state} />
+      </div>
+    </form>
+  );
+}
+
+
+export function RedditKeysForm({ saved }: { saved: boolean }) {
+  const [state, action, pending] = useActionState<ActionState, FormData>(saveRedditKeys, null);
+  return (
+    <form action={action} className="flex flex-col gap-2">
+      <div className="grid gap-2 sm:grid-cols-2">
+        <input name="client_id" autoComplete="off" spellCheck={false} placeholder="Client id" className={input} />
+        <input name="client_secret" type="password" autoComplete="off" spellCheck={false} placeholder="Client secret" className={input} />
+      </div>
+      <div className="flex flex-wrap items-center gap-3">
+        <button disabled={pending} className="rounded-md bg-accent px-4 py-2 text-sm font-medium text-accent-foreground disabled:opacity-60">
+          {pending ? "Saving…" : saved ? "Replace" : "Save"}
+        </button>
+        {saved && <button name="remove" value="1" disabled={pending} className="text-sm text-danger hover:underline">Remove</button>}
+      </div>
+      <Feedback state={state} />
+    </form>
+  );
+}
+
+type PriceRow = { model: string; own: { input_per_m: number | null; cached_input_per_m: number | null;
+                                        output_per_m: number | null; per_image: number | null } | null;
+                  defaults: [number, number, number] | null };
+
+export function PricesForm({ rows, fx, override }: {
+  rows: PriceRow[]; fx: { day: string; usd_inr: number; source: string } | undefined; override: number | null;
+}) {
+  const [state, action, pending] = useActionState<ActionState, FormData>(savePrices, null);
+  const cell = `${input} w-20 px-2 py-1 text-right tabular-nums`;
+  return (
+    <form action={action} className="flex flex-col gap-3">
+      {rows.length === 0 ? <p className="text-sm text-muted">No models used yet.</p> : (
+        <div className="-mx-1 overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="text-left text-xs text-muted">
+              <tr><th className="p-1 font-normal">Model</th><th className="p-1 font-normal">Input</th>
+                <th className="p-1 font-normal">Cached</th><th className="p-1 font-normal">Output</th>
+                <th className="p-1 font-normal">Per image</th></tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.model} className="align-top">
+                  <td className="p-1">
+                    <input type="hidden" name="model" value={r.model} />
+                    <span className="font-mono text-xs">{r.model}</span>
+                    {!r.own && !r.defaults && <span className="block text-xs text-warn">no price — set one</span>}
+                    {!r.own && r.defaults && <span className="block text-xs text-muted">list price</span>}
+                  </td>
+                  {(["input", "cached", "output"] as const).map((k, i) => (
+                    <td key={k} className="p-1">
+                      <input name={k} inputMode="decimal" className={cell}
+                             defaultValue={r.own ? (r.own[(["input_per_m", "cached_input_per_m", "output_per_m"] as const)[i]] ?? "") : ""}
+                             placeholder={r.defaults ? String(r.defaults[i]) : "—"} />
+                    </td>
+                  ))}
+                  <td className="p-1"><input name="image" inputMode="decimal" className={cell}
+                                             defaultValue={r.own?.per_image ?? ""} placeholder="—" /></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <p className="text-xs text-muted">US dollars per million tokens. Leave a row empty to use the list price shown.</p>
+      <label className="flex flex-col gap-1 text-sm sm:w-1/2">US dollar in rupees
+        <input name="usd_inr" inputMode="decimal" defaultValue={override ?? ""} className={input}
+               placeholder={fx ? `${fx.usd_inr.toFixed(2)} (ECB, ${fx.day})` : "e.g. 84.5"} />
+        <span className="text-xs text-muted">Empty: the day&apos;s reference rate, fetched automatically.</span>
+      </label>
+      <div className="flex items-center gap-3">
+        <button disabled={pending} className="rounded-md bg-accent px-4 py-2 text-sm font-medium text-accent-foreground disabled:opacity-60">
+          {pending ? "Saving…" : "Save prices"}
         </button>
         <Feedback state={state} />
       </div>

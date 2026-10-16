@@ -181,6 +181,11 @@ const SettingsInput = z.object({
   narrator_voice: z.enum(["am_michael", "am_fenrir", "am_onyx", "bm_george", "bm_lewis", "af_heart", "af_bella", "bf_emma"]),
   narrator_speed: z.coerce.number().min(0.7).max(1.5),
   auto_approve: z.string().optional().transform((v) => v === "on"),
+  pipeline_mode: z.enum(["manual", "auto"]),
+  // Rupees a day automatic renders may spend; empty = no limit.
+  auto_spend_cap: z.union([z.literal(""), z.coerce.number().min(0).max(100000)]).optional()
+    .transform((v) => (v === "" || v === undefined ? null : Math.round(v * 100))),
+  vision_model: z.string().trim().max(120),
 });
 
 export async function saveSettings(_: ActionState, form: FormData): Promise<ActionState> {
@@ -193,8 +198,10 @@ export async function saveSettings(_: ActionState, form: FormData): Promise<Acti
       await db.query("select api.ensure_settings()");
       await db.query(
         `update app_settings set script_model = nullif($1, ''), youtube_privacy = $2, auto_approve = $3,
-                narrator_voice = $4, narrator_speed = $5`,
-        [v.script_model, v.youtube_privacy, v.auto_approve, v.narrator_voice, v.narrator_speed],
+                narrator_voice = $4, narrator_speed = $5, pipeline_mode = $6, auto_spend_cap_paise_day = $7,
+                vision_model = nullif($8, '')`,
+        [v.script_model, v.youtube_privacy, v.auto_approve, v.narrator_voice, v.narrator_speed,
+         v.pipeline_mode, v.auto_spend_cap, v.vision_model],
       );
     });
   } catch (err) {
@@ -271,4 +278,76 @@ export async function saveOpenAIKey(_: ActionState, form: FormData): Promise<Act
   }
   refresh();
   return { ok: true, message: `Key saved. ${models.length} models available — choose one below.` };
+}
+
+
+// ── costs and optional keys ──────────────────────────────────────────────────
+
+const Price = z.union([z.literal(""), z.coerce.number().min(0).max(1000)]).transform((v) => (v === "" ? null : v));
+
+/** The owner's price for each model (USD per 1M tokens; per image), and the rate override. */
+export async function savePrices(_: ActionState, form: FormData): Promise<ActionState> {
+  const user = await requireUser();
+  const models = form.getAll("model").map(String);
+  const rows: { model: string; input: number | null; cached: number | null; output: number | null; image: number | null }[] = [];
+  for (const [i, model] of models.entries()) {
+    const parsed = z.object({ input: Price, cached: Price, output: Price, image: Price }).safeParse({
+      input: form.getAll("input")[i], cached: form.getAll("cached")[i], output: form.getAll("output")[i],
+      image: form.getAll("image")[i],
+    });
+    if (!parsed.success) return { ok: false, error: `${model}: prices must be numbers.` };
+    rows.push({ model: model.slice(0, 100), ...parsed.data, image: parsed.data.image });
+  }
+  const fx = z.union([z.literal(""), z.coerce.number().min(1).max(1000)]).safeParse(form.get("usd_inr") ?? "");
+  if (!fx.success) return { ok: false, error: "The exchange rate must be rupees per dollar, like 84.5." };
+  try {
+    await asUser(user.id, async (db) => {
+      for (const r of rows) {
+        if (r.input == null && r.output == null && r.cached == null && r.image == null) {
+          await db.query("delete from prices where model = $1", [r.model]);
+        } else {
+          await db.query(
+            `insert into prices (user_id, model, input_per_m, cached_input_per_m, output_per_m, per_image, updated_at)
+             values ($1, $2, $3, $4, $5, $6, now())
+             on conflict (user_id, model) do update set input_per_m = $3, cached_input_per_m = $4,
+                    output_per_m = $5, per_image = $6, updated_at = now()`,
+            [user.id, r.model, r.input, r.cached, r.output, r.image]);
+        }
+      }
+      await db.query("update app_settings set usd_inr_override = $1", [fx.data === "" ? null : fx.data]);
+    });
+  } catch (err) {
+    return { ok: false, error: friendly(err) };
+  }
+  refresh();
+  return { ok: true, message: "Saved. New charges use these prices; past ones keep theirs." };
+}
+
+/** Reddit's API keys (only after Reddit approves the app). Write-only, like the OpenAI key. */
+export async function saveRedditKeys(_: ActionState, form: FormData): Promise<ActionState> {
+  const user = await requireUser();
+  const id = String(form.get("client_id") ?? "").trim();
+  const secret = String(form.get("client_secret") ?? "").trim();
+  if (form.get("remove") === "1") {
+    await asUser(user.id, (db) => db.query(
+      "delete from user_keys where name in ('reddit_client_id', 'reddit_client_secret')"));
+    refresh();
+    return { ok: true, message: "Removed — Reddit is read through its public feeds again." };
+  }
+  if (!/^[\w-]{10,40}$/.test(id) || !/^[\w-]{20,60}$/.test(secret))
+    return { ok: false, error: "Paste the app's client id and secret from reddit.com/prefs/apps." };
+  try {
+    await asUser(user.id, async (db) => {
+      for (const [name, value] of [["reddit_client_id", id], ["reddit_client_secret", secret]]) {
+        await db.query(
+          `insert into user_keys (user_id, name, ciphertext, updated_at) values ($1, $2, $3, now())
+           on conflict (user_id, name) do update set ciphertext = $3, updated_at = now()`,
+          [user.id, name, encrypt(value)]);
+      }
+    });
+  } catch (err) {
+    return { ok: false, error: friendly(err) };
+  }
+  refresh();
+  return { ok: true, message: "Saved. The ideas worker uses Reddit's API from its next batch." };
 }
