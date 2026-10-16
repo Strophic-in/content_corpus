@@ -55,13 +55,18 @@ PY
 
 touch .verified
 # Pass 1: files already present at the right size but not yet in .verified (e.g.
-# fetched by an older downloader) are hashed in place — a minute, not a download.
-while read -r sha size path; do
-  if ! grep -qx "$sha $path" .verified && [ "$(stat -c %s "$path" 2>/dev/null)" = "$size" ]; then
-    ( [ "$(sha256sum "$path" | cut -d' ' -f1)" = "$sha" ] && echo "$sha $path" >> .verified ) &
-  fi
-done < manifest.txt
-wait
+# fetched by an older downloader) are hashed in place instead of downloaded. Not on
+# a helper pod (NO_FETCH=1): on Race's shared disks 36 GB of hashing took over 10
+# billed minutes (2026-10-16) — a helper is either verified and joins at once, or
+# steps aside in seconds.
+if [ "${NO_FETCH:-0}" != 1 ]; then
+  while read -r sha size path; do
+    if ! grep -qx "$sha $path" .verified && [ "$(stat -c %s "$path" 2>/dev/null)" = "$size" ]; then
+      ( [ "$(sha256sum "$path" | cut -d' ' -f1)" = "$sha" ] && echo "$sha $path" >> .verified ) &
+    fi
+  done < manifest.txt
+  wait
+fi
 
 # Pass 2: whatever is still unverified must be downloaded.
 need=0; todo=""
