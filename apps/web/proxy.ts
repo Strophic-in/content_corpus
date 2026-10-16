@@ -8,6 +8,8 @@ export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const hasSession = Boolean(getSessionCookie(request));
 
+  // The homepage is public: Google's app verification rejects one behind a login.
+  if (pathname === "/") return NextResponse.next();
   if (pathname === "/login") {
     return hasSession
       ? NextResponse.redirect(new URL("/discover", request.url))
