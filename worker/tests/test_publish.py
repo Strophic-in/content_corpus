@@ -143,32 +143,29 @@ def test_youtube_quota_and_revoked_access_are_told_apart(video):
 # ── Instagram ─────────────────────────────────────────────────────────────────
 
 class FakeInstagram:
-    """Container → upload → processing → publish. `container` fixes the status an
-    earlier run's container reports; `statuses` are replies after an upload."""
+    """Container from a video_url → processing → publish. `container` fixes the status
+    an earlier run's container reports; `statuses` are replies after creating one."""
 
     def __init__(self, *, statuses=("IN_PROGRESS", "FINISHED"), container: str | None = None,
                  media: list | None = None, error_code: int | None = None):
         self.statuses, self.container, self.media = list(statuses), container, media or []
         self.error_code = error_code
-        self.uploaded: bytes | None = None
         self.created = self.published = 0
-        self.caption = ""
+        self.caption = self.video_url = ""
 
     def __call__(self, req: httpx.Request) -> httpx.Response:
         path = req.url.path
-        form = parse_qs(req.content.decode()) if req.method == "POST" and req.url.host != "rupload.test" else {}
+        form = parse_qs(req.content.decode()) if req.method == "POST" else {}
         if self.error_code:
             return httpx.Response(400, json={"error": {"message": "bad", "code": self.error_code}})
-        if req.url.host == "rupload.test":
-            assert req.headers["Authorization"] == "OAuth tok" and req.headers["offset"] == "0"
-            assert req.headers["file_size"] == str(len(VIDEO))
-            self.uploaded = req.content
-            return httpx.Response(200, json={"success": True, "message": "Upload successful."})
         if req.method == "POST" and path == "/v23.0/178/media":
-            assert form["media_type"] == ["REELS"] and form["upload_type"] == ["resumable"]
+            if "video_url" not in form:      # what the real API said to upload_type=resumable
+                return httpx.Response(400, json={"error": {"message": "The parameter video_url is required",
+                                                           "code": 100}})
+            assert form["media_type"] == ["REELS"] and "upload_type" not in form
             self.created += 1
-            self.caption = form["caption"][0]
-            return httpx.Response(200, json={"id": "c1", "uri": "https://rupload.test/ig-api-upload/v23.0/c1"})
+            self.caption, self.video_url = form["caption"][0], form["video_url"][0]
+            return httpx.Response(200, json={"id": "c1"})
         if req.method == "GET" and path == "/v23.0/c1":
             status = self.container or (self.statuses.pop(0) if len(self.statuses) > 1 else self.statuses[0])
             return httpx.Response(200, json={"status_code": status, "status": "Error: too short"})
@@ -183,24 +180,27 @@ class FakeInstagram:
         raise AssertionError(f"unexpected {req.method} {req.url}")
 
 
+LINK = "https://r2.test/u/p/final.mp4?X-Amz-Signature=abc"
+
+
 def _ig(fake, video, attempt, saved=None):
-    return instagram.publish(client(fake), token="tok", ig_user_id="178", path=video, caption="A reel",
+    return instagram.publish(client(fake), token="tok", ig_user_id="178", video_url=LINK, caption="A reel",
                              attempt=attempt, save=lambda **f: (saved if saved is not None else []).append(f),
                              sleep=lambda s: None)
 
 
-def test_instagram_uploads_waits_for_processing_then_publishes(video):
+def test_instagram_fetches_the_link_waits_for_processing_then_publishes(video):
     fake, saved = FakeInstagram(), []
     out = _ig(fake, video, {}, saved)
     assert saved == [{"upload_session_uri": "ig-container:c1", "state": "uploading"}, {"state": "uploaded"}]
-    assert fake.uploaded == VIDEO and fake.published == 1 and fake.caption == "A reel"
+    assert fake.video_url == LINK and fake.published == 1 and fake.caption == "A reel"
     assert out["remote_id"] == "m1" and out["remote_url"] == "https://www.instagram.com/reel/abc/"
 
 
 def test_instagram_publishes_a_processed_container_without_uploading_again(video):
     fake = FakeInstagram(container="FINISHED")
     out = _ig(fake, video, {"upload_session_uri": "ig-container:c1", "state": "uploaded"})
-    assert fake.created == 0 and fake.uploaded is None and fake.published == 1 and out["remote_id"] == "m1"
+    assert fake.created == 0 and fake.published == 1 and out["remote_id"] == "m1"
 
 
 def test_instagram_records_a_reel_an_earlier_run_published(video):
@@ -304,6 +304,26 @@ def test_handler_posts_once_and_the_post_follows(owner, user, fake_http):
     assert _status(owner, pid) == "published"
     assert owner.execute("select reason from post_events where post_id = %s and reason = 'posted to YouTube'",
                          (pid,)).fetchone()
+
+
+def test_handler_posts_to_instagram_from_a_signed_link(owner, user, fake_http, monkeypatch):
+    fake = fake_http(FakeInstagram())
+    monkeypatch.setattr(publish_post.storage, "signed_url", lambda key, seconds: f"{LINK}&key={key}&ttl={seconds}")
+    monkeypatch.setattr(publish_post.instagram, "POLL_S", 0)
+    pid = _ready_post(owner, user)
+    owner.execute("""insert into channel_accounts (user_id, channel_id, platform, external_id, token_ciphertext,
+                                                   token_expires_at)
+                     select %s, channel_id, 'instagram', '178', %s, now() + interval '50 days'
+                       from posts where id = %s""", (user, encrypt("tok"), pid))
+    _request(owner, user, pid, ("instagram",))
+    assert Runner("publish", {"publish_post": publish_post.HANDLER}).tick()
+    job = owner.execute("select state, error from jobs where dedupe_key = %s", (f"publish:{pid}:instagram",)).fetchone()
+    assert job["state"] == "succeeded", job["error"]
+    assert fake.video_url == f"{LINK}&key=u/p/final.mp4&ttl=7200"
+    assert fake.caption == "Why is the sky blue?\n\nScattering.\n\n#sky"
+    assert owner.execute("select remote_url from publish_attempts where post_id = %s",
+                         (pid,)).fetchone()["remote_url"] == "https://www.instagram.com/reel/abc/"
+    assert _status(owner, pid) == "published"
 
 
 def test_handler_reports_expired_access_and_frees_the_post(owner, user, fake_http):

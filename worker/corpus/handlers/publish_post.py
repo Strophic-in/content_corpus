@@ -31,6 +31,7 @@ TIMEOUT = httpx.Timeout(300, connect=20)
 # Instagram tokens live 60 days and can be renewed once they are a day old.
 IG_RENEW_WITHIN = timedelta(days=30)
 IG_RENEW_AFTER = timedelta(days=1)
+INSTAGRAM_LINK_SECONDS = 2 * 3600
 
 
 def run(ctx: JobContext) -> dict:
@@ -59,10 +60,10 @@ def run(ctx: JobContext) -> dict:
         return {"skipped": "already posted", "url": att["remote_url"]}
     att = att or attempts.start(post["id"], platform)
 
-    video = _download(post)
     try:
         with httpx.Client(timeout=TIMEOUT) as client:
             if platform == "youtube":
+                video = _download(post)
                 out = youtube.publish(
                     client, refresh_token=decrypt(acc["token_ciphertext"]), path=video,
                     meta=youtube.metadata(post["title"], post["description"] or "", post["hashtags"] or [],
@@ -70,8 +71,11 @@ def run(ctx: JobContext) -> dict:
                                           ctx.payload.get("privacy") or post["youtube_privacy"]),
                     attempt=att, save=lambda **f: attempts.update(att, **f))
             else:
+                video = None
                 out = instagram.publish(
-                    client, token=_instagram_token(client, acc), ig_user_id=acc["external_id"], path=video,
+                    client, token=_instagram_token(client, acc), ig_user_id=acc["external_id"],
+                    # Instagram downloads the reel itself; the link lapses well after it has.
+                    video_url=storage.signed_url(post["final_key"], INSTAGRAM_LINK_SECONDS),
                     caption=instagram.caption(post["title"], post["description"] or "", post["hashtags"] or []),
                     attempt=att, save=lambda **f: attempts.update(att, **f))
     except (youtube.AuthExpired, instagram.AuthExpired) as e:
@@ -95,7 +99,8 @@ def run(ctx: JobContext) -> dict:
     with db.conn() as c:
         db.log_event(c, post["id"], post["status"], post["status"], f"worker:{settings().worker_id}",
                      f"posted to {name}", {"url": out.get("remote_url"), "privacy": out.get("privacy")})
-    video.unlink(missing_ok=True)
+    if video:
+        video.unlink(missing_ok=True)
     return {"platform": platform, "url": out.get("remote_url"), "privacy": out.get("privacy")}
 
 

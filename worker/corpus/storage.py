@@ -79,6 +79,13 @@ def put_file(key: str, path: Path, *, kind: str, user_id: str, post_id=None, sho
     return {"key": key, "bytes": size, "sha256": sha}
 
 
+def signed_url(key: str, seconds: int) -> str:
+    """A link to one object that stops working after `seconds` — for a platform that
+    fetches the file itself (Instagram). The bucket stays private."""
+    return client().generate_presigned_url("get_object", Params={"Bucket": bucket(), "Key": key},
+                                           ExpiresIn=seconds)
+
+
 def get_file(key: str, dest: Path) -> Path:
     dest.parent.mkdir(parents=True, exist_ok=True)
     client().download_file(bucket(), key, str(dest))

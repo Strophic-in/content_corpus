@@ -132,7 +132,10 @@ export default function PrivacyPage() {
           them back; only the background worker that publishes decrypts them, at the moment it publishes.
         </li>
         <li>The database limits every row to the account that owns it (row-level security).</li>
-        <li>Video files sit in private storage that is not publicly reachable.</li>
+        <li>
+          Video files sit in private storage. To post a reel to Instagram, Instagram is given a link to that one
+          video, which stops working after two hours.
+        </li>
       </ul>
 
       <h2>5. How long we keep it</h2>

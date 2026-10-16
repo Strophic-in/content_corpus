@@ -1,10 +1,12 @@
 """Instagram: a Reel through the Instagram API with Instagram Login.
 
-Create a REELS container with upload_type=resumable, send the file's bytes to it
-directly (so the bucket never needs a public link), wait while Instagram
-processes it, then publish. The container id is saved on the attempt before the
-upload, and the attempt moves to 'uploaded' just before media_publish, so a later
-run continues from what the container says:
+Create a REELS container from `video_url` (a short-lived signed link to the reel
+in R2: Instagram fetches the file itself), wait while Instagram processes it,
+then publish. Direct byte uploads (upload_type=resumable) exist only on the
+Facebook-login API; with Instagram Login the container insists on video_url
+(seen 2026-10-16). The container id is saved on the attempt as soon as it exists,
+and the attempt moves to 'uploaded' just before media_publish, so a later run
+continues from what the container says:
 
     PUBLISHED            → find the post it became and record it
     FINISHED             → publish it
@@ -15,7 +17,6 @@ from __future__ import annotations
 
 import time
 from datetime import datetime
-from pathlib import Path
 from typing import Callable
 
 import httpx
@@ -52,10 +53,10 @@ def caption(title: str, description: str, hashtags: list[str]) -> str:
     return "\n\n".join(x for x in (title.strip(), description.strip(), tags) if x)[:2200]
 
 
-def publish(client: httpx.Client, *, token: str, ig_user_id: str, path: Path, caption: str,
+def publish(client: httpx.Client, *, token: str, ig_user_id: str, video_url: str, caption: str,
             attempt: dict, save: Callable[..., object], sleep: Callable[[float], None] = time.sleep,
             clock: Callable[[], float] = time.monotonic) -> dict:
-    """Post `path` as a Reel and return what to record on the attempt."""
+    """Post the video at `video_url` as a Reel and return what to record on the attempt."""
     container = _container_of(attempt)
     if container:
         status = _status(client, token, container)
@@ -64,10 +65,8 @@ def publish(client: httpx.Client, *, token: str, ig_user_id: str, path: Path, ca
         if status != "FINISHED":
             container = None        # never published; Instagram drops it within a day
     if not container:
-        container = _create(client, token, ig_user_id, caption)
-        save(upload_session_uri=CONTAINER + container["id"], state="uploading")
-        _upload(client, token, container["uri"], path)
-        container = container["id"]
+        container = _create(client, token, ig_user_id, video_url, caption)
+        save(upload_session_uri=CONTAINER + container, state="uploading")
         _wait_until_processed(client, token, container, sleep, clock)
 
     save(state="uploaded")          # from here on, the post may be live
@@ -82,18 +81,10 @@ def _container_of(attempt: dict) -> str | None:
     return uri[len(CONTAINER):] if uri.startswith(CONTAINER) else None
 
 
-def _create(client: httpx.Client, token: str, ig_user_id: str, text: str) -> dict:
+def _create(client: httpx.Client, token: str, ig_user_id: str, video_url: str, text: str) -> str:
     return _ok(client.post(f"{GRAPH}/{ig_user_id}/media", data={
-        "media_type": "REELS", "upload_type": "resumable", "caption": text,
-        "share_to_feed": "true", "access_token": token}), "creating the reel")
-
-
-def _upload(client: httpx.Client, token: str, uri: str, path: Path) -> None:
-    body = _ok(client.post(uri, content=path.read_bytes(), headers={
-        "Authorization": f"OAuth {token}", "offset": "0", "file_size": str(path.stat().st_size)}),
-        "uploading the video")
-    if body.get("success") is False:
-        raise PublishError(f"Instagram did not take the upload: {body.get('message') or body}")
+        "media_type": "REELS", "video_url": video_url, "caption": text,
+        "share_to_feed": "true", "access_token": token}), "creating the reel")["id"]
 
 
 def _status(client: httpx.Client, token: str, container: str) -> str:
