@@ -90,8 +90,8 @@ export default async function ChannelDeckPage({ params }: { params: Promise<{ ch
       `select count(*)::int as n from jobs where lane = 'ideas' and state in ('queued','claimed')
           and kind in ('suggest_ideas','attach_media') and not_before <= now() + interval '1 minute'
           and (payload->>'channel_id' = $1::text
-               or payload->>'category_id' in (select id::text from categories where channel_id = $1)
-               or payload->>'idea_id' in (select id::text from ideas where channel_id = $1 and status = 'new'))`,
+               or payload->>'category_id' in (select id::text from categories where channel_id = $1::uuid)
+               or payload->>'idea_id' in (select id::text from ideas where channel_id = $1::uuid and status = 'new'))`,
       [channelId])).rows[0].n as number;
     // The next free day at the channel's usual time: the schedule sheet's suggestion.
     const next = (await db.query(
