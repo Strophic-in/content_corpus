@@ -270,3 +270,17 @@ def test_a_mood_with_no_cc0_tracks_falls_back_to_background_music(tmp_path):
         t = music.find(c, "k", "playful", set(), tmp_path / "m.mp3")
     assert t is not None and t.id == 7
     assert asked[:len(music.MOODS["playful"])] == music.MOODS["playful"]
+
+
+def test_a_deleted_posts_reel_is_swept_but_a_living_ones_is_kept(s3, owner, user, footage_post, media):
+    keys = []
+    for pid in (footage_post, owner.execute("insert into posts (user_id, topic, slot_date) values (%s, 'gone', "
+                                            "'2033-06-06') returning id", (user,)).fetchone()["id"]):
+        k = f"u/{user}/p/{pid}/final/x.mp4"
+        storage.put_file(k, media["stock"], kind="final", user_id=user, post_id=pid, content_type="video/mp4")
+        keys.append(k)
+    owner.execute("delete from posts where topic = 'gone' and user_id = %s", (user,))
+    sweep.sweep_intermediates(lambda m: None)
+    states = {r["key"]: r["state"] for r in owner.execute("select key, state from storage_objects where key = any(%s)",
+                                                          (keys,))}
+    assert states == {keys[0]: "stored", keys[1]: "deleted"}

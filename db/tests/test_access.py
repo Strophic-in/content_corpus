@@ -762,3 +762,18 @@ def test_a_new_account_waits_for_an_owner_who_sets_its_limit(owner):
     finally:
         for u in (boss, new, member):
             owner.execute('delete from "user" where id = %s', (u,))
+
+
+def test_a_channel_goes_with_its_posts_even_the_default_one(alice, owner):
+    """What the web app's deleteChannel does, as the web role (refinement, 2026-10-17)."""
+    a = owner.execute("insert into channels (user_id, name, is_default) values (%s, 'A', true) returning id",
+                      (alice,)).fetchone()[0]
+    b = owner.execute("insert into channels (user_id, name) values (%s, 'B') returning id", (alice,)).fetchone()[0]
+    owner.execute("insert into posts (user_id, channel_id, topic, slot_date) values (%s, %s, 't', '2032-05-05')",
+                  (alice, a))
+    with web_session(alice) as c:
+        c.execute("select api.set_default_channel(%s)", (b,))            # the default moves first
+        c.execute("delete from posts where channel_id = %s", (a,))
+        c.execute("delete from channels where id = %s", (a,))
+        assert c.execute("select name, is_default from channels").fetchall() == [("B", True)]
+        assert c.execute("select count(*) from posts").fetchone()[0] == 0

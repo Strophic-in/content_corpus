@@ -6,11 +6,13 @@ import { requireUser } from "@/lib/session";
 
 import { openChannel } from "../channel-actions";
 import { AutoRefresh } from "../posts/[id]/post-actions";
+import { ChannelDelete } from "./channel-delete";
 
 export const metadata = { title: "Discover · Content Corpus" };
 
 type ChannelCard = {
   id: string; name: string; niche: string; new_ideas: number; looking: boolean; scheduled: number;
+  posts: number; ideas: number;
   accounts: { platform: "youtube" | "instagram"; handle: string | null; status: string }[];
 };
 
@@ -31,6 +33,8 @@ export default async function DiscoverHome() {
                                                               where k.channel_id = c.id))
                    ) as looking,
             (select count(*) from posts p where p.channel_id = c.id and p.status = 'scheduled')::int as scheduled,
+            (select count(*) from posts p where p.channel_id = c.id)::int as posts,
+            (select count(*) from ideas i where i.channel_id = c.id)::int as ideas,
             coalesce((select json_agg(json_build_object('platform', a.platform, 'handle', a.handle, 'status', a.status)
                                       order by a.platform)
                         from channel_accounts a where a.channel_id = c.id), '[]') as accounts
@@ -48,22 +52,24 @@ export default async function DiscoverHome() {
           + Channel
         </Link>
       </div>
-      <ul className="grid gap-3 sm:grid-cols-2">
+      {/* Every card the same shape: name, two lines of niche, then the counts and the
+          accounts pinned to the bottom, so cards in a row line up whatever they hold. */}
+      <ul className="grid auto-rows-fr gap-3 sm:grid-cols-2">
         {channels.map((c) => (
-          <li key={c.id}>
-            <form action={openChannel.bind(null, c.id)}>
-              <button className="flex w-full flex-col gap-3 rounded-2xl border border-border bg-surface p-4 text-left transition hover:border-accent active:scale-[.99]">
-                <span className="flex items-center gap-3">
+          <li key={c.id} className="relative">
+            <form action={openChannel.bind(null, c.id)} className="h-full">
+              <button className="flex h-full w-full flex-col gap-3 rounded-2xl border border-border bg-surface p-4 pr-14 text-left transition hover:border-accent active:scale-[.99]">
+                <span className="flex items-start gap-3">
                   <span aria-hidden
                         className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-linear-to-br from-indigo-500 via-purple-500 to-pink-500 text-lg font-semibold text-white">
                     {c.name.trim().charAt(0).toUpperCase() || "?"}
                   </span>
-                  <span className="min-w-0">
+                  <span className="min-w-0 flex-1">
                     <span className="block truncate font-medium">{c.name}</span>
-                    {c.niche && <span className="line-clamp-2 text-sm text-muted">{c.niche}</span>}
+                    <span className="line-clamp-2 min-h-10 text-sm text-muted">{c.niche || "No niche set yet"}</span>
                   </span>
                 </span>
-                <span className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+                <span className="mt-auto flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
                   <span className={c.new_ideas ? "font-medium text-accent" : "text-muted"}>
                     {c.looking ? "Finding ideas…" : `${c.new_ideas || "No"} new idea${c.new_ideas === 1 ? "" : "s"}`}
                   </span>
@@ -80,6 +86,8 @@ export default async function DiscoverHome() {
                 </span>
               </button>
             </form>
+            <ChannelDelete id={c.id} name={c.name} posts={c.posts} ideas={c.ideas} accounts={c.accounts.length}
+                           last={channels.length < 2} />
           </li>
         ))}
       </ul>

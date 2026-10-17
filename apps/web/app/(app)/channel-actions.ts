@@ -1,7 +1,7 @@
 "use server";
 
 import { cookies } from "next/headers";
-import { refresh } from "next/cache";
+import { refresh, revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
 
@@ -98,20 +98,37 @@ export async function makeDefaultChannel(channelId: string): Promise<ActionState
   return { ok: true };
 }
 
-export async function deleteChannel(channelId: string): Promise<ActionState> {
+/**
+ * Delete a channel with everything in it: its posts (a post without a channel is
+ * invisible and could never be posted), ideas, categories, formats and connected
+ * accounts. Videos already on YouTube or Instagram stay there; the cost history
+ * stays; the stored files are swept by the ideas lane. Deleting the default
+ * channel makes the oldest other one the default. The last channel can't go.
+ */
+export async function deleteChannel(channelId: string, back = "/channels"): Promise<ActionState> {
   const user = await requireUser();
   try {
-    const left = await asUser(user.id, async (db) => {
-      const n = (await db.query("select count(*)::int as n from channels")).rows[0].n as number;
-      if (n < 2) return false;
-      await db.query("delete from channels where id = $1 and not is_default", [channelId]);
-      return true;
+    const outcome = await asUser(user.id, async (db) => {
+      const rows = (await db.query("select id, is_default from channels order by created_at")).rows as
+        { id: string; is_default: boolean }[];
+      const me = rows.find((r) => r.id === channelId);
+      if (!me) return "gone";
+      if (rows.length < 2) return "last";
+      if (me.is_default) {
+        await db.query("select api.set_default_channel($1)", [rows.find((r) => r.id !== channelId)!.id]);
+      }
+      await db.query("delete from posts where channel_id = $1", [channelId]);
+      await db.query("delete from channels where id = $1", [channelId]);
+      return "deleted";
     });
-    if (!left) return { ok: false, error: "Keep at least one channel." };
+    if (outcome === "last") return { ok: false, error: "Keep at least one channel." };
   } catch (err) {
     return { ok: false, error: friendly(err) };
   }
-  redirect("/channels");
+  const jar = await cookies();
+  if (jar.get(CHANNEL_COOKIE)?.value === channelId) jar.delete(CHANNEL_COOKIE);
+  revalidatePath("/", "layout");            // the header's channel picker lists it too
+  redirect(back);
 }
 
 export async function disconnectAccount(accountId: string): Promise<ActionState> {

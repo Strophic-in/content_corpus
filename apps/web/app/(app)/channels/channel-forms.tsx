@@ -75,12 +75,11 @@ export function ChannelMenu({ channelId, isDefault }: { channelId: string; isDef
           <button disabled={pending} onClick={() => start(async () => setState(await makeDefaultChannel(channelId)))}
                   className="rounded-xl border border-border px-3 py-1.5 text-sm hover:border-accent">Make default</button>
         )}
-        {!isDefault && (
-          <button disabled={pending}
-                  onClick={() => confirm("Delete this channel with its formats, ideas and connections? Its posts stay.") &&
-                    start(async () => setState(await deleteChannel(channelId)))}
-                  className="rounded-xl border border-border px-3 py-1.5 text-sm text-danger hover:border-danger">Delete</button>
-        )}
+        <button disabled={pending}
+                onClick={() => confirm("Delete this channel with its posts, ideas, formats and connected accounts? "
+                  + "Videos already on YouTube or Instagram stay there. This can't be undone.") &&
+                  start(async () => setState(await deleteChannel(channelId)))}
+                className="rounded-xl border border-border px-3 py-1.5 text-sm text-danger hover:border-danger">Delete</button>
       </div>
       <Feedback state={state} />
     </div>

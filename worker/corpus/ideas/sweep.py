@@ -109,20 +109,23 @@ PUBLISHED_INTERMEDIATE_DAYS = 14
 def sweep_intermediates(log: Callable[[str], None] = print) -> int:
     """Rendered shots and narration recordings nobody can use any more: those of a
     script that was replaced (after SUPERSEDED_DAYS), and those of a reel published
-    PUBLISHED_INTERMEDIATE_DAYS ago — the finished reel itself is kept."""
+    PUBLISHED_INTERMEDIATE_DAYS ago — the finished reel itself is kept, unless its
+    post (or its channel) was deleted: then everything of it goes."""
     with db.conn() as c:
         rows = c.execute("""
-            select s.key, s.created_at, sh.id as shot_id, sh.script_id, p.approved_script_id, p.status,
+            select s.key, s.kind, s.created_at, sh.id as shot_id, sh.script_id, p.approved_script_id, p.status,
                    (select max(e.at) from post_events e
                      where e.post_id = p.id and e.to_state = 'published') as published_at
               from storage_objects s
               left join shots sh on sh.id = s.shot_id
               left join posts p on p.id = coalesce(sh.post_id, s.post_id)
-             where s.kind in ('shot','narration') and s.state = 'stored'""").fetchall()
+             where s.kind in ('shot','narration','final') and s.state = 'stored'""").fetchall()
     gone = []
     for r in rows:
         if r["shot_id"] is None and r["status"] is None:
             gone.append(r["key"])                                      # its post is gone
+        elif r["kind"] == "final":
+            continue                                                   # a living post's reel is kept
         elif r["shot_id"] is not None and r["approved_script_id"] != r["script_id"] and \
                 c_days(r["created_at"]) >= SUPERSEDED_DAYS:
             gone.append(r["key"])                                      # a replaced script's
