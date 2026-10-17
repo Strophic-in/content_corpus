@@ -47,7 +47,8 @@ class Writer:
             hashtags=["#shorts"], intended_dialogue=" ".join(NARRATION), style_prompt="Stylised 3D.",
             shots=[generated_shot(seconds=8, visual=f"v{i}", audio="soft hum", narration=n)
                    for i, n in enumerate(NARRATION)],
-            review=Review(score=8, risks=[], notes="ok"),
+            music_mood="",
+        review=Review(score=8, risks=[], notes="ok"),
         ), Usage(model=model, input_tokens=1, output_tokens=1)
 
 

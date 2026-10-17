@@ -141,8 +141,41 @@ def compose_clip(src: Path, out: Path, *, seconds: float, start: float = 0.0, en
             "held_s": round(hold, 2), "sound": sound}
 
 
+def _num(v: float) -> str:
+    return f"{v:,.0f}" if abs(v) >= 100 or float(v).is_integer() else f"{v:,.1f}"
+
+
+def chart_still(chart: dict, out: Path) -> Path:
+    """A bar chart as a 1080x1920 picture: the title at the top, one horizontal bar
+    per label, longest bar = largest value, each value printed at its bar's end."""
+    work = out.parent
+    shutil.copyfile(FONT, work / "chart.ttf")
+    labels, values = list(chart["labels"])[:6], [float(v) for v in chart["values"]][:6]
+    top = max(values) or 1.0
+    unit = (chart.get("unit") or "").strip()
+    (work / "title.txt").write_text(chart["title"].strip()[:80], encoding="utf-8")
+    graph = [f"drawtext=fontfile=chart.ttf:textfile=title.txt:expansion=none:fontsize=60:fontcolor=white:"
+             f"x=(w-text_w)/2:y=300"]
+    # Rows end above y≈1300: the captions sit around 72% of the height.
+    row, y0, x0, full = 800 // max(1, len(labels)), 480, 90, 820
+    for k, (label, value) in enumerate(zip(labels, values)):
+        y = y0 + k * row
+        bar = max(12, round(full * value / top))
+        (work / f"l{k}.txt").write_text(str(label).strip()[:40], encoding="utf-8")
+        (work / f"v{k}.txt").write_text(f"{_num(value)}{(' ' + unit) if unit and unit != '%' else unit}",
+                                        encoding="utf-8")
+        graph += [f"drawtext=fontfile=chart.ttf:textfile=l{k}.txt:expansion=none:fontsize=42:fontcolor=0xcbd5e1:"
+                  f"x={x0}:y={y}",
+                  f"drawbox=x={x0}:y={y + 60}:w={bar}:h={min(90, row - 90)}:color=0xef4444@1:t=fill",
+                  f"drawtext=fontfile=chart.ttf:textfile=v{k}.txt:expansion=none:fontsize=44:fontcolor=white:"
+                  f"x={min(x0 + bar + 20, W - 260)}:y={y + 60 + max(0, (min(90, row - 90) - 44) // 2)}"]
+    _ff(["-f", "lavfi", "-i", f"color=c=0x0f172a:s={W}x{H}", "-vf", ",".join(graph), "-frames:v", "1", out.name],
+        cwd=work)
+    return out
+
+
 def ken_burns(src: Path, out: Path, *, seconds: float, idx: int = 0, credit: str | None = None,
-              layout: str | None = None) -> dict:
+              layout: str | None = None, zoom: float = KEN_BURNS_ZOOM) -> dict:
     """A picture → the finished shot `out`: composed to 9:16, slowly zooming."""
     work = out.parent
     i = info(src)
@@ -152,7 +185,7 @@ def ken_burns(src: Path, out: Path, *, seconds: float, idx: int = 0, credit: str
     still = work / "still.png"
     _ff(["-i", str(src.resolve()), "-filter_complex", _layout(layout, "0:v", "s", 2 * W, 2 * H), "-map", "[s]",
          "-frames:v", "1", still.name], cwd=work)
-    z = (f"1+{KEN_BURNS_ZOOM}*on/{frames}" if idx % 2 == 0 else f"{1 + KEN_BURNS_ZOOM}-{KEN_BURNS_ZOOM}*on/{frames}")
+    z = f"1+{zoom}*on/{frames}" if idx % 2 == 0 else f"{1 + zoom}-{zoom}*on/{frames}"
     graph = (f"[0:v]zoompan=z='{z}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s={W}x{H}:fps={FPS},"
              f"setsar=1[kb];" + _credit(work, credit, "kb", "v"))
     _ff(["-loop", "1", "-framerate", str(FPS), "-i", still.name, "-filter_complex", graph, "-map", "[v]", "-an"]

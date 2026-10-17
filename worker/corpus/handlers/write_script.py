@@ -2,7 +2,9 @@
 
 A post whose accepted idea brought footage waits (Defer) until that footage is
 fetched and analysed, so the writer can cut clips from what actually happens in
-it; script/footage.py tells the writer what it may show.
+it; script/footage.py tells the writer what it may show. It also waits for the
+story's research (research_post: the sources read in full) and writes from it.
+The script picks a background-music mood when a Freesound key is set.
 
 Safe to retry: the version number comes from the job (fixed at enqueue), and a
 retry that finds that version already written returns it instead of paying for
@@ -21,7 +23,7 @@ from .. import channels, costs, db, prompts, vault
 from ..config import settings
 from ..runner import Defer, Handler, JobContext, Permanent, Retryable
 from ..script import footage as footage_
-from ..script.llm import (NARRATOR_WORDS_PER_SECOND, OpenAIScriptWriter, ScriptWriter, Usage,
+from ..script.llm import (MUSIC_MOODS, NARRATOR_WORDS_PER_SECOND, OpenAIScriptWriter, ScriptWriter, Usage,
                           narration_word_cap, validate)
 from ..script.review import OpenAIReviewer
 
@@ -100,6 +102,8 @@ def run(ctx: JobContext) -> dict:
     key = vault.secret(post["user_id"], "openai")
     if not key:
         raise Permanent("Add your OpenAI API key in Settings.", stage="config")
+    if why := db.over_quota(post["user_id"]):
+        raise Permanent(why[:1].upper() + why[1:] + ".", stage="quota")
 
     fmt = None
     if post.get("format_id"):
@@ -117,9 +121,13 @@ def run(ctx: JobContext) -> dict:
         footage, waiting = footage_.load(c, post_id, stock=bool(vault.secret(post["user_id"], "pexels_api_key")))
     if waiting and footage_.still_worth_waiting(waiting):
         raise Defer(f"waiting for {len(waiting)} piece(s) of footage to be fetched and analysed", retry_in=45)
+    if post.get("research_state") == "pending" and footage_.still_worth_waiting([post]):
+        raise Defer("waiting for the story's sources to be read", retry_in=30)
+    music = bool(vault.secret(post["user_id"], "freesound_api_key"))
     system = (_system_prompt(st, target, revision, post["audio_source"], speed, fmt)
-              + footage_.prompt_section(footage, narrated))
-    user = f"Topic: {post['topic']}\nBrief: {post['brief'] or '(none)'}" + _category_note(category)
+              + footage_.prompt_section(footage, narrated) + _music_section(music))
+    user = (f"Topic: {post['topic']}\nBrief: {post['brief'] or '(none)'}" + _category_note(category)
+            + sources_note(post.get("research")))
     input_sha = hashlib.sha256("\x1f".join([system, user, model]).encode()).hexdigest()
 
     writer: ScriptWriter = WRITER_FACTORY(key)
@@ -137,7 +145,7 @@ def run(ctx: JobContext) -> dict:
         return out, u
 
     out, usage = call(user)
-    footage_.normalize(out, footage)
+    footage_.normalize(out, footage, music)
     problems = validate(out, target, narrated=narrated, speed=speed, footage=footage)
     # A draft that breaks a rule goes back with exactly what to fix: asking again
     # from scratch tends to repeat the same mistake (seen: one line too long, 3x).
@@ -152,7 +160,7 @@ def run(ctx: JobContext) -> dict:
                       usage.output_tokens + more.output_tokens,
                       usage.cached_input_tokens + more.cached_input_tokens,
                       usage.cache_write_tokens + more.cache_write_tokens)
-        footage_.normalize(out, footage)
+        footage_.normalize(out, footage, music)
         problems = validate(out, target, narrated=narrated, speed=speed, footage=footage)
     if problems:
         raise Retryable("script failed validation: " + "; ".join(problems), stage="validate",
@@ -174,14 +182,14 @@ def run(ctx: JobContext) -> dict:
         script_id = c.execute(
             """insert into scripts (post_id, version, state, title, hook, description, hashtags,
                                     intended_dialogue, shot_plan, style_prompt, model,
-                                    input_sha256, review, token_usage, format_id, format_version)
-               values (%s, %s, 'awaiting_approval', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                                    input_sha256, review, token_usage, format_id, format_version, music_mood)
+               values (%s, %s, 'awaiting_approval', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                returning id""",
             (post_id, version, out.title, out.hook, out.description, out.hashtags,
              out.intended_dialogue, Jsonb(shot_plan), out.style_prompt, usage.model, input_sha,
              Jsonb(out.review.model_dump()),
              Jsonb({"input": usage.input_tokens, "output": usage.output_tokens}),
-             (fmt or {}).get("id"), (fmt or {}).get("version"))).fetchone()["id"]
+             (fmt or {}).get("id"), (fmt or {}).get("version"), out.music_mood or None)).fetchone()["id"]
         c.execute("update posts set status = 'awaiting_approval', error = null where id = %s",
                   (post_id,))
         db.log_event(c, post_id, "scripting", "awaiting_approval",
@@ -195,6 +203,28 @@ def run(ctx: JobContext) -> dict:
     return {"script_id": str(script_id), "auto_approved": bool(locked["auto_approve"]) and not held,
             "held": held,
             "shots": len(shot_plan), "tokens": usage.input_tokens + usage.output_tokens}
+
+
+SOURCES_CHARS = 9000
+
+
+def sources_note(research: dict | None) -> str:
+    """The story's sources, read in full (research_post), for the writer and the desk editor."""
+    articles = (research or {}).get("articles") or []
+    if not articles:
+        return ""
+    per = max(1200, SOURCES_CHARS // len(articles))
+    parts = [f"### {a['site']} — {a.get('title') or a['url']}\n{a['text'][:per]}" for a in articles]
+    return ("\n\n## What the sources report (the only facts you may use; attribute claims to them)\n"
+            + "\n\n".join(parts))
+
+
+def _music_section(available: bool) -> str:
+    if not available:
+        return "\n\n## Music\n`music_mood` is \"\" (no background music for this reel)."
+    return ("\n\n## Music\n`music_mood`: the background track's mood, one of "
+            + ", ".join(m for m in MUSIC_MOODS if m)
+            + " — or \"\" when music would be in poor taste (a death, a tragedy). It plays quietly under the voice.")
 
 
 def _category(c, post: dict) -> dict | None:
@@ -216,7 +246,8 @@ def _desk_review(key: str, model: str, out, post: dict, billed: dict) -> list[st
         items = c.execute("select items from ideas where post_id = %s", (post["id"],)).fetchone()
     with db.conn() as c:
         category = _category(c, post)
-    lines = [f"Topic: {post['topic']}", f"Brief: {post['brief'] or '(none)'}" + _category_note(category)]
+    lines = [f"Topic: {post['topic']}", f"Brief: {post['brief'] or '(none)'}" + _category_note(category)
+             + sources_note(post.get("research"))]
     for it in (items or {}).get("items") or []:
         lines.append(f"- {it.get('source', '')}: {it.get('title', '')} — {it.get('summary', '')} ({it.get('url', '')})")
     try:

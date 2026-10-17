@@ -15,7 +15,9 @@ from pathlib import Path
 
 from psycopg.types.json import Jsonb
 
-from .. import auto, db, storage
+import httpx
+
+from .. import auto, db, music, storage, vault
 from ..config import settings
 from ..media import assemble as media
 from ..runner import Handler, JobContext, Permanent
@@ -44,8 +46,10 @@ def run(ctx: JobContext) -> dict:
     built = [build_segment.ensure_segment(post, s, style, hint) for s in shots]
     with tempfile.TemporaryDirectory() as tmp:
         out = Path(tmp) / "final.mp4"
+        track = _music(post, script_id, Path(tmp))
         info = media.join_segments([(v, a) for v, a, _ in built], out,
-                                   log=lambda m: print(f"[assemble {script_id}] {m}", flush=True))
+                                   log=lambda m: print(f"[assemble {script_id}] {m}", flush=True),
+                                   music=track.path if track else None, music_gain=music.GAIN)
         info["segments_ready"] = sum(cached for _, _, cached in built)
         key = f"{storage.post_prefix(post['user_id'], post['id'])}/final/{script_id}.mp4"
         stored = storage.put_file(key, out, kind="final", user_id=post["user_id"], post_id=post["id"],
@@ -54,16 +58,44 @@ def run(ctx: JobContext) -> dict:
     # ("AI reconstruction" and "AI illustration" are labels, not credits.)
     credits = list(dict.fromkeys(s["credit"].strip() for s in shots
                                  if (s.get("credit") or "").strip() and not s["credit"].startswith("AI ")))
+    if track:
+        credits.append(track.credit)
     with db.tx() as c:
         c.execute("""update posts set status = 'ready', final_key = %s, final_sha256 = %s, final_bytes = %s,
-                                      final_duration_s = %s, error = null, credits = %s
+                                      final_duration_s = %s, error = null, credits = %s, music = %s
                       where id = %s""", (key, stored["sha256"], stored["bytes"], info["seconds"],
-                                         Jsonb(credits), post["id"]))
+                                         Jsonb(credits), Jsonb(track.meta) if track else None, post["id"]))
         db.log_event(c, post["id"], "post_processing", "ready", f"worker:{settings().worker_id}",
                      "reel assembled", {**info, "bytes": stored["bytes"]})
     shutil.rmtree(build_segment.cache_dir(post["id"]), ignore_errors=True)
     auto.request_publish(post["id"])             # Automatic mode: post it at the picked time
     return {**info, "final_key": key}
+
+
+class _Track:
+    def __init__(self, t: music.Track, mood: str):
+        self.path, self.credit = t.path, t.credit
+        self.meta = {"id": t.id, "name": t.name, "author": t.author, "page": t.page, "mood": mood}
+
+
+def _music(post: dict, script_id, work: Path) -> _Track | None:
+    """The script's music mood → a CC0 track the owner hasn't used lately (None: no music)."""
+    with db.conn() as c:
+        mood = (c.execute("select music_mood from scripts where id = %s", (script_id,)).fetchone() or {}).get(
+            "music_mood")
+        recent = {int(r["id"]) for r in c.execute(
+            """select (music->>'id') as id from posts where user_id = %s and music is not null
+                order by updated_at desc limit %s""", (post["user_id"], music.RECENT)).fetchall() if r["id"]}
+    key = vault.secret(post["user_id"], "freesound_api_key") if mood else None
+    if not key:
+        return None
+    try:
+        with httpx.Client(timeout=30) as client:
+            t = music.find(client, key, mood, recent, work / "music.mp3")
+    except Exception as e:  # noqa: BLE001 - a reel without music is still a reel
+        print(f"[assemble {script_id}] no music: {e}", flush=True)
+        return None
+    return _Track(t, mood) if t else None
 
 
 def on_give_up(ctx: JobContext, err: dict) -> None:

@@ -721,3 +721,44 @@ def test_ltx_frame_rules_bind_generated_shots_only(alice, owner):
     with pytest.raises(psycopg.errors.CheckViolation):
         owner.execute("""insert into shots (post_id, script_id, idx, prompt, seed, width, height, num_frames)
                          values (%s, %s, 1, 'generated', 1, 1080, 1920, 66)""", (pid, sid))
+
+
+# ── members (0019) ────────────────────────────────────────────────────────────
+
+def test_a_new_account_waits_for_an_owner_who_sets_its_limit(owner):
+    owner.execute("update app_config set signups_need_approval = true")
+    try:
+        boss, new = _mk_user(owner), _mk_user(owner)
+    finally:
+        owner.execute("update app_config set signups_need_approval = false")
+    member = _mk_user(owner)                                            # approval off: active at once
+    owner.execute("update memberships set role = 'owner', status = 'active' where user_id = %s", (boss,))
+    try:
+        got = owner.execute("select role, status from memberships where user_id = any(%s) order by status",
+                            ([new, member],)).fetchall()
+        assert got == [("member", "active"), ("member", "pending")]
+        with pytest.raises(psycopg.errors.InsufficientPrivilege, match="this account is pending"):
+            with web(new) as c:
+                c.execute("select api.ensure_settings()")
+        with pytest.raises(psycopg.errors.InsufficientPrivilege, match="only the owner"):
+            with web(member) as c:
+                c.execute("select * from api.admin_members()")
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):       # no writing one's own membership
+            with web(member) as c:
+                c.execute("update memberships set role = 'owner' where user_id = %s", (member,))
+        with web_session(boss) as c:
+            listed = {r[0]: r[4] for r in c.execute("select * from api.admin_members()").fetchall()}
+            assert listed[new] == "pending" and listed[boss] == "active"
+            c.execute("select api.admin_set_member(%s, 'active', 0)", (new,))          # in, with ₹0 a month
+            with pytest.raises(psycopg.errors.InsufficientPrivilege, match="AUTH_ALLOWED_EMAILS"):
+                c.execute("select api.admin_set_member(%s, 'suspended', null)", (boss,))
+        pid = owner.execute("insert into posts (user_id, topic, slot_date) values (%s, 't', '2032-03-03') "
+                            "returning id", (new,)).fetchone()[0]
+        with web(new) as c:
+            c.execute("select api.ensure_settings()")                   # active now
+        with pytest.raises(psycopg.errors.ObjectNotInPrerequisiteState, match="spending limit"):
+            with web(new) as c:
+                c.execute("select api.generate_script(%s)", (pid,))
+    finally:
+        for u in (boss, new, member):
+            owner.execute('delete from "user" where id = %s', (u,))

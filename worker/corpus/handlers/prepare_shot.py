@@ -68,6 +68,9 @@ def run(ctx: JobContext) -> dict:
         elif shot["source"] == "image":
             src = storage.get_file(asset["key"], work / "asset.jpg")
             how = footage.ken_burns(src, out, seconds=seconds, idx=shot["idx"], credit=credit, layout=shot["layout"])
+        elif shot["source"] == "chart":
+            still = footage.chart_still(shot["chart"] or {}, work / "chart.png")
+            how = footage.ken_burns(still, out, seconds=seconds, idx=0, layout="cover", zoom=0.04)
         else:
             key = vault.secret(post["user_id"], "pexels_api_key")
             if not key:

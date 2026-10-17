@@ -18,7 +18,7 @@ from pathlib import Path
 
 import httpx
 
-from .. import db, storage
+from .. import db, stats, storage
 from ..config import settings
 from ..crypto import decrypt, encrypt
 from ..publish import attempts, instagram, youtube
@@ -175,13 +175,27 @@ def _renew(client: httpx.Client, acc: dict, token: str) -> str:
 _last_upkeep = 0.0
 
 
+_last_stats = 0.0
+STATS_EVERY_S = 6 * 3600
+
+
 def upkeep() -> None:
     """Renew Instagram tokens before they lapse, so a channel that has not posted
-    for weeks still can. At most hourly; failures wait for the next round."""
-    global _last_upkeep
+    for weeks still can, and read back how published reels did (stats.py). At most
+    hourly; failures wait for the next round."""
+    global _last_upkeep, _last_stats
     if time.monotonic() - _last_upkeep < 3600:
         return
     _last_upkeep = time.monotonic()
+    if time.monotonic() - _last_stats >= STATS_EVERY_S or _last_stats == 0.0:
+        _last_stats = time.monotonic()
+        try:
+            with httpx.Client(timeout=TIMEOUT) as client:
+                n = stats.read_back(client, log=log.info)
+            if n:
+                log.info("read back the numbers of %s published reel(s)", n)
+        except Exception:  # noqa: BLE001
+            log.exception("reading back reel statistics failed")
     with db.conn() as c:
         due = c.execute("""select * from channel_accounts
                             where platform = 'instagram' and status = 'connected'

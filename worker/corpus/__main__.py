@@ -8,7 +8,7 @@ from .config import settings
 from . import upkeep
 from .handlers import (analyze_asset, assemble, attach_media, build_segment, check_sources, fetch_asset,
                        make_ai_image, narrate, plan_shots, prepare_shot, publish_post, refresh_models, render_post,
-                       suggest_ideas, write_script)
+                       research_post, suggest_ideas, write_script)
 from .runner import Runner
 
 HANDLERS = {
@@ -32,6 +32,7 @@ HANDLERS = {
         "suggest_sources": check_sources.SUGGEST_HANDLER,
         "refresh_models": refresh_models.HANDLER,
         "fetch_asset": fetch_asset.HANDLER,
+        "research_post": research_post.HANDLER,
     },
     # The gpu lane runs on the same always-on box as cpu, as its own process: it
     # rents and drives the Race GPU remotely, and a long render must not block

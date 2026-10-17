@@ -18,6 +18,8 @@ export type PostRow = {
   error: { stage?: string; message?: string } | null;
   final_key: string | null;
   final_duration_s: string | null;
+  research_state: "pending" | "ready" | "none" | null;
+  music: { name: string; author: string; page: string; mood: string } | null;
   updated_at: Date;
 };
 
@@ -54,6 +56,10 @@ export type AssetRow = {
   w: number | null; h: number | null; seconds: string | null; error: string | null; summary: string | null;
   made_from: string | null; has_file: boolean;
 };
+export type ResearchInfo = { articles?: { url: string; site: string; title: string; from_idea: boolean }[];
+                              unreadable?: { url: string }[] } | null;
+export type StatRow = { platform: string; views: number | null; likes: number | null; comments: number | null;
+                        fetched_at: Date };
 export type EventRow = { id: string; from_state: string | null; to_state: string; actor: string; reason: string | null; at: Date };
 
 // slot_date comes back as a plain YYYY-MM-DD string (never shifted by a JS Date
@@ -61,7 +67,7 @@ export type EventRow = { id: string; from_state: string | null; to_state: string
 const POST_COLS = `id, topic, brief, audio_source, to_char(slot_date, 'YYYY-MM-DD') as slot_date,
                    to_char(publish_at at time zone publish_tz, 'HH24:MI') as publish_time, channel_id, format_id, status,
                    target_seconds, auto_approve, approved_script_id, error, final_key,
-                   final_duration_s, updated_at`;
+                   final_duration_s, updated_at, research_state, music`;
 
 export async function postsBetween(userId: string, channelId: string, from: string, to: string): Promise<PostRow[]> {
   return asUser(userId, async (db) => {
@@ -113,8 +119,16 @@ export async function postDetail(userId: string, id: string) {
         [id],
       )
     ).rows as AssetRow[];
+    // The sources read for the script (titles and links; their texts stay on the server).
+    const research = (await db.query(
+      `select coalesce((select jsonb_agg(a - 'text') from jsonb_array_elements(research->'articles') a), '[]') as articles,
+              coalesce(research->'unreadable', '[]') as unreadable
+         from posts where id = $1`, [id])).rows[0] as ResearchInfo;
+    const stats = (await db.query(
+      "select platform, views, likes, comments, fetched_at from post_stats where post_id = $1 order by platform",
+      [id])).rows as StatRow[];
     const settings = (await db.query("select timezone, default_reel_seconds from app_settings")).rows[0];
-    return { post, scripts, shots, events, settings, assets };
+    return { post, scripts, shots, events, settings, assets, stats, research };
   });
 }
 

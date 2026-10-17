@@ -39,6 +39,11 @@ def request_render(post_id, log: Callable[[str], None] = print) -> bool:
     p = _auto(post_id)
     if not p or p["pipeline_mode"] != "auto" or p["status"] not in ("approved", "failed"):
         return False
+    owner = db.one("select user_id from posts where id = %s", (post_id,))["user_id"]
+    if why := db.over_quota(owner):
+        log(f"automatic render not started: {why}")
+        _note(post_id, f"automatic render not started: {why}")
+        return False
     try:
         with db.tx() as c:
             c.execute("select private.request_render(%s, 'system:auto')", (post_id,))

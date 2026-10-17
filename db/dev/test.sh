@@ -15,5 +15,9 @@ export TEST_DATABASE_URL_OWNER="$DATABASE_URL_UNPOOLED"
 export TEST_DATABASE_URL_WEB="postgres://corpus_web:local-web-pass@127.0.0.1:$PORT/corpus_test"
 PY=worker/.venv/bin/python; [ -x "$PY" ] || PY=worker/.venv/Scripts/python
 "$PY" db/migrate.py --target test
+# Test fixtures create accounts directly and use them at once: on this database new
+# accounts are active without approval (production waits for an owner, migration 0019).
+"$PY" -c "import os, psycopg; c = psycopg.connect(os.environ['DATABASE_URL_UNPOOLED'], autocommit=True); \
+c.execute('update app_config set signups_need_approval = false') if c.execute(\"select to_regclass('app_config')\").fetchone()[0] else None"
 [ $# -gt 0 ] || set -- worker/tests db/tests
 "$PY" -m pytest -q "$@"

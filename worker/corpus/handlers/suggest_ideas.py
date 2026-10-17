@@ -26,7 +26,7 @@ import httpx
 import numpy as np
 from psycopg.types.json import Jsonb
 
-from .. import channels, costs, db, prompts, vault
+from .. import channels, costs, db, prompts, stats, vault
 from ..config import settings
 from ..ideas import feeds, memory, reddit, select, sources
 from ..ideas.agent import OpenAIIdeaWriter
@@ -135,9 +135,12 @@ def run(ctx: JobContext) -> dict:
         rejected = c.execute("""select title, reject_reason from ideas where channel_id = %s and status = 'rejected'
                                    and created_at > now() - interval '30 days'
                                  order by decided_at desc limit 25""", (cat["channel_id"],)).fetchall()
+        performance = stats.summary(c, cat["channel_id"])
     model = st.get("script_model")
     if not model:
         raise Permanent("Choose a script model in Settings.", stage="config")
+    if why := db.over_quota(cat["user_id"]):
+        return {"skipped": why}
     key = vault.secret(cat["user_id"], "openai")
     if not key:
         raise Permanent("Add your OpenAI API key in Settings.", stage="config")
@@ -156,7 +159,7 @@ def run(ctx: JobContext) -> dict:
     template = fmt["idea_prompt"]
     if "{category_name}" not in template:
         template += CATEGORY_BLOCK
-    system = prompts.fill(template + OUTPUT_NOTE, {
+    system = prompts.fill(template + performance + OUTPUT_NOTE, {
         **{k: prof.get(k) or "(not set)" for k in channels.PROFILE_KEYS},
         "format_name": fmt["name"], "format_description": fmt["description"] or "(none)",
         "category_name": cat["name"],

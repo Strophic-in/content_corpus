@@ -42,7 +42,7 @@ FOOTAGE = Footage(assets=[{"n": 1, "kind": "video", "seconds": 20.0, "w": 1280, 
 
 def _script(*shots) -> ScriptOut:
     return ScriptOut(title="Bridge falls in storm", hook="h", description="d", hashtags=["#shorts"],
-                     intended_dialogue="x", style_prompt="", shots=list(shots), review=Review(score=8, risks=[], notes=""))
+                     intended_dialogue="x", style_prompt="", shots=list(shots), music_mood="", review=Review(score=8, risks=[], notes=""))
 
 
 def test_footage_shots_must_name_footage_the_reel_has():
@@ -89,7 +89,8 @@ def test_the_writer_sees_the_footage_with_times_and_words():
     assert "0:03.0 the middle span sags" in text and '0:09.6–0:11.0 "oh my god"' in text
     assert "logo or watermark (News 24)" in text and '"stock"' in text and "2. picture" in text
     none = footage_.prompt_section(Footage(assets=[], stock=False), narrated=True)
-    assert 'Every shot\'s `source` is "generate"' in none
+    assert '"generate": the AI video model renders' in none and '"chart"' in none
+    assert "Footage you may use" not in none
     s = _script(generated_shot(seconds=4, visual="v", audio="", narration=LINE, source="clip", asset=3))
     footage_.normalize(s, Footage(assets=[], stock=False))
     assert (s.shots[0].source, s.shots[0].asset) == ("generate", 0)
@@ -134,7 +135,7 @@ class FootageWriter:
 
 
 @pytest.fixture
-def footage_post(owner, user, media, monkeypatch):
+def footage_post(s3, owner, user, media, monkeypatch):
     """A narrated post whose idea brought a video (#1) and a picture (#2), both fetched."""
     monkeypatch.setattr(write_script, "WRITER_FACTORY", FootageWriter)
     owner.execute("insert into user_keys (user_id, name, ciphertext) values (%s, 'pexels_api_key', %s)",

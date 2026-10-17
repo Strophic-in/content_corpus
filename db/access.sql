@@ -102,6 +102,13 @@ grant insert (user_id, name, ciphertext, updated_at) on user_keys to corpus_web;
 grant update (ciphertext, updated_at) on user_keys to corpus_web;
 grant delete on user_keys to corpus_web;
 
+-- One's own membership (role, status, limit); everything else about accounts goes
+-- through the owner's api.admin_* functions.
+grant select on memberships to corpus_web;
+
+-- How published reels did, and the workers' health checks: read-only.
+grant select on post_stats, health_checks to corpus_web;
+
 -- A post's footage: the owner may withdraw (or restore) permission to show it.
 -- Everything else about an asset is the workers'.
 grant select on assets to corpus_web;

@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import hashlib
 
+from psycopg.types.json import Jsonb
+
 from .. import auto, db, prompts
 from ..config import settings
 from ..runner import Handler, JobContext, Permanent
@@ -85,14 +87,14 @@ def _plan_footage(c, s: dict, idx: int, shot: dict, source: str, assets: dict, n
     c.execute(
         """insert into shots (post_id, script_id, idx, scene_group, chain_role, prompt, seed, width, height,
                               num_frames, fps, narration, source, asset_id, clip_in, clip_out, audio_mode,
-                              stock_query, credit)
-           values (%s, %s, %s, %s, 'anchor', %s, 0, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                              stock_query, credit, chart)
+           values (%s, %s, %s, %s, 'anchor', %s, 0, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
         (s["post_id"], s["id"], idx, idx, (shot.get("visual") or "").strip() or source, REEL_W, REEL_H,
          footage_frames(seconds), FPS, narration, source, asset["id"] if asset else None,
          start if source == "clip" else None, end if source == "clip" else None,
          "keep" if keep else ("duck" if source == "clip" else "mute"),
          (shot.get("stock_query") or "").strip() or None if source == "stock" else None,
-         asset["credit"] if asset else None))
+         asset["credit"] if asset else None, Jsonb(shot.get("chart")) if source == "chart" else None))
     return seconds
 
 

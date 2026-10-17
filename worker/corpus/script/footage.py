@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from .llm import GENERATED, MAX_CLIP_SECONDS, Footage, ScriptOut
+from .llm import GENERATED, MAX_CLIP_SECONDS, NO_CHART, Footage, ScriptOut
 
 # How long write_script waits for footage still being fetched or analysed before
 # writing without it.
@@ -77,10 +77,14 @@ def _describe(a: dict, label: str | None = None) -> str:
 def prompt_section(footage: Footage, narrated: bool) -> str:
     """Appended to the format's script prompt: the shot sources this reel has."""
     unused = ("Fields a source does not use take these values: asset 0, start 0, end 0, keep_audio false, "
-              "stock_query \"\" (a generated shot may set `asset` to animate a picture, below).")
+              "stock_query \"\", and a chart with an empty title, no labels, no values and unit \"\" (a "
+              "generated shot may set `asset` to animate a picture, below).")
+    chart = ("- \"chart\": a simple bar chart, for a story that turns on a few numbers — `chart` has a short "
+             "title, 2-6 labels and their values in the same order, and a unit (\"%\", \"crore\", \"deaths\", or "
+             "\"\"). Only numbers stated in the sources; never estimates.")
     if not footage.any:
-        return ("\n\n## Shot sources\nEvery shot's `source` is \"generate\": the AI video model renders "
-                f"its `visual`. {unused}")
+        return ("\n\n## Shot sources\nEach shot has a `source`:\n- \"generate\": the AI video model renders its "
+                f"`visual`.\n{chart}\n{unused}")
     videos = any(a["kind"] == "video" for a in footage.assets)
     images = any(a["kind"] == "image" for a in footage.assets)
     lines = ["", "", "## Shot sources",
@@ -104,6 +108,7 @@ def prompt_section(footage: Footage, narrated: bool) -> str:
         lines.append("- \"generate\" with `asset` set to a picture's number animates that picture on the GPU: the "
                      "video starts from it and moves as `visual` describes (a slow push-in, drifting smoke, people "
                      "walking). Use it where motion adds something; a plain \"image\" shot costs nothing.")
+    lines.append(chart)
     if footage.stock:
         lines.append("- \"stock\": a stock video found by `stock_query` — 2 to 5 plain words naming something "
                      "filmable (\"city traffic at night\", \"hospital corridor\"). Stock shows the setting or "
@@ -128,10 +133,18 @@ def prompt_section(footage: Footage, narrated: bool) -> str:
     return "\n".join(lines)
 
 
-def normalize(out: ScriptOut, footage: Footage) -> None:
-    """Without footage, every shot is generated — whatever the model put in the fields."""
-    if footage.any:
-        return
+def normalize(out: ScriptOut, footage: Footage, music: bool = False) -> None:
+    """Without footage, every shot is generated or a chart — whatever the model put in
+    the other fields. Without a music key, or with a mood we don't know, no music."""
+    from .llm import MUSIC_MOODS, Chart
+
+    if not music or out.music_mood not in MUSIC_MOODS:
+        out.music_mood = ""
     for s in out.shots:
+        if s.source != "chart":
+            s.chart = Chart(**NO_CHART)
+        if footage.any:
+            continue
         for k, v in GENERATED.items():
-            setattr(s, k, v)
+            if k != "chart" and not (k == "source" and s.source == "chart"):
+                setattr(s, k, v)

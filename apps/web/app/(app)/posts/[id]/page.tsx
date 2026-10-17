@@ -3,7 +3,9 @@ import { notFound } from "next/navigation";
 
 import { workspace } from "@/lib/channels";
 import { asUser } from "@/lib/db";
-import { postDetail, type AssetRow, type PostRow, type ScriptRow, type ShotRow } from "@/lib/posts";
+import {
+  postDetail, type AssetRow, type PostRow, type ResearchInfo, type ScriptRow, type ShotRow, type StatRow,
+} from "@/lib/posts";
 import { postCosts, rupees } from "@/lib/costs";
 import { PLATFORM_NAMES, publishInfo, type PublishTarget } from "@/lib/publish";
 import { signedUrl } from "@/lib/r2";
@@ -32,7 +34,7 @@ export default async function PostPage({ params }: { params: Promise<{ id: strin
   if (!/^[0-9a-f-]{36}$/i.test(id)) notFound();
   const detail = await postDetail(user.id, id);
   if (!detail) notFound();
-  const { post, scripts, shots, events, assets } = detail;
+  const { post, scripts, shots, events, assets, stats, research } = detail;
   const formats = post.channel_id
     ? await asUser(user.id, async (db) => (await db.query(
         "select id, name, is_default from formats where channel_id = $1 order by is_default desc, name",
@@ -85,11 +87,15 @@ export default async function PostPage({ params }: { params: Promise<{ id: strin
 
       {live?.state === "awaiting_approval" && <ReviewActions scriptId={live.id} />}
 
+      {post.research_state && <SourcesPanel state={post.research_state} research={research} />}
+
       {assets.length > 0 && <FootagePanel assets={assets} />}
 
       {post.approved_script_id && <RenderPanel post={post} shots={shots} />}
 
       {post.final_key && FINISHED.has(post.status) && <PublishPanel post={post} userId={user.id} />}
+
+      {stats.length > 0 && <StatsPanel stats={stats} />}
 
       {EDITABLE.has(post.status) && (
         <details className="rounded-xl border border-border bg-surface p-5">
@@ -133,6 +139,44 @@ export default async function PostPage({ params }: { params: Promise<{ id: strin
         </section>
       )}
     </div>
+  );
+}
+
+function SourcesPanel({ state, research }: { state: "pending" | "ready" | "none"; research: ResearchInfo }) {
+  const articles = research?.articles ?? [];
+  return (
+    <section className="flex flex-col gap-2 rounded-xl border border-border bg-surface p-5 text-sm">
+      <h2 className="font-medium">Sources</h2>
+      {state === "pending" ? <p className="text-muted">Reading the story&apos;s sources in full — the script waits for them.</p>
+        : articles.length === 0 ? <p className="text-muted">None could be read; the script works from the idea&apos;s summary.</p>
+        : (
+          <ul className="flex flex-col gap-1">
+            {articles.map((a) => (
+              <li key={a.url} className="min-w-0 truncate">
+                <a href={a.url} target="_blank" rel="noreferrer" className="text-accent hover:underline">{a.site}</a>
+                <span className="text-muted"> — {a.title || a.url}{a.from_idea ? "" : " · another report"}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+    </section>
+  );
+}
+
+function StatsPanel({ stats }: { stats: StatRow[] }) {
+  const n = (v: number | null) => (v === null ? "—" : Number(v).toLocaleString("en-IN"));
+  return (
+    <section className="flex flex-col gap-2 rounded-xl border border-border bg-surface p-5 text-sm">
+      <h2 className="font-medium">How it&apos;s doing</h2>
+      {stats.map((s) => (
+        <p key={s.platform}>
+          <span className="font-medium">{s.platform === "youtube" ? "YouTube" : "Instagram"}</span>
+          <span className="text-muted"> · {n(s.views)} views · {n(s.likes)} likes · {n(s.comments)} comments
+            · {fmt(new Date(s.fetched_at))}</span>
+        </p>
+      ))}
+      <p className="text-xs text-muted">Read a few times a day for a month after posting; the idea agent sees them.</p>
+    </section>
   );
 }
 
@@ -193,6 +237,12 @@ async function RenderPanel({ post, shots }: { post: PostRow; shots: ShotRow[] })
           <>
             <video src={play} controls playsInline className="aspect-[9/16] w-full max-w-xs rounded-lg bg-black" />
             {download && <a href={download} className="w-fit text-accent underline-offset-4 hover:underline">Download MP4</a>}
+            {post.music && (
+              <p className="text-xs text-muted">
+                Music: <a href={post.music.page} target="_blank" rel="noreferrer" className="underline">“{post.music.name}”</a>{" "}
+                by {post.music.author} · {post.music.mood} · CC0
+              </p>
+            )}
           </>
         ) : (
           <p className="text-muted">Stored in R2 — add the R2 keys to the web app&apos;s environment to play it here.</p>

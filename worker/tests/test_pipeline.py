@@ -30,6 +30,7 @@ def _script(seconds=(8, 8, 8), words=6) -> ScriptOut:
         shots=[generated_shot(seconds=s, visual=f"Shot {i} visual", audio='He says: "' + " ".join(["word"] * words) + '"',
                     narration="")
                for i, s in enumerate(seconds)],
+        music_mood="",
         review=Review(score=7, risks=["fire may look CGI"], notes="ok"),
     )
 

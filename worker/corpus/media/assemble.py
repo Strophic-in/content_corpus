@@ -360,8 +360,12 @@ def _check_reel(out: Path, frames: int) -> float:
     return frames / FPS
 
 
-def join_segments(segments: list[tuple[Path, Path]], out: Path, log: Callable[[str], None] = print) -> dict:
+def join_segments(segments: list[tuple[Path, Path]], out: Path, log: Callable[[str], None] = print,
+                  music: Path | None = None, music_gain: float = 0.16) -> dict:
     """Finished segments -> the reel, checked before it is returned.
+
+    `music`: a track laid under the whole reel at `music_gain` (looped if short,
+    faded in and out), mixed before the one loudness pass.
 
     The sound is joined as one stream (the segments' WAVs are sample-exact), made
     stereo explicitly, normalised once and encoded to AAC. The pictures are copied
@@ -374,8 +378,18 @@ def join_segments(segments: list[tuple[Path, Path]], out: Path, log: Callable[[s
         pictures = _listing(work / "pictures.txt", [v for v, _ in segments])
         sounds = _listing(work / "sounds.txt", [a for _, a in segments])
         sound = work / "sound.m4a"
-        _run(["ffmpeg", "-y", "-v", "error", "-f", "concat", "-safe", "0", "-i", str(sounds),
-              "-af", SOUND_FILTERS, *SOUND_CODEC, str(sound)])
+        if music is None:
+            _run(["ffmpeg", "-y", "-v", "error", "-f", "concat", "-safe", "0", "-i", str(sounds),
+                  "-af", SOUND_FILTERS, *SOUND_CODEC, str(sound)])
+        else:
+            total = frames / FPS
+            bed = (f"[1:a]aformat=sample_fmts=fltp:sample_rates={RATE}:channel_layouts=stereo,atrim=duration={total:.3f},"
+                   f"volume={music_gain},afade=t=in:d=1.5,afade=t=out:st={max(0.0, total - 2):.3f}:d=2[m];"
+                   f"[0:a]aformat=sample_fmts=fltp:sample_rates={RATE}:channel_layouts=stereo[v];"
+                   f"[v][m]amix=inputs=2:normalize=0:duration=first,{SOUND_FILTERS}[out]")
+            _run(["ffmpeg", "-y", "-v", "error", "-f", "concat", "-safe", "0", "-i", str(sounds),
+                  "-stream_loop", "-1", "-i", str(music), "-filter_complex", bed, "-map", "[out]",
+                  *SOUND_CODEC, str(sound)])
         try:
             _run(["ffmpeg", "-y", "-v", "error", "-f", "concat", "-safe", "0", "-i", str(pictures),
                   "-i", str(sound), "-map", "0:v", "-map", "1:a", "-c", "copy", "-movflags", "+faststart",
@@ -387,7 +401,7 @@ def join_segments(segments: list[tuple[Path, Path]], out: Path, log: Callable[[s
                   "-i", str(sound), "-map", "0:v", "-map", "1:a", "-c:v", "libx264", "-preset", "veryfast",
                   "-crf", "18", "-pix_fmt", "yuv420p", "-c:a", "copy", "-movflags", "+faststart", str(out)])
             seconds, how = _check_reel(out, frames), "re-encode"
-    return {"seconds": round(seconds, 2), "shots": len(segments), "join": how}
+    return {"seconds": round(seconds, 2), "shots": len(segments), "join": how, "music": music is not None}
 
 
 def shifted(words: Words, by: float) -> Words:

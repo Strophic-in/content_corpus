@@ -36,11 +36,20 @@ def spoken_seconds(words: int, speed: float = 1.1) -> float:
     return words / (NARRATOR_WORDS_PER_SECOND * speed)
 
 
-SOURCES = ("generate", "clip", "image", "stock")
+SOURCES = ("generate", "clip", "image", "stock", "chart")
+# Background music moods (music.MOODS); "" = no music.
+MUSIC_MOODS = ("", "breaking-tension", "somber", "uplifting", "energetic-hype", "neutral-corporate", "playful")
 # A clip that plays with its own sound (someone speaking, the moment itself) may run
 # longer than a generated shot: nothing has to be rendered.
 MAX_CLIP_SECONDS = 20
 MIN_CLIP_SECONDS = 1.5
+
+
+class Chart(BaseModel):
+    title: str
+    labels: list[str]
+    values: list[float]
+    unit: str
 
 
 class Shot(BaseModel):
@@ -55,12 +64,15 @@ class Shot(BaseModel):
     end: float          # clip: where it ends; 0 otherwise
     keep_audio: bool    # clip: play the video's own sound (no narration over it); false otherwise
     stock_query: str    # stock: 2-5 plain words to search stock video; "" otherwise
+    chart: Chart        # chart: a bar chart of numbers from the sources; empty otherwise
     visual: str     # what we see, in order: subject, action, setting, camera, light
     audio: str      # sounds in the shot; on-screen dialogue in double quotes (native mode only)
     narration: str  # voice-over spoken over this shot (narrated mode); "" otherwise
 
 
-GENERATED = {"source": "generate", "asset": 0, "start": 0.0, "end": 0.0, "keep_audio": False, "stock_query": ""}
+NO_CHART = {"title": "", "labels": [], "values": [], "unit": ""}
+GENERATED = {"source": "generate", "asset": 0, "start": 0.0, "end": 0.0, "keep_audio": False, "stock_query": "",
+             "chart": NO_CHART}
 
 
 def generated_shot(**fields) -> Shot:
@@ -99,6 +111,7 @@ class ScriptOut(BaseModel):
     intended_dialogue: str
     style_prompt: str
     shots: list[Shot]
+    music_mood: str     # one of MUSIC_MOODS
     review: Review
 
 
@@ -159,6 +172,13 @@ def _footage_problems(i: int, s: Shot, footage: Footage | None, narrated: bool) 
         return [] if a and a["kind"] == "image" else [
             f"shot {i} is generated from footage #{s.asset}, which is not a picture in the footage list; "
             "animate a listed picture, or set asset 0"]
+    if src == "chart":
+        c = s.chart
+        if not c.title.strip() or not 2 <= len(c.labels) <= 6 or len(c.labels) != len(c.values):
+            return [f"shot {i} is a chart: give it a title and 2-6 labels with one value each"]
+        if any(v < 0 for v in c.values):
+            return [f"shot {i}'s chart has a negative value; charts show amounts of 0 or more"]
+        return []
     if src == "stock":
         if footage is None or not footage.stock:
             return [f"shot {i} uses stock video, which is not available for this reel; use \"generate\""]

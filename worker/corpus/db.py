@@ -134,3 +134,15 @@ def log_event(c: Connection, post_id, from_state: str | None, to_state: str, act
     c.execute("select private.log_post_event(%s, %s, %s, %s, %s, %s)",
               (post_id, from_state, to_state, actor, reason,
                Jsonb(detail) if detail is not None else None))
+
+
+def over_quota(user_id: str) -> str | None:
+    """Why this account may not start paid work now (its monthly limit), or None."""
+    import psycopg
+
+    try:
+        with conn() as c:
+            c.execute("select private.check_quota(%s)", (user_id,))
+        return None
+    except psycopg.errors.ObjectNotInPrerequisiteState as e:
+        return (e.diag.message_primary or str(e)).strip()

@@ -24,6 +24,7 @@ export default async function SettingsPage() {
   const reddit = keys.some((k) => k.name === "reddit_client_id");
   const youtube = keys.some((k) => k.name === "youtube_api_key");
   const pexels = keys.some((k) => k.name === "pexels_api_key");
+  const freesound = keys.some((k) => k.name === "freesound_api_key");
   const byChannel = new Map<string, { kind: string; amount: number | null; unpriced: number }[]>();
   for (const r of usage.rows)
     byChannel.set(r.channel, [...(byChannel.get(r.channel) ?? []),
@@ -32,7 +33,15 @@ export default async function SettingsPage() {
 
   return (
     <div className="mx-auto flex max-w-2xl flex-col gap-6">
-      <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
+      <div className="flex items-baseline justify-between gap-3">
+        <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
+        {user.role === "owner" && (
+          <span className="flex gap-4 text-sm">
+            <Link href="/admin" className="text-accent hover:underline">Members →</Link>
+            <Link href="/health" className="text-accent hover:underline">System health →</Link>
+          </span>
+        )}
+      </div>
 
       <section className="rounded-xl border border-border bg-surface p-5">
         <h2 className="font-medium">OpenAI API key</h2>
@@ -112,6 +121,19 @@ export default async function SettingsPage() {
           <p className="mt-2 text-sm">{pexels ? "Saved — new scripts may use stock video." : "Not set — no stock video."}</p>
         </div>
         <ServiceKeyForm service="pexels" saved={pexels} placeholder="Your Pexels API key" />
+      </section>
+
+      <section className="flex flex-col gap-3 rounded-xl border border-border bg-surface p-5">
+        <div>
+          <h2 className="font-medium">Freesound API key (for background music)</h2>
+          <p className="mt-1 text-sm text-muted">
+            With it, each script picks a mood (tense, somber, uplifting…) and the reel gets a matching track from
+            Freesound — Creative Commons 0 only, so free to use without a licence — quietly under the voice, never one
+            of your last 20. Free at freesound.org/apiv2/apply. Stored encrypted.
+          </p>
+          <p className="mt-2 text-sm">{freesound ? "Saved — reels get background music." : "Not set — no music."}</p>
+        </div>
+        <ServiceKeyForm service="freesound" saved={freesound} placeholder="Your Freesound API key" />
       </section>
 
       <section className="flex flex-col gap-3 rounded-xl border border-border bg-surface p-5">
