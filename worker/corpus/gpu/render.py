@@ -136,8 +136,18 @@ def render_shots(base: str, queue: ShotQueue, out_dir: Path,
         cid = uuid.uuid4().hex
 
         def submit(shot: dict) -> tuple[dict, str, float]:
+            guide = None
+            if shot.get("guide_path"):                      # image-to-video: its first frame
+                path = Path(shot["guide_path"])
+                r = http.post("/upload/image", files={"image": (f"corpus_{shot['id']}.png", path.read_bytes(),
+                                                                "image/png")},
+                              data={"overwrite": "true", "type": "input"})
+                r.raise_for_status()
+                guide = r.json()["name"]
+                # The upload is now one of LoadImage's choices; validate against that.
+                info["LoadImage"] = http.get("/object_info/LoadImage").json()["LoadImage"]
             graph, problems = ltx25.build(info, ltx25.nodes(shot, int(shot["num_frames"]),
-                                                           f"render/shot{shot['idx']}"))
+                                                           f"render/shot{shot['idx']}", guide))
             if problems:
                 raise RuntimeError(f"shot {shot['idx']} graph invalid: {problems}")
             r = http.post("/prompt", json={"prompt": graph, "client_id": cid})

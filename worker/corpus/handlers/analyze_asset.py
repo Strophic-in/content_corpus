@@ -4,7 +4,8 @@ For a video: what is said (Whisper, on this worker, the language detected) and
 what happens when (one vision call on a 4x4 contact sheet whose frame times are
 known, so `moments` come back with times). For a picture: one look at it. The
 result lands in assets.analysis and the asset becomes ready, which lets a waiting
-write_script go on. Without a vision model the transcript (and the card's own
+write_script go on — or, for a picture the owner wants an AI version of, lets
+make_ai_image draw its twin from the description. Without a vision model the transcript (and the card's own
 description) is all there is — the asset is ready all the same.
 """
 
@@ -70,18 +71,29 @@ def run(ctx: JobContext) -> dict:
                     costs.record_llm(e.usage, kind="vision", note="unparsable footage log", **billed)
                 analysis["vision_error"] = f"{type(e).__name__}: {str(e)[:200]}"
                 log(f"vision skipped: {e}")
-    with db.conn() as c:
+    with db.tx() as c:
         c.execute("update assets set analysis = %s, state = 'ready' where id = %s", (Jsonb(analysis), a["id"]))
+        draw_twins(c, a)
     return {"moments": len(analysis.get("moments") or []), "transcript_lines": len(analysis.get("transcript") or [])}
+
+
+def draw_twins(c, a: dict) -> None:
+    """Queue the AI version of this picture, if the owner asked for one."""
+    for t in c.execute("select id from assets where made_from = %s and state = 'pending'", (a["id"],)).fetchall():
+        db.enqueue(c, user_id=a["user_id"], lane="cpu", kind="make_ai_image", dedupe_key=f"make_ai_image:{t['id']}",
+                   payload={"asset_id": str(t["id"])}, post_id=a["post_id"], priority=40, max_attempts=2,
+                   lease_seconds=600)
 
 
 def on_give_up(ctx: JobContext, err: dict) -> None:
     """The file is fine: the asset is usable without its log."""
-    with db.conn() as c:
-        c.execute("""update assets set state = 'ready',
-                            analysis = coalesce(analysis, '{}'::jsonb) || jsonb_build_object('error', %s::text)
-                      where id = %s and state = 'pending' and key is not null""",
-                  ((err.get("message") or "analysis failed")[:300], ctx.payload["asset_id"]))
+    with db.tx() as c:
+        a = c.execute("""update assets set state = 'ready',
+                                analysis = coalesce(analysis, '{}'::jsonb) || jsonb_build_object('error', %s::text)
+                          where id = %s and state = 'pending' and key is not null returning *""",
+                      ((err.get("message") or "analysis failed")[:300], ctx.payload["asset_id"])).fetchone()
+        if a:
+            draw_twins(c, a)
 
 
 HANDLER = Handler(run=run, on_give_up=on_give_up)

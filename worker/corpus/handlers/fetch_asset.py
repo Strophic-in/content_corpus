@@ -78,9 +78,11 @@ def run(ctx: JobContext) -> dict:
 
 
 def on_give_up(ctx: JobContext, err: dict) -> None:
+    """Failed — and so is its AI twin, if one was to be drawn from it."""
     with db.conn() as c:
-        c.execute("update assets set state = 'failed', error = %s where id = %s and state = 'pending'",
-                  ((err.get("message") or "fetch failed")[:500], ctx.payload["asset_id"]))
+        c.execute("""update assets set state = 'failed', error = %s
+                      where (id = %s or made_from = %s) and state = 'pending'""",
+                  ((err.get("message") or "fetch failed")[:500], ctx.payload["asset_id"], ctx.payload["asset_id"]))
 
 
 HANDLER = Handler(run=run, on_give_up=on_give_up)

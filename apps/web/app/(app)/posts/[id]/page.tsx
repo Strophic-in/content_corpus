@@ -137,27 +137,36 @@ export default async function PostPage({ params }: { params: Promise<{ id: strin
 }
 
 function FootagePanel({ assets }: { assets: AssetRow[] }) {
-  const status = (a: AssetRow) => a.state === "pending" ? "fetching and watching it…"
-    : a.state === "failed" ? `couldn't be fetched${a.error ? ` — ${a.error}` : ""}`
+  const twinOf = (a: AssetRow) => assets.find((x) => x.id === a.made_from);
+  const status = (a: AssetRow) => a.state === "pending"
+      ? (a.made_from ? "being drawn…" : "fetching and watching it…")
+    : a.state === "failed" ? `couldn't be ${a.made_from ? "drawn" : "fetched"}${a.error ? ` — ${a.error}` : ""}`
+    : a.rights === "needs_review" ? "only informs the script — you chose an AI version, so it is never shown"
     : `${a.kind === "video" ? `${Number(a.seconds ?? 0).toFixed(0)} s, ` : ""}${a.w}×${a.h}`;
   return (
     <section className="flex flex-col gap-3 rounded-xl border border-border bg-surface p-5 text-sm">
       <div>
         <h2 className="font-medium">Footage</h2>
-        <p className="text-muted">The idea&apos;s own picture or video, which you chose to use. Each one is credited on screen and
-          in the description. The script waits until it is fetched.</p>
+        <p className="text-muted">The idea&apos;s own picture or video, as you chose: shown with credit, or an AI version
+          made from it. The script waits until it is ready.</p>
       </div>
       <ul className="flex flex-col divide-y divide-border">
         {assets.map((a) => (
           <li key={a.id} className="flex items-start gap-3 py-2">
+            {a.has_file && (a.kind === "image"
+              // eslint-disable-next-line @next/next/no-img-element -- a private, signed media link
+              ? <img src={`/media/asset/${a.id}`} alt="" className="h-24 w-16 shrink-0 rounded-md bg-background object-cover" />
+              : <video src={`/media/asset/${a.id}`} muted playsInline preload="metadata" controls
+                       className="h-24 w-16 shrink-0 rounded-md bg-black object-cover" />)}
             <span className="min-w-0 flex-1">
               <span className={`font-medium ${a.rights === "rejected" ? "text-muted line-through" : ""}`}>
-                #{a.n} · {a.kind === "video" ? "Video" : "Picture"} · {a.credit || a.origin}
+                #{a.n} · {a.made_from ? `AI version of #${twinOf(a)?.n ?? "?"}` : a.kind === "video" ? "Video" : "Picture"}
+                {" · "}{a.credit || a.origin}
               </span>
               <span className="block text-xs text-muted">{status(a)}</span>
               {a.summary && <span className="block text-xs text-muted">{a.summary}</span>}
             </span>
-            <AssetRightsButton assetId={a.id} allowed={a.rights === "approved"} />
+            {a.state !== "pending" && <AssetRightsButton assetId={a.id} allowed={a.rights === "approved"} />}
           </li>
         ))}
       </ul>

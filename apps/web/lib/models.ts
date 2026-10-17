@@ -7,3 +7,8 @@ const NOT_FOR_TEXT = /(embed|tts|whisper|transcribe|audio|realtime|dall-e|image|
 export function textModels(all: string[]): string[] {
   return all.filter((id) => !NOT_FOR_TEXT.test(id)).sort();
 }
+
+/** Models that draw pictures (AI versions of a post's pictures). */
+export function imageModels(all: string[]): string[] {
+  return all.filter((id) => /^(gpt-image|dall-e)/i.test(id)).sort();
+}

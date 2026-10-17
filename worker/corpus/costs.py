@@ -30,6 +30,10 @@ log = logging.getLogger("corpus.costs")
 # prices; the owner overrides any of them in Settings (table `prices`).
 DEFAULT_PRICES: dict[str, tuple[float, ...]] = {
     "gpt-6-luna": (0.10, 0.01, 0.50),                 # 2026-10: OpenAI's cheapest
+    # Image models: text in, image tokens out (a 1024x1536 picture: ~$0.006 low, ~$0.015
+    # medium on the mini; ~$0.005 / ~$0.041 on gpt-image-2).
+    "gpt-image-1-mini": (2.00, 0.20, 8.00),
+    "gpt-image-2": (5.00, 1.25, 30.00),
     "gpt-5.6-luna": (0.20, 0.02, 1.20, 0.25),
     "gpt-4o-mini": (0.15, 0.075, 0.60),
     "gpt-4o": (2.50, 1.25, 10.00),

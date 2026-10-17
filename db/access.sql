@@ -91,7 +91,7 @@ grant update (timezone, auto_approve, default_publish_time, youtube_category_id,
               channel_niche, channel_audience, channel_voice, script_language,
               default_reel_seconds, script_model, openai_models, default_audio_source,
               narrator_voice, narrator_speed, pipeline_mode, auto_spend_cap_paise_day,
-              vision_model, usd_inr_override)
+              vision_model, usd_inr_override, image_model, image_quality)
   on app_settings to corpus_web;
 
 -- Key vault: write-only from the web's point of view. The ciphertext column is

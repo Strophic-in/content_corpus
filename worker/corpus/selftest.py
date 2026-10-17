@@ -57,7 +57,8 @@ def main() -> int:
         segments, frames = [], 0
         for k, (clip, narration, w) in enumerate(shots):
             seg = (d / f"s{k}.mp4", d / f"s{k}.wav")
-            frames += media.build_segment(clip, *seg, narration=narration, words=w)["frames"]
+            label = "AI reconstruction" if k == 2 else None          # a generated shot's label, drawn on
+            frames += media.build_segment(clip, *seg, narration=narration, words=w, label=label)["frames"]
             segments.append(seg)
         info = media.join_segments(segments, d / "reel.mp4")
         if info["join"] != "copy":

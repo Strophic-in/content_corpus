@@ -27,6 +27,7 @@ class FakeComfy:
         self.polls, self.fail_idx, self.die_after = polls, set(fail_idx), die_after
         self.events: list[str] = []
         self.prompts: dict[str, dict] = {}
+        self.uploads: dict[str, bytes] = {}
         self.completed = 0
         self._lock = threading.Lock()
         fake = self
@@ -45,6 +46,10 @@ class FakeComfy:
                         return self._send(502, b"tunnel down", "text/plain")
                     if self.path == "/object_info":
                         return self._send(200, b"{}")
+                    if self.path == "/object_info/LoadImage":
+                        fake.events.append("refresh LoadImage")
+                        return self._send(200, json.dumps({"LoadImage": {"input": {"required": {
+                            "image": [sorted(fake.uploads)]}}}}).encode())
                     if self.path.startswith("/history/"):
                         pid = self.path.rsplit("/", 1)[1]
                         p = fake.prompts[pid]
@@ -71,8 +76,14 @@ class FakeComfy:
                 with fake._lock:
                     if fake.die_after is not None and fake.completed >= fake.die_after:
                         return self._send(502, b"tunnel down", "text/plain")
+                    if self.path == "/upload/image":
+                        name = body.split(b'filename="', 1)[1].split(b'"', 1)[0].decode()
+                        fake.uploads[name] = body
+                        fake.events.append(f"upload {name}")
+                        return self._send(200, json.dumps({"name": name, "subfolder": "", "type": "input"}).encode())
                     if self.path == "/prompt":
                         idx = json.loads(body)["prompt"]["idx"]
+                        fake.guides = getattr(fake, "guides", []) + [json.loads(body)["prompt"].get("guide")]
                         pid = uuid.uuid4().hex
                         fake.prompts[pid] = {"idx": idx, "polls": 0, "done": False}
                         fake.events.append(f"start {idx}")
@@ -92,8 +103,8 @@ class FakeComfy:
 
 @pytest.fixture(autouse=True)
 def tiny_graphs(monkeypatch):
-    monkeypatch.setattr(ltx25, "nodes", lambda shot, frames, prefix: shot["idx"])
-    monkeypatch.setattr(ltx25, "build", lambda info, nodes: ({"idx": nodes}, []))
+    monkeypatch.setattr(ltx25, "nodes", lambda shot, frames, prefix, guide=None: (shot["idx"], guide))
+    monkeypatch.setattr(ltx25, "build", lambda info, nodes: ({"idx": nodes[0], "guide": nodes[1]}, []))
 
 
 def shots(*frames):
@@ -196,3 +207,20 @@ def test_a_dying_pod_gives_its_shots_back(tmp_path, die_after, delivered, given_
     finally:
         healthy.close()
     assert errors == [] and sorted(done + delivered) == [0, 1, 2]       # nothing lost
+
+
+def test_a_guided_shot_uploads_its_picture_before_its_prompt(tmp_path):
+    comfy = FakeComfy(polls=1)
+    picture = tmp_path / "guide.png"
+    picture.write_bytes(b"\x89PNG fake picture")
+    queue = render.ShotQueue([{"idx": 0, "num_frames": 97, "id": "s0", "guide_path": str(picture)},
+                              {"idx": 1, "num_frames": 49, "id": "s1"}])
+    queue.join("pod")
+    try:
+        render.render_shots(comfy.base, queue, tmp_path / "out", lambda *a: None, log=lambda m: None, poll=0.01)
+    finally:
+        comfy.close()
+    assert comfy.events[:3] == ["upload corpus_s0.png", "refresh LoadImage", "start 0"]
+    assert comfy.guides == ["corpus_s0.png", None]                   # the plain shot has no guide
+    assert b"fake picture" in comfy.uploads["corpus_s0.png"]
+

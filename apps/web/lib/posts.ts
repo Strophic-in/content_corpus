@@ -52,6 +52,7 @@ export type AssetRow = {
   id: string; n: number; kind: "video" | "image"; origin: string; credit: string;
   rights: "needs_review" | "approved" | "rejected"; state: "pending" | "ready" | "failed";
   w: number | null; h: number | null; seconds: string | null; error: string | null; summary: string | null;
+  made_from: string | null; has_file: boolean;
 };
 export type EventRow = { id: string; from_state: string | null; to_state: string; actor: string; reason: string | null; at: Date };
 
@@ -105,7 +106,8 @@ export async function postDetail(userId: string, id: string) {
     ).rows as EventRow[];
     const assets = (
       await db.query(
-        `select id, n, kind, origin, credit, rights, state, w, h, seconds::text, error,
+        `select id, n, kind, origin, credit, rights, state, w, h, seconds::text, error, made_from,
+                key is not null as has_file,
                 coalesce(analysis->>'summary', analysis->'card'->>'summary') as summary
            from assets where post_id = $1 order by n`,
         [id],
@@ -125,7 +127,8 @@ export async function userSettings(userId: string) {
                 youtube_privacy, channel_name, channel_niche, channel_audience, channel_voice,
                 script_language, default_reel_seconds, script_model, openai_models,
                 default_audio_source, narrator_voice, narrator_speed::float8 as narrator_speed,
-                pipeline_mode, auto_spend_cap_paise_day, vision_model, usd_inr_override::float8 as usd_inr_override
+                pipeline_mode, auto_spend_cap_paise_day, vision_model, usd_inr_override::float8 as usd_inr_override,
+                image_model, image_quality
            from app_settings`,
       )
     ).rows[0];

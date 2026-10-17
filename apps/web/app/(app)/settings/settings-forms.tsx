@@ -62,6 +62,7 @@ type Settings = {
   default_audio_source: "kokoro" | "ltx_native";
   narrator_voice: string; narrator_speed: number;
   pipeline_mode: "manual" | "auto"; auto_spend_cap_paise_day: number | null; vision_model: string | null;
+  image_model: string; image_quality: "low" | "medium" | "high"; image_models: string[];
 };
 
 // Mirrors worker/corpus/media/tts.py VOICES.
@@ -119,6 +120,22 @@ export function SettingsForm({ settings: s }: { settings: Settings }) {
           <span className="text-xs text-muted">
             One call per video, on a sheet of nine frames: a small model (a “mini” or “nano”) is plenty and costs a
             fraction of a cent.
+          </span>
+        </label>
+        <label className="flex flex-col gap-1 text-sm">Image model (AI versions of pictures)
+          <span className="flex gap-2">
+            <select name="image_model" defaultValue={s.image_model} className={`${input} min-w-0 flex-1`}>
+              {[...new Set([s.image_model, ...s.image_models])].map((m) => <option key={m} value={m}>{m}</option>)}
+            </select>
+            <select name="image_quality" defaultValue={s.image_quality} className={input} aria-label="Image quality">
+              <option value="low">Low</option>
+              <option value="medium">Medium</option>
+              <option value="high">High</option>
+            </select>
+          </span>
+          <span className="text-xs text-muted">
+            One picture per “AI version”, 1024×1536. gpt-image-1-mini costs about $0.006 (low) or $0.015 (medium) a
+            picture.
           </span>
         </label>
       </section>

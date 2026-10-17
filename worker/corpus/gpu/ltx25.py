@@ -6,6 +6,13 @@ video denoised together — with the template's prompt enhancer removed and its
 math/primitive nodes folded into constants. Positional widget values are resolved
 to input names from the live /object_info, so a renamed input fails validation
 instead of a paid render.
+
+With a guide picture (`guide`: a file already uploaded to ComfyUI's input folder)
+the shot is image-to-video, as in templates/video_ltx2_5_i2v.json: the picture,
+preprocessed (LTXVPreprocess, compression 18), is written into the first frame of
+the half-size latent at strength 0.7 and again into the upscaled latent at 1.0.
+Our picture arrives already cut to the shot's size, so the template's resize
+node is left out.
 """
 
 from __future__ import annotations
@@ -27,9 +34,9 @@ VVAE, AVAE = "ltx-2.5-video-vae-bf16.safetensors", "ltx-2.5-audio-vae-bf16.safet
 UPS = "ltx-2.5-latent-spatial-upscaler-x2-bf16-1.0.safetensors"
 
 
-def nodes(shot: dict, frames: int, prefix: str) -> dict:
+def nodes(shot: dict, frames: int, prefix: str, guide: str | None = None) -> dict:
     W, H = shot["width"], shot["height"]
-    return {
+    graph = {
         "unet": ("UNETLoader", {}, [UNET, "default"]),
         "vvae": ("VAELoader", {}, [VVAE]),
         "avae": ("VAELoader", {}, [AVAE]),
@@ -62,6 +69,18 @@ def nodes(shot: dict, frames: int, prefix: str) -> dict:
         "video": ("CreateVideo", {"images": ["dec_v", 0], "audio": ["dec_a", 0]}, [float(FPS)]),
         "save": ("SaveVideo", {"video": ["video", 0]}, [prefix, "auto", "auto"]),
     }
+    if guide:
+        graph.update({
+            "img": ("LoadImage", {}, [guide]),
+            "pre": ("LTXVPreprocess", {"image": ["img", 0]}, [18]),
+            "i2v1": ("LTXVImgToVideoInplace", {"vae": ["vvae", 0], "image": ["pre", 0], "latent": ["lat_v", 0]},
+                     [0.7, False]),
+            "i2v2": ("LTXVImgToVideoInplace", {"vae": ["vvae", 0], "image": ["pre", 0], "latent": ["up", 0]},
+                     [1.0, False]),
+        })
+        graph["lat_av"] = ("LTXVConcatAVLatent", {"video_latent": ["i2v1", 0], "audio_latent": ["lat_a", 0]}, [])
+        graph["lat_av2"] = ("LTXVConcatAVLatent", {"video_latent": ["i2v2", 0], "audio_latent": ["sep1", 1]}, [])
+    return graph
 
 
 WIDGETS = {"INT", "FLOAT", "STRING", "BOOLEAN", "COMBO", "COMFY_DYNAMICCOMBO_V3"}

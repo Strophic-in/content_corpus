@@ -20,13 +20,17 @@ WAIT_MINUTES = 30
 
 
 def load(c, post_id, stock: bool) -> tuple[Footage, list[dict]]:
-    """(the footage a script may use, assets still being fetched or analysed)."""
+    """(the footage a script may use, assets still being fetched, analysed or drawn).
+
+    An original the owner has not approved (they chose an AI version) is a
+    reference: described to the writer, never shown."""
     rows = c.execute("""select id, n, kind, origin, credit, rights, state, w, h, seconds, has_audio,
-                               analysis, created_at
+                               analysis, created_at, made_from
                           from assets where post_id = %s order by n""", (post_id,)).fetchall()
     usable = [dict(r) for r in rows if r["state"] == "ready" and r["rights"] == "approved"]
-    waiting = [dict(r) for r in rows if r["state"] == "pending" and r["rights"] == "approved"]
-    return Footage(assets=usable, stock=stock), waiting
+    references = [dict(r) for r in rows if r["state"] == "ready" and r["rights"] == "needs_review"]
+    waiting = [dict(r) for r in rows if r["state"] == "pending" and r["rights"] != "rejected"]
+    return Footage(assets=usable, stock=stock, references=references), waiting
 
 
 def still_worth_waiting(waiting: list[dict]) -> bool:
@@ -39,14 +43,15 @@ def _clock(s: float) -> str:
     return f"{int(s // 60)}:{s % 60:04.1f}"
 
 
-def _describe(a: dict) -> str:
+def _describe(a: dict, label: str | None = None) -> str:
     an = a.get("analysis") or {}
     w, h = a.get("w") or 0, a.get("h") or 0
     shape = "portrait" if h > w * 1.1 else "landscape" if w > h * 1.1 else "square"
+    head = label or f"{a['n']}."
     if a["kind"] == "image":
-        lines = [f"{a['n']}. picture, {shape} {w}×{h} — {a['credit'] or a['origin']}"]
+        lines = [f"{head} picture, {shape} {w}×{h} — {a['credit'] or a['origin']}"]
     else:
-        lines = [f"{a['n']}. video, {float(a['seconds'] or 0):.1f} s, {shape} {w}×{h}, "
+        lines = [f"{head} video, {float(a['seconds'] or 0):.1f} s, {shape} {w}×{h}, "
                  f"own sound: {'yes' if a.get('has_audio') else 'no'} — {a['credit'] or a['origin']}"]
     summary = an.get("summary") or (an.get("card") or {}).get("summary") or an.get("description")
     if summary:
@@ -72,7 +77,7 @@ def _describe(a: dict) -> str:
 def prompt_section(footage: Footage, narrated: bool) -> str:
     """Appended to the format's script prompt: the shot sources this reel has."""
     unused = ("Fields a source does not use take these values: asset 0, start 0, end 0, keep_audio false, "
-              "stock_query \"\".")
+              "stock_query \"\" (a generated shot may set `asset` to animate a picture, below).")
     if not footage.any:
         return ("\n\n## Shot sources\nEvery shot's `source` is \"generate\": the AI video model renders "
                 f"its `visual`. {unused}")
@@ -96,6 +101,9 @@ def prompt_section(footage: Footage, narrated: bool) -> str:
     if images:
         lines.append("- \"image\": one of the pictures below, shown with a slow camera move; `asset` is its "
                      "number" + ("; the narration plays over it." if narrated else "."))
+        lines.append("- \"generate\" with `asset` set to a picture's number animates that picture on the GPU: the "
+                     "video starts from it and moves as `visual` describes (a slow push-in, drifting smoke, people "
+                     "walking). Use it where motion adds something; a plain \"image\" shot costs nothing.")
     if footage.stock:
         lines.append("- \"stock\": a stock video found by `stock_query` — 2 to 5 plain words naming something "
                      "filmable (\"city traffic at night\", \"hospital corridor\"). Stock shows the setting or "
@@ -104,9 +112,19 @@ def prompt_section(footage: Footage, narrated: bool) -> str:
     if footage.assets:
         lines += ["Real footage is the strongest proof: show the actual event with clips and pictures where they "
                   "fit, and generate only what the footage cannot show. Each piece of footage is credited on "
-                  "screen automatically; never mention credits in the script.",
+                  "screen automatically (an AI picture as \"AI illustration\"); never mention credits in the "
+                  "script.",
                   "", "## Footage you may use"]
         lines += [_describe(a) for a in footage.assets]
+    if footage.references:
+        lines += ["", "## Footage you may not show — recreate it",
+                  "The owner chose an AI version of the original media below: it must not appear in the reel. "
+                  "Recreate a video's moments as generated shots that follow its log closely — what happens, in "
+                  "order, and where — and they are labelled \"AI reconstruction\" on screen. Show people as "
+                  "figures from behind or at a distance, never a lifelike face. A picture's AI version, when "
+                  "there is one, is in the list above as \"AI illustration\"."]
+        lines += [_describe(a, f"Original {'video' if a['kind'] == 'video' else 'picture'}:")
+                  for a in footage.references]
     return "\n".join(lines)
 
 

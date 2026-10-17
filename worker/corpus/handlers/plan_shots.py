@@ -8,6 +8,10 @@ Shots that show footage (clip, image, stock) are planned at the reel's own size
 (1080x1920) with an exact frame count — LTX's 8n+1 grid is for generated shots
 only; their asset is the post's asset with the script's number. A clip that keeps
 its own sound lasts as long as its window and carries no narration.
+
+A generated shot that names a picture animates it: the picture is its first frame
+(image-to-video) and its credit goes on screen. When the owner chose an AI version
+of a video, the generated shots recreate it and are labelled "AI reconstruction".
 """
 
 from __future__ import annotations
@@ -114,7 +118,9 @@ def run(ctx: JobContext) -> dict:
         look = post["visual_style"] or ""
 
         assets = {r["n"]: r for r in c.execute(
-            "select id, n, kind, credit from assets where post_id = %s", (s["post_id"],)).fetchall()}
+            "select id, n, kind, credit, key, rights from assets where post_id = %s", (s["post_id"],)).fetchall()}
+        # The owner wanted an AI version of the idea's video: what is generated recreates it.
+        reconstruction = any(a["kind"] == "video" and a["rights"] == "needs_review" for a in assets.values())
         total = 0.0
         for idx, shot in enumerate(plan):
             source = shot.get("source") or "generate"
@@ -124,14 +130,21 @@ def run(ctx: JobContext) -> dict:
             seconds = min(MAX_SHOT_SECONDS, max(MIN_SHOT_SECONDS, float(shot.get("seconds", 5))))
             frames = frames_for(seconds)
             total += (frames - 1) / FPS
+            guide = assets.get(int(shot.get("asset") or 0))
+            if shot.get("asset") and (guide is None or guide["kind"] != "image"):
+                raise Permanent(f"shot {idx + 1} animates footage #{shot.get('asset')}, which isn't a picture "
+                                "of this post", stage="input")
+            credit = guide["credit"] if guide else ("AI reconstruction" if reconstruction else None)
             c.execute(
                 """insert into shots (post_id, script_id, idx, scene_group, chain_role, prompt,
                                       negative_prompt, seed, width, height, num_frames, fps,
-                                      narration)
-                   values (%s, %s, %s, %s, 'anchor', %s, %s, %s, %s, %s, %s, %s, %s)""",
+                                      narration, asset_id, guide_kind, guide_key, credit)
+                   values (%s, %s, %s, %s, 'anchor', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
                 (s["post_id"], script_id, idx, idx, shot_prompt(shot, s["style_prompt"], narrated, look),
                  NEGATIVE_NARRATED if narrated else NEGATIVE, seed_for(str(script_id), idx),
-                 WIDTH, HEIGHT, frames, FPS, (shot.get("narration") or None) if narrated else None))
+                 WIDTH, HEIGHT, frames, FPS, (shot.get("narration") or None) if narrated else None,
+                 guide["id"] if guide else None, "first_frame" if guide else None,
+                 guide["key"] if guide else None, credit))
         db.log_event(c, s["post_id"], "approved", "approved", f"worker:{settings().worker_id}",
                      "shots planned", {"shots": len(plan), "seconds": round(total, 2)})
         if narrated:

@@ -51,7 +51,9 @@ def run(ctx: JobContext) -> dict:
         stored = storage.put_file(key, out, kind="final", user_id=post["user_id"], post_id=post["id"],
                                   content_type="video/mp4")
     # Who made the footage shown, in order of appearance: for the description and caption.
-    credits = list(dict.fromkeys(s["credit"].strip() for s in shots if (s.get("credit") or "").strip()))
+    # ("AI reconstruction" and "AI illustration" are labels, not credits.)
+    credits = list(dict.fromkeys(s["credit"].strip() for s in shots
+                                 if (s.get("credit") or "").strip() and not s["credit"].startswith("AI ")))
     with db.tx() as c:
         c.execute("""update posts set status = 'ready', final_key = %s, final_sha256 = %s, final_bytes = %s,
                                       final_duration_s = %s, error = null, credits = %s

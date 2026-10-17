@@ -8,7 +8,7 @@ instead of a silently clamped script.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Protocol
 
 from pydantic import BaseModel
@@ -70,16 +70,19 @@ def generated_shot(**fields) -> Shot:
 
 @dataclass
 class Footage:
-    """What a script may use besides generated shots: the post's assets, and stock."""
+    """What a script may use besides generated shots: the post's assets, and stock.
+    `references`: originals the owner wants an AI version of — described to the
+    writer (to recreate a video's moments) but never shown."""
     assets: list[dict]          # {"n", "kind": "video"|"image", "seconds", "w", "h", "credit", ...}
     stock: bool = False         # a Pexels key is set
+    references: list[dict] = field(default_factory=list)
 
     def asset(self, n: int) -> dict | None:
         return next((a for a in self.assets if a["n"] == n), None)
 
     @property
     def any(self) -> bool:
-        return bool(self.assets) or self.stock
+        return bool(self.assets) or self.stock or bool(self.references)
 
 
 class Review(BaseModel):
@@ -150,7 +153,12 @@ def _footage_problems(i: int, s: Shot, footage: Footage | None, narrated: bool) 
     if src not in SOURCES:
         return [f"shot {i} has source \"{s.source}\"; use one of {', '.join(SOURCES)}"]
     if src == "generate":
-        return []
+        if not s.asset:
+            return []
+        a = footage.asset(s.asset) if footage else None     # animating a picture (image-to-video)
+        return [] if a and a["kind"] == "image" else [
+            f"shot {i} is generated from footage #{s.asset}, which is not a picture in the footage list; "
+            "animate a listed picture, or set asset 0"]
     if src == "stock":
         if footage is None or not footage.stock:
             return [f"shot {i} uses stock video, which is not available for this reel; use \"generate\""]

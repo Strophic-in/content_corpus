@@ -16,7 +16,8 @@ only what is missing. No free GPU is not a failure — the post says it is waiti
 and the job retries every 10 minutes.
 
 Only generated shots are rendered here; footage shots are made by cpu/prepare_shot
-at the same time. Assembly waits (blocked) until every shot of the script is
+at the same time. A generated shot that animates a picture (guide_key) gets that
+picture, cut to the shot's size, as its first frame (image-to-video). Assembly waits (blocked) until every shot of the script is
 uploaded and is released by the database (private.unblock_assemble).
 """
 
@@ -24,6 +25,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import tempfile
 import threading
 import time
@@ -144,6 +146,19 @@ def _save_rate_notes(rates: dict[str, int]) -> None:
         pass
 
 
+def _guide(shot: dict, work: Path) -> Path:
+    """The picture a shot starts from, cut to the shot's own size (fills the frame)."""
+    src = storage.get_file(shot["guide_key"], work / f"{shot['idx']}-src")
+    out = work / f"{shot['idx']}-guide.png"
+    w, h = int(shot["width"]), int(shot["height"])
+    r = subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", str(src), "-vf",
+                        f"scale={w}:{h}:force_original_aspect_ratio=increase:flags=lanczos,crop={w}:{h}",
+                        "-frames:v", "1", str(out)], capture_output=True, text=True)
+    if r.returncode != 0:
+        raise Permanent(f"shot {shot['idx'] + 1}'s picture couldn't be prepared: {r.stderr[-200:]}", stage="input")
+    return out
+
+
 def _set_post(post_id, status: str, reason: str, error: dict | None = None) -> None:
     with db.tx() as c:
         old = c.execute("select status from posts where id = %s for update", (post_id,)).fetchone()["status"]
@@ -161,7 +176,7 @@ def run(ctx: JobContext) -> dict:
         if post is None:
             raise Permanent("post or approved script no longer exists", stage="input")
         shots = c.execute("""select id, idx, prompt, negative_prompt as negative, seed, width, height,
-                                    num_frames, state, artifact_key
+                                    num_frames, state, artifact_key, guide_key
                                from shots where script_id = %s and source = 'generate' order by idx""",
                           (script_id,)).fetchall()
         n_all = c.execute("select count(*) as n from shots where script_id = %s", (script_id,)).fetchone()["n"]
@@ -170,6 +185,10 @@ def run(ctx: JobContext) -> dict:
     pending = [s for s in shots if s["state"] != "uploaded"]
     result: dict = {"shots": len(shots), "rendered_now": len(pending)}
 
+    guides = tempfile.TemporaryDirectory()      # removed with the object when run() returns or raises
+    for shot in pending:
+        if shot["guide_key"]:
+            shot["guide_path"] = str(_guide(shot, Path(guides.name)))
     if pending:
         race = RACE()
         slices = [int(x) for x in os.environ.get("CORPUS_RACE_SLICES", "5,16,11").split(",") if x]

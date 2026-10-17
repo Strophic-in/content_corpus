@@ -283,20 +283,28 @@ def _frames(p: Path) -> int:
 
 
 def build_segment(clip: Path, out_video: Path, out_audio: Path, *, narration: Path | None = None,
-                  words: Words | None = None, style: CaptionStyle = CaptionStyle()) -> dict:
+                  words: Words | None = None, style: CaptionStyle = CaptionStyle(),
+                  label: str | None = None) -> dict:
     """One rendered shot → its finished piece of the reel.
 
     `words` are timed from the start of the shot. With `narration` the shot's own
-    sound is ducked under the voice, which starts LEAD_IN into the shot."""
+    sound is ducked under the voice, which starts LEAD_IN into the shot. `label`
+    ("AI reconstruction", an animated picture's credit) is drawn at the top, as
+    footage credits are."""
     with tempfile.TemporaryDirectory() as tmp:
         work = Path(tmp)
         vf = "scale=1080:-2:flags=lanczos,crop=1080:1920,setsar=1,fps=24,format=yuv420p"
+        if words or label:
+            # A relative fontsdir: ffmpeg's filter syntax mangles Windows drive paths.
+            shutil.copytree(FONTS_DIR, work / "fonts")
+        if label:
+            (work / "label.txt").write_text(label.strip()[:120], encoding="utf-8")
+            vf += (",drawtext=fontfile=fonts/Montserrat-Bold.ttf:textfile=label.txt:expansion=none:fontsize=34:"
+                   "fontcolor=white:box=1:boxcolor=black@0.5:boxborderw=14:x=40:y=110")
         if words:
             breaks = {i for i, (_, _, w) in enumerate(words) if w.rstrip('"”').endswith(BREAK_AFTER)}
             clean = [(st, en, (w.upper() if style.uppercase else w).strip(",.!?;:—–\"“”")) for st, en, w in words]
             (work / "captions.ass").write_text(captions_ass(clean, breaks, style), encoding="utf-8")
-            # A relative fontsdir: ffmpeg's filter syntax mangles Windows drive paths.
-            shutil.copytree(FONTS_DIR, work / "fonts")
             vf += ",ass=captions.ass:fontsdir=fonts"
         _run(["ffmpeg", "-y", "-v", "error", "-i", str(clip.resolve()), "-vf", vf, "-an",
               "-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p",
