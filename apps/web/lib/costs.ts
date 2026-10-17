@@ -3,8 +3,10 @@ import "server-only";
 import { asUser } from "./db";
 
 // USD per 1M tokens: [input, cached input, output]. Mirrors DEFAULT_PRICES in
-// worker/corpus/costs.py (list prices when written); the owner's own prices win.
+// worker/corpus/costs.py (published list prices); the owner's own prices win.
+// OpenAI's replies carry token counts, not prices, so this list is what prices a call.
 export const DEFAULT_PRICES: Record<string, [number, number, number]> = {
+  "gpt-6-luna": [0.1, 0.01, 0.5], "gpt-5.6-luna": [0.2, 0.02, 1.2],
   "gpt-4o-mini": [0.15, 0.075, 0.6], "gpt-4o": [2.5, 1.25, 10], "gpt-4.1-nano": [0.1, 0.025, 0.4],
   "gpt-4.1-mini": [0.4, 0.1, 1.6], "gpt-4.1": [2, 0.5, 8], "gpt-5-nano": [0.05, 0.005, 0.4],
   "gpt-5-mini": [0.25, 0.025, 2], "gpt-5": [1.25, 0.125, 10],

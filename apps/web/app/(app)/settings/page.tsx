@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import { monthUsage, priceTable, rupees } from "@/lib/costs";
+import { textModels } from "@/lib/models";
 import { requireUser } from "@/lib/session";
 import { userSettings } from "@/lib/posts";
 
@@ -46,7 +47,7 @@ export default async function SettingsPage() {
         <div className="mt-3"><KeyForm hasKey={Boolean(openai)} /></div>
       </section>
 
-      <SettingsForm settings={settings} />
+      <SettingsForm settings={{ ...settings, openai_models: textModels(settings.openai_models ?? []) }} />
 
       <section className="flex flex-col gap-3 rounded-xl border border-border bg-surface p-5">
         <div className="flex items-baseline gap-2">

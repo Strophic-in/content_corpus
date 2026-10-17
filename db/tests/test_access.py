@@ -656,3 +656,9 @@ def test_category_idea_batches_are_yours_alone(alice, bob, owner):
     with pytest.raises(psycopg.errors.NoDataFound):
         with web(bob) as c:
             c.execute("select api.request_category_ideas(%s)", (cat,))
+
+
+def test_refreshing_models_is_a_job_for_the_ideas_worker(alice, owner):
+    with web(alice) as c:
+        c.execute("select api.ensure_settings()")
+        assert c.execute("select lane, kind from api.refresh_openai_models()").fetchone() == ("ideas", "refresh_models")

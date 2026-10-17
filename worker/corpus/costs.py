@@ -1,9 +1,10 @@
 """The cost ledger: every model call and every GPU minute, priced when it happens.
 
 OpenAI is priced in US dollars from the owner's own price table (Settings),
-falling back to DEFAULT_PRICES — list prices when this was written, matched by
-model-name prefix. A model with no price is still recorded (its tokens), with
-usd_micros null, and the UI asks for a price. GPU time is priced in rupees from
+falling back to DEFAULT_PRICES — published list prices, for a model and its dated
+snapshots. OpenAI's replies carry token counts, never a price (checked 2026-10-17),
+so the price list is the only way to a per-call cost. A model with no price is
+still recorded (its tokens), with usd_micros null, and the UI asks for a price. GPU time is priced in rupees from
 the rate Race quotes for that GPU. Each row freezes the day's USD→INR rate, so a
 month's total doesn't drift when the rate does.
 
@@ -25,9 +26,11 @@ from . import db
 
 log = logging.getLogger("corpus.costs")
 
-# USD per 1M tokens: (input, cached input, output). List prices at the time of
-# writing; the owner overrides any of them in Settings (table `prices`).
-DEFAULT_PRICES: dict[str, tuple[float, float, float]] = {
+# USD per 1M tokens: (input, cached input, output[, cache write]). Published list
+# prices; the owner overrides any of them in Settings (table `prices`).
+DEFAULT_PRICES: dict[str, tuple[float, ...]] = {
+    "gpt-6-luna": (0.10, 0.01, 0.50),                 # 2026-10: OpenAI's cheapest
+    "gpt-5.6-luna": (0.20, 0.02, 1.20, 0.25),
     "gpt-4o-mini": (0.15, 0.075, 0.60),
     "gpt-4o": (2.50, 1.25, 10.00),
     "gpt-4.1-nano": (0.10, 0.025, 0.40),
@@ -53,8 +56,9 @@ def _price(c, user_id: str, model: str | None) -> dict | None:
     # never to another model that merely shares a prefix ("gpt-5.6-luna" is not "gpt-5").
     for name in DEFAULT_PRICES:
         if model == name or re.fullmatch(re.escape(name) + r"-\d{4}-\d{2}-\d{2}", model):
-            i, ci, o = DEFAULT_PRICES[name]
+            i, ci, o, *cw = DEFAULT_PRICES[name]
             return {"input_per_m": i, "cached_input_per_m": ci, "output_per_m": o,
+                    "cache_write_per_m": cw[0] if cw else None,
                     "per_image": row["per_image"] if row else None}
     return None
 
@@ -81,17 +85,21 @@ def record_llm(usage, *, user_id: str, kind: str = "llm", post_id=None, channel_
     try:
         with db.conn() as c:
             cached = int(getattr(usage, "cached_input_tokens", 0) or 0)
+            written = int(getattr(usage, "cache_write_tokens", 0) or 0)
             tokens_in, tokens_out = int(usage.input_tokens or 0), int(usage.output_tokens or 0)
             p = _price(c, user_id, usage.model)
             usd = None
             if p is not None:
                 cached_rate = p["cached_input_per_m"] if p["cached_input_per_m"] is not None else p["input_per_m"]
-                usd = round((tokens_in - cached) * p["input_per_m"] + cached * cached_rate
+                write_rate = p.get("cache_write_per_m") or p["input_per_m"]
+                usd = round((tokens_in - cached - written) * p["input_per_m"] + cached * cached_rate
+                            + written * write_rate
                             + tokens_out * p["output_per_m"]
                             + images * (p.get("per_image") or 0) * 1_000_000)
             _insert(c, user_id=user_id, channel_id=channel_id, category_id=category_id, post_id=post_id,
                     job_id=job_id, kind=kind, provider="openai", model=usage.model,
                     quantity={"input": tokens_in, "cached_input": cached, "output": tokens_out,
+                              **({"cache_write": written} if written else {}),
                               **({"images": images} if images else {})},
                     usd_micros=usd, fx_usd_inr=fx_usd_inr(c, user_id), note=note)
     except Exception:  # noqa: BLE001 - the ledger must never fail the work it records

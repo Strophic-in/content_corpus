@@ -138,7 +138,8 @@ def run(ctx: JobContext) -> dict:
                          + "\n".join(f"- {p}" for p in problems))
         usage = Usage(more.model, usage.input_tokens + more.input_tokens,
                       usage.output_tokens + more.output_tokens,
-                      usage.cached_input_tokens + more.cached_input_tokens)
+                      usage.cached_input_tokens + more.cached_input_tokens,
+                      usage.cache_write_tokens + more.cache_write_tokens)
         problems = validate(out, target, narrated=narrated, speed=speed)
     if problems:
         raise Retryable("script failed validation: " + "; ".join(problems), stage="validate",

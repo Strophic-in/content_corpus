@@ -3,7 +3,8 @@
   * sweep card media (ideas/sweep.py);
   * today's USD→INR rate, for pricing OpenAI calls in rupees;
   * once a day, what the parked Race pods cost to keep (their monthly_cost / 30),
-    charged to the owner so the month's total is the whole bill.
+    charged to the owner so the month's total is the whole bill;
+  * once a day, the OpenAI models each key can use (new ones appear by themselves).
 """
 
 from __future__ import annotations
@@ -11,13 +12,15 @@ from __future__ import annotations
 import logging
 import os
 import time
+from datetime import date
 
-from . import costs, db
+from . import costs, db, openai_models
 from .ideas import sweep
 
 log = logging.getLogger("corpus.upkeep")
 EVERY_S = 3600
 _last = 0.0
+_models_day: date | None = None
 
 
 def _owner_id() -> str | None:
@@ -28,8 +31,13 @@ def _owner_id() -> str | None:
     return row["id"] if row else None
 
 
+def _key_owners() -> list[str]:
+    with db.conn() as c:
+        return [r["user_id"] for r in c.execute("select user_id from user_keys where name = 'openai'").fetchall()]
+
+
 def ideas_lane() -> None:
-    global _last
+    global _last, _models_day
     if time.monotonic() - _last < EVERY_S:
         return
     _last = time.monotonic()
@@ -41,6 +49,13 @@ def ideas_lane() -> None:
         costs.refresh_fx()
     except Exception:  # noqa: BLE001
         log.exception("exchange rate refresh failed")
+    if _models_day != date.today():
+        _models_day = date.today()
+        for user_id in _key_owners():
+            try:
+                openai_models.refresh(user_id)
+            except Exception:  # noqa: BLE001 - tomorrow, or the Settings button
+                log.exception("model list not refreshed")
     key = os.environ.get("RACE_API_KEY", "").strip()
     owner = _owner_id()
     if key and owner:

@@ -1,8 +1,29 @@
 "use client";
 
-import { useActionState, useState } from "react";
+import { useRouter } from "next/navigation";
+import { useActionState, useState, useTransition } from "react";
 
-import { saveOpenAIKey, savePrices, saveRedditKeys, saveSettings, type ActionState } from "../actions";
+import { refreshModels, saveOpenAIKey, savePrices, saveRedditKeys, saveSettings, type ActionState } from "../actions";
+
+/** The key's model list, re-read now (new models also appear by themselves daily). */
+function RefreshModels() {
+  const router = useRouter();
+  const [note, setNote] = useState<string | null>(null);
+  const [pending, start] = useTransition();
+  return (
+    <span className="text-xs text-muted">
+      <button type="button" disabled={pending} className="text-accent hover:underline disabled:opacity-50"
+              onClick={() => start(async () => {
+                const r = await refreshModels();
+                setNote(r?.ok ? "Updating…" : r?.error ?? "Couldn't refresh.");
+                setTimeout(() => { router.refresh(); setNote(null); }, 5000);
+              })}>
+        Refresh list
+      </button>
+      {note && <span className="ml-2">{note}</span>}
+    </span>
+  );
+}
 
 const input = "rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:border-accent";
 
@@ -71,7 +92,8 @@ export function SettingsForm({ settings: s }: { settings: Settings }) {
                    defaultValue={s.narrator_speed} className={input} />
           </label>
         </div>
-        <label className="flex flex-col gap-1 text-sm">Script model
+        <label className="flex flex-col gap-1 text-sm">
+          <span className="flex items-baseline gap-2">Script model <RefreshModels /></span>
           {s.openai_models.length ? (
             <select name="script_model" defaultValue={s.script_model ?? ""} className={input}>
               <option value="">Choose a model…</option>

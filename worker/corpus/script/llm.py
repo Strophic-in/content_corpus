@@ -66,15 +66,17 @@ class Usage:
     input_tokens: int
     output_tokens: int
     cached_input_tokens: int = 0
+    cache_write_tokens: int = 0
 
     @classmethod
     def of(cls, resp) -> "Usage":
-        """From an OpenAI Responses API reply."""
+        """From an OpenAI Responses API reply (token counts only: replies carry no price)."""
         u = resp.usage
         details = getattr(u, "input_tokens_details", None)
         return cls(model=resp.model, input_tokens=getattr(u, "input_tokens", 0) or 0,
                    output_tokens=getattr(u, "output_tokens", 0) or 0,
-                   cached_input_tokens=getattr(details, "cached_tokens", 0) or 0)
+                   cached_input_tokens=getattr(details, "cached_tokens", 0) or 0,
+                   cache_write_tokens=getattr(details, "cache_write_tokens", 0) or 0)
 
 
 class Unparsed(ValueError):

@@ -451,9 +451,38 @@ def test_a_feed_story_gets_its_articles_lead_picture(s3, user, media_web, monkey
 
 
 def test_list_prices_apply_only_to_their_own_model(user):
-    costs.record_llm(Usage("gpt-5.6-luna", 10, 10), user_id=user["id"], note="other")
+    costs.record_llm(Usage("gpt-5.7-sol", 10, 10), user_id=user["id"], note="other")   # shares only a prefix
     costs.record_llm(Usage("gpt-4o-mini-2024-07-18", 1_000_000, 0), user_id=user["id"], note="dated")
     with db.conn() as c:
         got = {r["note"]: r["usd_micros"] for r in c.execute(
             "select note, usd_micros from costs where user_id = %s", (user["id"],))}
     assert got == {"other": None, "dated": 150_000}
+
+
+def test_luna_list_prices_and_cache_writes(user):
+    costs.record_llm(Usage("gpt-6-luna", 1_000_000, 1_000_000), user_id=user["id"], note="six")
+    costs.record_llm(Usage("gpt-5.6-luna", 1_000_000, 0, cached_input_tokens=200_000, cache_write_tokens=100_000),
+                     user_id=user["id"], note="five")
+    with db.conn() as c:
+        got = {r["note"]: r["usd_micros"] for r in c.execute(
+            "select note, usd_micros from costs where user_id = %s", (user["id"],))}
+    assert got == {"six": 100_000 + 500_000,                               # $0.10 in + $0.50 out per 1M
+                   "five": 700_000 * 0.20 + 200_000 * 0.02 + 100_000 * 0.25}
+
+
+def test_the_model_list_is_refreshed_from_the_key(user, monkeypatch):
+    from types import SimpleNamespace
+
+    import openai
+    from corpus import openai_models
+
+    class FakeOpenAI:
+        def __init__(self, api_key, **kw):
+            assert api_key == "sk-test-key"
+            self.models = SimpleNamespace(list=lambda: [SimpleNamespace(id=i) for i in
+                                                        ("gpt-6-luna", "gpt-image-2", "gpt-5.6-luna")])
+    monkeypatch.setattr(openai, "OpenAI", FakeOpenAI)
+    assert openai_models.refresh(user["id"]) == ["gpt-5.6-luna", "gpt-6-luna", "gpt-image-2"]
+    with db.conn() as c:
+        assert c.execute("select openai_models from app_settings where user_id = %s",
+                         (user["id"],)).fetchone()["openai_models"] == ["gpt-5.6-luna", "gpt-6-luna", "gpt-image-2"]

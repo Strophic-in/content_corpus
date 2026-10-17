@@ -8,6 +8,7 @@ import { encrypt } from "@/lib/crypto";
 import { asUser } from "@/lib/db";
 import { requireUser } from "@/lib/session";
 import { friendly } from "@/lib/errors";
+import { textModels } from "@/lib/models";
 import { wakeWorker } from "@/lib/wake";
 
 export type ActionState = { ok: boolean; error?: string; message?: string } | null;
@@ -211,9 +212,6 @@ export async function saveSettings(_: ActionState, form: FormData): Promise<Acti
   return { ok: true, message: "Settings saved." };
 }
 
-// Models we will never offer for script writing: they are not text-in/text-out.
-const NOT_FOR_SCRIPTS = /(embed|tts|whisper|transcribe|audio|realtime|dall-e|image|moderation|search|computer-use|codex)/i;
-
 /**
  * Store the OpenAI key — but only after OpenAI accepts it. Listing models is a
  * free call that proves the key works, and its answer becomes the model menu, so
@@ -245,12 +243,12 @@ export async function saveOpenAIKey(_: ActionState, form: FormData): Promise<Act
       return { ok: false, error: `OpenAI answered ${r.status}; try again in a moment.` };
     }
     const body = (await r.json()) as { data: { id: string }[] };
-    models = body.data.map((m) => m.id).filter((id) => !NOT_FOR_SCRIPTS.test(id)).sort();
+    models = body.data.map((m) => m.id).sort();             // all of them; each menu filters (lib/models.ts)
   } catch (err) {
     console.warn("openai key check failed: network", (err as Error)?.name);
     return { ok: false, error: "Couldn't reach OpenAI to check the key." };
   }
-  if (!models.length) {
+  if (!textModels(models).length) {
     console.warn("openai key check failed: no text models listed");
     return { ok: false, error: "This key has no text models available." };
   }
@@ -350,4 +348,18 @@ export async function saveRedditKeys(_: ActionState, form: FormData): Promise<Ac
   }
   refresh();
   return { ok: true, message: "Saved. The ideas worker uses Reddit's API from its next batch." };
+}
+
+
+/** Re-read which models the stored key can use (the ideas worker does it: the web
+ *  can't read the key back). Daily it happens by itself. */
+export async function refreshModels(): Promise<ActionState> {
+  const user = await requireUser();
+  try {
+    await asUser(user.id, (db) => db.query("select api.refresh_openai_models()"));
+  } catch (err) {
+    return { ok: false, error: friendly(err) };
+  }
+  await wakeWorker();
+  return { ok: true, message: "Asking OpenAI for the list…" };
 }
