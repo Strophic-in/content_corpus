@@ -15,6 +15,10 @@ class Idea(BaseModel):
     # Numbers of the trend items it came from (the list in the prompt is numbered);
     # their links, posts and media follow the idea onto its card.
     items: list[int]
+    # The number of the format it should be made in (the formats list is numbered),
+    # and why, in a few words.
+    format: int
+    format_why: str
 
 
 class IdeasOut(BaseModel):

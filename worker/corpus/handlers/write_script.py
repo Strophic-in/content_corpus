@@ -6,6 +6,12 @@ it; script/footage.py tells the writer what it may show. It also waits for the
 story's research (research_post: the sources read in full) and writes from it.
 The script picks a background-music mood when a Freesound key is set.
 
+The post's format is one of the templates (templates.py): its prompt (or the
+template's own when the owner hasn't written one), the template's guide to its
+structure and on-screen fields, and its checks (script/structure.py). A carousel
+or card is written as slides instead of shots (script/carousel.py) and stored in
+scripts.slides.
+
 Safe to retry: the version number comes from the job (fixed at enqueue), and a
 retry that finds that version already written returns it instead of paying for
 another LLM call. Everything the call produces lands in one transaction. A draft
@@ -19,16 +25,19 @@ import hashlib
 
 from psycopg.types.json import Jsonb
 
-from .. import channels, costs, db, prompts, vault
+from .. import channels, costs, db, prompts, templates, vault
 from ..config import settings
 from ..runner import Defer, Handler, JobContext, Permanent, Retryable
+from ..script import carousel as carousel_
 from ..script import footage as footage_
-from ..script.llm import (MUSIC_MOODS, NARRATOR_WORDS_PER_SECOND, OpenAIScriptWriter, ScriptWriter, Usage,
+from ..script import structure
+from ..script.llm import (MUSIC_MOODS, NARRATOR_WORDS_PER_SECOND, OpenAIScriptWriter, Usage,
                           narration_word_cap, validate)
 from ..script.review import OpenAIReviewer
 
 # Swapped out by tests; production always talks to OpenAI with the user's key.
 WRITER_FACTORY = OpenAIScriptWriter
+CAROUSEL_FACTORY = carousel_.OpenAICarouselWriter
 REVIEWER_FACTORY = OpenAIReviewer
 # Extra calls per attempt that hand the model its own draft and the rules it broke.
 REPAIR_ROUNDS = 2
@@ -36,15 +45,30 @@ REPAIR_ROUNDS = 2
 
 # audio_source → prompt. 'kokoro' is narrated mode: one TTS voice-over across the
 # reel, visuals with sound effects only. 'ltx_native': characters speak on screen.
+def template_of(fmt: dict | None, audio_source: str) -> templates.Template:
+    """The format's template; a post made before formats (or templates) by its audio."""
+    if fmt and fmt.get("template_id"):
+        return templates.get(fmt["template_id"])
+    return templates.get("character_dialogue" if audio_source == "ltx_native" else "cinematic_3d_explainer")
+
+
 def _system_prompt(st: dict, target_seconds: int, revision_note: str, audio_source: str,
-                   speed: float = 1.1, fmt: dict | None = None) -> str:
-    """The script writer's instructions: the post's format's prompt (prompt library),
-    or the shipped default for posts made before formats existed."""
-    template = fmt["script_prompt"] if fmt else prompts.default(f"script:{audio_source}")
+                   speed: float = 1.1, fmt: dict | None = None, slide_hint: str = "") -> str:
+    """The script writer's instructions: the post's format's prompt (prompt library) —
+    or its template's shipped prompt while the owner hasn't written one — or the
+    shipped default for posts made before formats existed."""
+    if fmt and (fmt.get("script_prompt") or "").strip():
+        template = fmt["script_prompt"]
+    elif fmt:
+        template = prompts.read(template_of(fmt, audio_source).base_prompt)
+    else:
+        template = prompts.default(f"script:{audio_source}")
     look = fmt["visual_style"] if fmt else prompts.default("visual_style")
     shots = max(1, round(target_seconds / 8))
     cap = narration_word_cap(speed)
     return prompts.fill(template, {
+        "voice_rules": structure.voice_rules(audio_source, cap - 5, round(NARRATOR_WORDS_PER_SECOND * speed, 1)),
+        "slide_count_hint": slide_hint,
         "channel_name": st.get("channel_name") or "(unnamed)",
         "channel_niche": st.get("channel_niche") or "(not set — infer from the topic)",
         "channel_audience": st.get("channel_audience") or "(general)",
@@ -116,21 +140,49 @@ def run(ctx: JobContext) -> dict:
         revision = (f"## Revision\nThe previous version (\"{rejected['title']}\") was rejected "
                     f"with this note — address it:\n{rejected['rejection_note']}")
     narrated = post["audio_source"] == "kokoro"
+    dialogue = post["audio_source"] == "ltx_native"
     speed = float(st.get("narrator_speed") or 1.1)
+    t = template_of(fmt, post["audio_source"])
+    look = templates.look(t.template_id, (fmt or {}).get("params"))
+    as_slides = bool(fmt) and t.content_type != "video"
     with db.conn() as c:
         footage, waiting = footage_.load(c, post_id, stock=bool(vault.secret(post["user_id"], "pexels_api_key")))
     if waiting and footage_.still_worth_waiting(waiting):
         raise Defer(f"waiting for {len(waiting)} piece(s) of footage to be fetched and analysed", retry_in=45)
     if post.get("research_state") == "pending" and footage_.still_worth_waiting([post]):
         raise Defer("waiting for the story's sources to be read", retry_in=30)
-    music = bool(vault.secret(post["user_id"], "freesound_api_key"))
-    system = (_system_prompt(st, target, revision, post["audio_source"], speed, fmt)
-              + footage_.prompt_section(footage, narrated) + _music_section(music))
+    # Platform-native music is added by the owner in the app; none is none.
+    music = (bool(vault.secret(post["user_id"], "freesound_api_key"))
+             and look.music_source_mode == "licensed_asset")
+    if as_slides:
+        system = (_system_prompt(st, target, revision, "none", speed, fmt, carousel_.count_hint(look))
+                  + footage_.picture_section(footage) + "\n\n" + t.guide + _music_section(music))
+        writer = CAROUSEL_FACTORY(key)
+
+        def tidy(o):
+            carousel_.normalize(o, footage, music)
+
+        def check(o):
+            return carousel_.problems(o, t, look, footage)
+    else:
+        system = (_system_prompt(st, target, revision, post["audio_source"], speed, fmt)
+                  + footage_.prompt_section(footage, narrated)
+                  + (structure.writer_section(t, look, post["audio_source"]) if fmt else "")
+                  + _music_section(music))
+        writer = WRITER_FACTORY(key)
+
+        def tidy(o):
+            footage_.normalize(o, footage, music)
+            if fmt:
+                structure.normalize(o, t, look, post["audio_source"])
+
+        def check(o):
+            return validate(o, target, narrated=narrated, speed=speed, footage=footage, dialogue=dialogue,
+                            template=t if fmt else None, look=look if fmt else None)
     user = (f"Topic: {post['topic']}\nBrief: {post['brief'] or '(none)'}" + _category_note(category)
             + sources_note(post.get("research")))
     input_sha = hashlib.sha256("\x1f".join([system, user, model]).encode()).hexdigest()
 
-    writer: ScriptWriter = WRITER_FACTORY(key)
     billed = dict(user_id=post["user_id"], post_id=post_id, channel_id=post.get("channel_id"),
                   category_id=post.get("category_id"), job_id=ctx.job.get("id"))
 
@@ -141,12 +193,12 @@ def run(ctx: JobContext) -> dict:
             if getattr(e, "usage", None) is not None:          # answered, so it was billed
                 costs.record_llm(e.usage, note="unparsable script", **billed)
             raise _classify_openai_error(e) from e
-        costs.record_llm(u, note="script", **billed)              # every call, repairs included
+        costs.record_llm(u, note="slides" if as_slides else "script", **billed)   # every call, repairs included
         return out, u
 
     out, usage = call(user)
-    footage_.normalize(out, footage, music)
-    problems = validate(out, target, narrated=narrated, speed=speed, footage=footage)
+    tidy(out)
+    problems = check(out)
     # A draft that breaks a rule goes back with exactly what to fix: asking again
     # from scratch tends to repeat the same mistake (seen: one line too long, 3x).
     for _ in range(REPAIR_ROUNDS):
@@ -160,13 +212,14 @@ def run(ctx: JobContext) -> dict:
                       usage.output_tokens + more.output_tokens,
                       usage.cached_input_tokens + more.cached_input_tokens,
                       usage.cache_write_tokens + more.cache_write_tokens)
-        footage_.normalize(out, footage, music)
-        problems = validate(out, target, narrated=narrated, speed=speed, footage=footage)
+        tidy(out)
+        problems = check(out)
     if problems:
         raise Retryable("script failed validation: " + "; ".join(problems), stage="validate",
                         detail={"problems": problems})
 
-    shot_plan = [s.model_dump() for s in out.shots]
+    shot_plan = [] if as_slides else [s.model_dump() for s in out.shots]
+    slides = [s.model_dump() for s in out.slides] if as_slides else None
     # Automatic mode: nobody reads the script before it ships, so the desk editor does.
     held: list[str] = []
     if post.get("pipeline_mode") == "auto" and post.get("auto_approve"):
@@ -182,14 +235,17 @@ def run(ctx: JobContext) -> dict:
         script_id = c.execute(
             """insert into scripts (post_id, version, state, title, hook, description, hashtags,
                                     intended_dialogue, shot_plan, style_prompt, model,
-                                    input_sha256, review, token_usage, format_id, format_version, music_mood)
-               values (%s, %s, 'awaiting_approval', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                                    input_sha256, review, token_usage, format_id, format_version, music_mood,
+                                    slides)
+               values (%s, %s, 'awaiting_approval', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                returning id""",
             (post_id, version, out.title, out.hook, out.description, out.hashtags,
-             out.intended_dialogue, Jsonb(shot_plan), out.style_prompt, usage.model, input_sha,
+             "" if as_slides else out.intended_dialogue, Jsonb(shot_plan),
+             "" if as_slides else out.style_prompt, usage.model, input_sha,
              Jsonb(out.review.model_dump()),
              Jsonb({"input": usage.input_tokens, "output": usage.output_tokens}),
-             (fmt or {}).get("id"), (fmt or {}).get("version"), out.music_mood or None)).fetchone()["id"]
+             (fmt or {}).get("id"), (fmt or {}).get("version"), out.music_mood or None,
+             Jsonb(slides) if slides is not None else None)).fetchone()["id"]
         c.execute("update posts set status = 'awaiting_approval', error = null where id = %s",
                   (post_id,))
         db.log_event(c, post_id, "scripting", "awaiting_approval",
@@ -201,7 +257,7 @@ def run(ctx: JobContext) -> dict:
             db.log_event(c, post_id, "awaiting_approval", "awaiting_approval", "system:auto",
                          "held for your review: " + "; ".join(held)[:500], {"issues": held})
     return {"script_id": str(script_id), "auto_approved": bool(locked["auto_approve"]) and not held,
-            "held": held,
+            "held": held, "template": t.template_id, "slides": len(slides) if slides is not None else None,
             "shots": len(shot_plan), "tokens": usage.input_tokens + usage.output_tokens}
 
 

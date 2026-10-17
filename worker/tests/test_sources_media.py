@@ -372,7 +372,7 @@ def test_a_batch_links_ideas_to_their_posts_and_queues_their_media(user, monkeyp
         def forget(self, ids): pass
     monkeypatch.setattr(suggest_ideas, "MEMORY", lambda log: Mem())
     OneIdeaWriter.picks = [Idea(title="A bridge falls in the storm", hook="h", brief="b", why_now="today",
-                                items=[1, 1, 9])]
+                                items=[1, 1, 9], format=1, format_why="")]
     ctx = suggest_ideas.JobContext(job={"id": None, "payload": {"category_id": str(user["category"])}})
     assert suggest_ideas.run(ctx)["ideas"] == 1
     with db.conn() as c:

@@ -109,9 +109,9 @@ def test_an_accepted_ideas_sources_are_read_before_its_script(s3, owner, user, m
 
 def test_a_chart_needs_a_title_and_matching_labels_and_values():
     good = generated_shot(seconds=4, visual="v", audio="", narration=LINE, source="chart",
-                          chart=Chart(title="Votes", labels=["For", "Against"], values=[7, 2], unit=""))
+                          chart=Chart(kind="bar", title="Votes", labels=["For", "Against"], values=[7, 2], unit=""))
     bad = generated_shot(seconds=4, visual="v", audio="", narration=LINE, source="chart",
-                         chart=Chart(title="", labels=["For"], values=[7, 2], unit=""))
+                         chart=Chart(kind="bar", title="", labels=["For"], values=[7, 2], unit=""))
     assert validate(_script(good, good), 8, narrated=True, footage=Footage(assets=[])) == []
     assert "give it a title and 2-6 labels" in validate(_script(bad, good), 8, narrated=True,
                                                         footage=Footage(assets=[]))[0]
@@ -120,7 +120,7 @@ def test_a_chart_needs_a_title_and_matching_labels_and_values():
 def test_a_chart_shot_is_drawn_on_the_server(s3, owner, user, footage_post):
     FootageWriter.shots = [
         generated_shot(seconds=4, visual="the vote", audio="", narration=LINE, source="chart",
-                       chart=Chart(title="Council vote", labels=["For", "Against"], values=[7, 2], unit="")),
+                       chart=Chart(kind="bar", title="Council vote", labels=["For", "Against"], values=[7, 2], unit="")),
         generated_shot(seconds=4, visual="the river", audio="", narration=LINE, source="image", asset=2)]
     sid = _approve(owner, user, footage_post)
     drain(cpu_footage())
@@ -299,7 +299,7 @@ def test_a_youtube_video_becomes_one_idea_with_its_thumbnail(owner, user, monkey
         def write(self, *, model, system, user):
             asked["system"], asked["user"] = system, user
             return IdeasOut(ideas=[Idea(title="Why everyone is filming the monsoon", hook="h", brief="b",
-                                        why_now="trending", items=[1])]), U(model, 500, 80)
+                                        why_now="trending", items=[1], format=1, format_why="")]), U(model, 500, 80)
     monkeypatch.setattr(suggest_ideas, "WRITER_FACTORY", Writer)
     monkeypatch.setattr(suggest_ideas, "EMBED", lambda texts: __import__("numpy").eye(len(texts), 384))
 

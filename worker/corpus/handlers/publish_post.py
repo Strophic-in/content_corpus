@@ -40,8 +40,11 @@ def run(ctx: JobContext) -> dict:
         raise Permanent(f"unknown platform {platform!r}", stage="input")
     name = NAMES[platform]
     post = db.one("""select p.id, p.user_id, p.channel_id, p.status, p.final_key, p.final_sha256, p.credits,
-                            exists (select 1 from shots x where x.script_id = p.approved_script_id
-                                       and x.source = 'generate') as synthetic,
+                            p.format, p.slides,
+                            (exists (select 1 from shots x where x.script_id = p.approved_script_id
+                                        and x.source = 'generate')
+                             or exists (select 1 from jsonb_array_elements(coalesce(s.slides, '[]'::jsonb)) e
+                                         where e->'visual'->>'source' = 'ai_image')) as synthetic,
                             s.title, s.description, s.hashtags,
                             coalesce(st.youtube_category_id, '22') as category_id,
                             coalesce(st.youtube_privacy, 'private') as youtube_privacy
@@ -75,10 +78,13 @@ def run(ctx: JobContext) -> dict:
                     attempt=att, save=lambda **f: attempts.update(att, **f))
             else:
                 video = None
+                # A carousel or card goes as its slides; YouTube gets its slideshow (final_key).
+                slides = [s["key"] for s in (post["slides"] or [])] if post["format"] in ("carousel", "image") else []
                 out = instagram.publish(
                     client, token=_instagram_token(client, acc), ig_user_id=acc["external_id"],
-                    # Instagram downloads the reel itself; the link lapses well after it has.
-                    video_url=storage.signed_url(post["final_key"], INSTAGRAM_LINK_SECONDS),
+                    # Instagram downloads the file itself; the link lapses well after it has.
+                    video_url=None if slides else storage.signed_url(post["final_key"], INSTAGRAM_LINK_SECONDS),
+                    image_urls=[storage.signed_url(k, INSTAGRAM_LINK_SECONDS) for k in slides] or None,
                     caption=instagram.caption(post["title"], post["description"] or "", post["hashtags"] or [],
                                               post["credits"] or []),
                     attempt=att, save=lambda **f: attempts.update(att, **f))

@@ -61,6 +61,7 @@ def ideas_lane() -> None:
         sweep.sweep(lambda m: log.info(m))
         sweep.sweep_assets(lambda m: log.info(m))
         sweep.sweep_intermediates(lambda m: log.info(m))
+        sweep.sweep_uploads(lambda m: log.info(m))
     except Exception:  # noqa: BLE001 - each chore on its own
         log.exception("card media sweep failed")
     try:

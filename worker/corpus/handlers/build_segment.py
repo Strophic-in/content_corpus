@@ -22,7 +22,7 @@ from pathlib import Path
 
 from psycopg.types.json import Jsonb
 
-from .. import db, storage
+from .. import db, storage, templates
 from ..config import settings
 from ..media import assemble as media
 from ..runner import Handler, JobContext
@@ -31,7 +31,7 @@ WORD_TIMINGS = media.whisper_words   # swapped by tests
 
 SHOT_COLS = """id, post_id, script_id, idx, state, artifact_key, artifact_sha256,
                narration, narration_key, narration_words, source, audio_mode, credit, asset_id,
-               clip_in, clip_out"""
+               clip_in, clip_out, extras"""
 
 
 def _clip_speaks(shot: dict) -> bool:
@@ -66,9 +66,12 @@ def cache_dir(post_id) -> Path:
     return settings().cache_dir / "segments" / str(post_id)
 
 
-def ensure_segment(post: dict, shot: dict, style: media.CaptionStyle, hint: str) -> tuple[Path, Path, bool]:
-    """(picture, sound, was_cached) for a rendered shot, building and caching it if needed."""
+def ensure_segment(post: dict, shot: dict, style: media.CaptionStyle, hint: str,
+                   look: templates.Look | None = None) -> tuple[Path, Path, bool]:
+    """(picture, sound, was_cached) for a rendered shot, building and caching it if needed.
+    `look`: what the post's template draws over it (None: captions only, as before templates)."""
     narrated = post["audio_source"] == "kokoro"
+    ex = shot.get("extras") or {}
     d = cache_dir(post["id"])
     d.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(dir=d) as tmp:
@@ -87,7 +90,8 @@ def ensure_segment(post: dict, shot: dict, style: media.CaptionStyle, hint: str)
         key = hashlib.sha256(json.dumps(
             [media.SEGMENT_VERSION, shot["artifact_sha256"] or shot["artifact_key"], shot["narration_key"],
              words, None if voiced else hint, asdict(style), media.LEAD_IN, media.SFX_GAIN,
-             shot.get("source"), shot.get("audio_mode"), label],
+             shot.get("source"), shot.get("audio_mode"), label, ex,
+            look.model_dump() if look is not None else None],
             sort_keys=True, default=str).encode()).hexdigest()[:16]
         video, audio = d / f"{shot['idx']}-{key}.mp4", d / f"{shot['idx']}-{key}.wav"
         if video.exists() and audio.exists():
@@ -95,13 +99,21 @@ def ensure_segment(post: dict, shot: dict, style: media.CaptionStyle, hint: str)
         clip = storage.get_file(shot["artifact_key"], work / "clip.mp4")
         if voiced:
             timed = media.shifted([tuple(w) for w in words], media.LEAD_IN)
-        elif (not media.has_audio(clip) or (shot.get("source") or "generate") in ("image", "stock")
-              or not _clip_speaks(shot)):
-            timed = []                                     # nothing is said
+        elif (not media.has_audio(clip) or (shot.get("source") or "generate") in ("image", "stock", "plain", "chart")
+              or not _clip_speaks(shot)
+              or (post["audio_source"] == "none" and shot.get("source") != "clip")):
+            timed = []                                     # nothing is said (no voice: only a clip may speak)
         else:                                              # characters, or a clip, speak
             timed = media.dialogue_words(clip, "" if narrated else hint, WORD_TIMINGS)
+        panel = None
+        if ex.get("panel_asset_id"):
+            with db.conn() as c:
+                a = c.execute("select key, rights, state from assets where id = %s", (ex["panel_asset_id"],)).fetchone()
+            if a and a["key"] and a["rights"] == "approved" and a["state"] == "ready":
+                panel = storage.get_file(a["key"], work / "panel.jpg")
         media.build_segment(clip, work / "seg.mp4", work / "seg.wav", narration=narration, words=timed,
-                            style=style, label=label)
+                            style=style, label=label, look=look, extras=ex, panel=panel,
+                            panel_credit=ex.get("panel_credit") if panel else None)
         # Sound first, picture last: a picture on disk means the pair is complete.
         os.replace(work / "seg.wav", audio)
         os.replace(work / "seg.mp4", video)
@@ -115,9 +127,10 @@ def run(ctx: JobContext) -> dict:
         if not shot or post["approved_script_id"] != shot["script_id"] or shot["state"] != "uploaded":
             return {"skipped": "shot is gone, superseded or not rendered"}
         style = caption_style(c, post)
+        look = templates.look_for_post(c, post)
         hint = c.execute("select intended_dialogue from scripts where id = %s",
                          (shot["script_id"],)).fetchone()["intended_dialogue"]
-    video, _, cached = ensure_segment(post, shot, style, hint)
+    video, _, cached = ensure_segment(post, shot, style, hint, look)
     return {"idx": shot["idx"], "segment": video.name, "cached": cached}
 
 

@@ -102,6 +102,21 @@ def sweep_assets(log: Callable[[str], None] = print) -> int:
     return n
 
 
+def sweep_uploads(log: Callable[[str], None] = print) -> int:
+    """Uploads the browser never finished: after a day the asset row goes, and the
+    storage it reserved (and any part of the file that arrived) is freed."""
+    with db.conn() as c:
+        gone = c.execute("""delete from assets where origin = 'upload' and state = 'uploading'
+                              and created_at < now() - interval '1 day' returning fetch_from""").fetchall()
+        stale = [r["key"] for r in c.execute(
+            """select key from storage_objects where kind = 'asset' and state = 'reserved'
+                  and key like '%%/uploads/%%' and created_at < now() - interval '1 day'""").fetchall()]
+    n = _delete(stale, log)
+    if gone or n:
+        log(f"cleared {len(gone)} unfinished upload(s), {n} reservation(s)")
+    return n
+
+
 SUPERSEDED_DAYS = 7
 PUBLISHED_INTERMEDIATE_DAYS = 14
 

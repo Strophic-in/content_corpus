@@ -1,0 +1,32 @@
+{
+  "template_id": "full_screen_text_overlay",
+  "display_name": "Full-Screen Video With Text Overlay",
+  "content_type": "video",
+  "supported_platforms": ["youtube_shorts", "instagram_reels"],
+  "aspect_ratio": "9:16",
+  "recommended_duration_seconds": [10, 30],
+  "required_assets": ["background_clip", "text_script"],
+  "optional_assets": ["narration", "music"],
+  "scene_structure": ["hook", "beat", "reveal"],
+  "caption_style": "big_text_beats",
+  "visual_style": "Full-screen vertical footage behind large, timed text; the picture never competes with the words.",
+  "music_mood": ["energetic-hype", "uplifting", "playful"],
+  "music_source_mode": "licensed_asset",
+  "automation_level": "high",
+  "estimated_render_cost": "low",
+  "rights_requirements": ["Background footage must be generated, stock, approved or owned."],
+  "render_notes": ["Text sits inside the safe margins and is measured to fit.", "Stock or plain backgrounds need no GPU."],
+  "platform_notes": ["Readable with the sound off — most viewers start muted."],
+  "format": "full-screen background footage with 3-6 large text beats leading to a reveal or punchline",
+  "best_for": ["facts", "short stories", "humor", "motivation", "quick explainers"],
+  "topics": ["facts", "humor", "story", "motivation", "explainer"],
+  "goals": ["reach", "shares"],
+  "render": {
+    "captions": "beats",
+    "audio": "none",
+    "audios": ["none", "kokoro"],
+    "sources": ["stock", "clip", "image", "generate", "plain"],
+    "transition": "fade",
+    "transitions": ["cut", "fade", "crossfade", "flash"]
+  }
+}

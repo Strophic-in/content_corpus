@@ -17,7 +17,7 @@ from psycopg.types.json import Jsonb
 
 import httpx
 
-from .. import auto, db, music, storage, vault
+from .. import auto, db, music, storage, templates, vault
 from ..config import settings
 from ..media import assemble as media
 from ..runner import Handler, JobContext, Permanent
@@ -37,19 +37,23 @@ def run(ctx: JobContext) -> dict:
         shots = c.execute(f"select {build_segment.SHOT_COLS} from shots where script_id = %s order by idx",
                           (script_id,)).fetchall()
         style = build_segment.caption_style(c, post)
+        look = templates.look_for_post(c, post)
         old = post["status"]
         c.execute("update posts set status = 'post_processing' where id = %s", (post["id"],))
         db.log_event(c, post["id"], old, "post_processing", f"worker:{settings().worker_id}", "assembling")
     if any(s["state"] != "uploaded" for s in shots):
         raise Permanent("not every shot is rendered yet", stage="input")
 
-    built = [build_segment.ensure_segment(post, s, style, hint) for s in shots]
+    built = [build_segment.ensure_segment(post, s, style, hint, look) for s in shots]
+    # How each shot begins: its own transition, else the format's.
+    transitions = [((s.get("extras") or {}).get("transition") or look.transition) for s in shots]
     with tempfile.TemporaryDirectory() as tmp:
         out = Path(tmp) / "final.mp4"
         track = _music(post, script_id, Path(tmp))
         info = media.join_segments([(v, a) for v, a, _ in built], out,
                                    log=lambda m: print(f"[assemble {script_id}] {m}", flush=True),
-                                   music=track.path if track else None, music_gain=music.GAIN)
+                                   music=track.path if track else None, music_gain=music.GAIN,
+                                   transitions=transitions, loop=look.loop)
         info["segments_ready"] = sum(cached for _, _, cached in built)
         key = f"{storage.post_prefix(post['user_id'], post['id'])}/final/{script_id}.mp4"
         stored = storage.put_file(key, out, kind="final", user_id=post["user_id"], post_id=post["id"],

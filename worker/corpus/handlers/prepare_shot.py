@@ -17,7 +17,7 @@ from pathlib import Path
 import httpx
 from psycopg.types.json import Jsonb
 
-from .. import db, stock, storage, vault
+from .. import db, stock, storage, templates, vault
 from ..config import settings
 from ..media import footage
 from ..runner import Handler, JobContext, Permanent, Retryable
@@ -48,6 +48,7 @@ def run(ctx: JobContext) -> dict:
         if shot["source"] in ("clip", "image") and (asset is None or asset["rights"] != "approved"
                                                     or asset["state"] != "ready" or not asset["key"]):
             raise Permanent(f"shot {shot['idx'] + 1}'s footage is no longer approved or available", stage="rights")
+        look = templates.look_for_post(c, post)
         if post["status"] == "queued_for_render":
             c.execute("update posts set status = 'rendering' where id = %s", (post["id"],))
             db.log_event(c, post["id"], "queued_for_render", "rendering", f"worker:{settings().worker_id}",
@@ -57,6 +58,8 @@ def run(ctx: JobContext) -> dict:
     seconds = shot["num_frames"] / shot["fps"]
     credit = shot["credit"]
     stock_id = None
+    ex = shot.get("extras") or {}
+    size = templates.split_size(ex, look)
     with tempfile.TemporaryDirectory() as tmp:
         work = Path(tmp)
         out = work / "shot.mp4"
@@ -64,13 +67,17 @@ def run(ctx: JobContext) -> dict:
             src = storage.get_file(asset["key"], work / "asset.mp4")
             how = footage.compose_clip(src, out, seconds=seconds, start=float(shot["clip_in"] or 0),
                                        end=float(shot["clip_out"] or 0), layout=shot["layout"],
-                                       audio=shot["audio_mode"], credit=credit)
+                                       audio=shot["audio_mode"], credit=credit, focus=ex.get("focus"),
+                                       timelapse=bool(ex.get("timelapse")), size=size)
         elif shot["source"] == "image":
             src = storage.get_file(asset["key"], work / "asset.jpg")
-            how = footage.ken_burns(src, out, seconds=seconds, idx=shot["idx"], credit=credit, layout=shot["layout"])
+            how = footage.ken_burns(src, out, seconds=seconds, idx=shot["idx"], credit=credit, layout=shot["layout"],
+                                    zoom=look.ken_burns, focus=ex.get("focus"), size=size)
         elif shot["source"] == "chart":
-            still = footage.chart_still(shot["chart"] or {}, work / "chart.png")
-            how = footage.ken_burns(still, out, seconds=seconds, idx=0, layout="cover", zoom=0.04)
+            still = footage.chart_still(shot["chart"] or {}, work / "chart.png", look, size)
+            how = footage.ken_burns(still, out, seconds=seconds, idx=0, layout="cover", zoom=0.04, size=size)
+        elif shot["source"] == "plain":
+            how = footage.plain(out, seconds=seconds, look=look, size=size)
         else:
             key = vault.secret(post["user_id"], "pexels_api_key")
             if not key:
@@ -88,7 +95,8 @@ def run(ctx: JobContext) -> dict:
                     raise Retryable(f"Pexels: {e}", stage="stock", retry_in=300) from e
                 src = stock.download(client, clip, work / "stock.mp4")
             credit, stock_id = clip.credit, clip.id
-            how = footage.compose_clip(src, out, seconds=seconds, layout="cover", audio="mute", credit=credit)
+            how = footage.compose_clip(src, out, seconds=seconds, layout="cover", audio="mute", credit=credit,
+                                       size=size)
             how["pexels"] = {"id": clip.id, "page": clip.page}
         prefix = storage.post_prefix(post["user_id"], post["id"])
         name = f"{shot['idx']}-pexels-{stock_id}.mp4" if stock_id else f"{shot['idx']}-{shot['source']}.mp4"

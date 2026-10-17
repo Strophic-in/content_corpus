@@ -12,6 +12,14 @@ Three kinds of shot are made here instead of on the GPU:
           ones, so consecutive pictures don't all move the same way), composed the
           same way; no sound.
   stock   a Pexels video, treated as a muted clip.
+  plain   the format's background colour as a slowly drifting gradient with a
+          little grain (no banding), for text templates; no sound.
+  chart   a chart drawn as a picture (media/slides.draw_chart: bar, big stat,
+          comparison or line), then given a gentle zoom.
+
+A shot may punch in on a region (`focus`: a screen recording's button, a
+speaker's face) and a clip may play a long window sped up (`timelapse`). A shot
+for a split screen is made at half height (1080x960) so its credit stays on it.
 
 Every frame of third-party footage carries its credit ("u/x on r/videos", "Video by
 Y on Pexels") in a small box at the top. Text goes to ffmpeg through a file
@@ -116,21 +124,42 @@ def window(start: float, end: float, seconds: float, duration: float) -> tuple[f
     return start, length, max(0.0, seconds - length)
 
 
+def _focus(focus: dict | None, inp: str, out: str) -> tuple[str, float, float]:
+    """[inp] cropped to a focus box (fractions of the frame), and the share of the
+    width and height kept; a plain copy without one."""
+    if not focus or float(focus.get("w") or 0) <= 0 or float(focus.get("h") or 0) <= 0:
+        return f"[{inp}]null[{out}]", 1.0, 1.0
+    x, y = max(0.0, float(focus["x"])), max(0.0, float(focus["y"]))
+    w, h = min(1.0 - x, float(focus["w"])), min(1.0 - y, float(focus["h"]))
+    return (f"[{inp}]crop=trunc(iw*{w:.4f}/2)*2:trunc(ih*{h:.4f}/2)*2:trunc(iw*{x:.4f}):trunc(ih*{y:.4f})[{out}]",
+            w, h)
+
+
 def compose_clip(src: Path, out: Path, *, seconds: float, start: float = 0.0, end: float = 0.0,
-                 layout: str | None = None, audio: str = "duck", credit: str | None = None) -> dict:
-    """A video file → the finished shot `out` (exactly round(seconds*24) frames)."""
+                 layout: str | None = None, audio: str = "duck", credit: str | None = None,
+                 focus: dict | None = None, timelapse: bool = False, size: tuple[int, int] = (W, H)) -> dict:
+    """A video file → the finished shot `out` (exactly round(seconds*24) frames).
+    `timelapse`: the whole window [start, end] plays sped up to fit, without sound."""
     work = out.parent
     i = info(src)
     frames = max(9, round(seconds * FPS))
     seconds = frames / FPS
-    layout = layout or choose_layout(i.w, i.h)
-    at, length, hold = window(start, end or start + seconds, seconds, i.seconds)
-    graph = (_layout(layout, "0:v", "framed") + ";"
+    crop, fw, fh = _focus(focus, "0:v", "f")
+    layout = layout or choose_layout(round(i.w * fw), round(i.h * fh))
+    speed = 1.0
+    if timelapse and end > start and end - start > seconds * 1.2:
+        at = max(0.0, start)
+        length = min(end, i.seconds or end) - at
+        speed, hold = max(1.0, length / seconds), 0.0
+    else:
+        at, length, hold = window(start, end or start + seconds, seconds, i.seconds)
+    graph = (crop + ";" + (f"[f]setpts=PTS/{speed:.4f}[g];" if speed > 1 else "")
+             + _layout(layout, "g" if speed > 1 else "f", "framed", *size) + ";"
              + f"[framed]fps={FPS},tpad=stop_mode=clone:stop_duration={hold + 1:.3f}[held];"
              + _credit(work, credit, "held", "v"))
     args = ["-ss", f"{at:.3f}", "-t", f"{length:.3f}", "-i", str(src.resolve()), "-filter_complex", graph,
             "-map", "[v]"]
-    sound = audio != "mute" and i.has_audio
+    sound = audio != "mute" and i.has_audio and speed == 1.0
     if sound:
         args += ["-map", "0:a:0", "-af", f"aresample={RATE},apad", "-t", f"{seconds:.3f}",
                  "-c:a", "aac", "-b:a", "160k", "-ar", str(RATE), "-ac", "2"]
@@ -138,55 +167,62 @@ def compose_clip(src: Path, out: Path, *, seconds: float, start: float = 0.0, en
         args += ["-an"]
     _ff(args + _encode(frames) + [out.name], cwd=work)
     return {"frames": frames, "layout": layout, "window": [round(at, 2), round(at + length, 2)],
-            "held_s": round(hold, 2), "sound": sound}
+            "held_s": round(hold, 2), "sound": sound, **({"speed": round(speed, 2)} if speed > 1 else {}),
+            **({"focus": focus} if fw < 1 or fh < 1 else {})}
 
 
-def _num(v: float) -> str:
-    return f"{v:,.0f}" if abs(v) >= 100 or float(v).is_integer() else f"{v:,.1f}"
+def chart_still(chart: dict, out: Path, look=None, size: tuple[int, int] = (W, H)) -> Path:
+    """A chart as a picture the size of the shot: drawn like a slide's chart (bar,
+    big stat, comparison or line), on the format's background, clear of where the
+    captions sit (around 72% of the height)."""
+    from PIL import Image
 
+    from .. import templates
+    from . import slides
 
-def chart_still(chart: dict, out: Path) -> Path:
-    """A bar chart as a 1080x1920 picture: the title at the top, one horizontal bar
-    per label, longest bar = largest value, each value printed at its bar's end."""
-    work = out.parent
-    shutil.copyfile(FONT, work / "chart.ttf")
-    labels, values = list(chart["labels"])[:6], [float(v) for v in chart["values"]][:6]
-    top = max(values) or 1.0
-    unit = (chart.get("unit") or "").strip()
-    (work / "title.txt").write_text(chart["title"].strip()[:80], encoding="utf-8")
-    graph = [f"drawtext=fontfile=chart.ttf:textfile=title.txt:expansion=none:fontsize=60:fontcolor=white:"
-             f"x=(w-text_w)/2:y=300"]
-    # Rows end above y≈1300: the captions sit around 72% of the height.
-    row, y0, x0, full = 800 // max(1, len(labels)), 480, 90, 820
-    for k, (label, value) in enumerate(zip(labels, values)):
-        y = y0 + k * row
-        bar = max(12, round(full * value / top))
-        (work / f"l{k}.txt").write_text(str(label).strip()[:40], encoding="utf-8")
-        (work / f"v{k}.txt").write_text(f"{_num(value)}{(' ' + unit) if unit and unit != '%' else unit}",
-                                        encoding="utf-8")
-        graph += [f"drawtext=fontfile=chart.ttf:textfile=l{k}.txt:expansion=none:fontsize=42:fontcolor=0xcbd5e1:"
-                  f"x={x0}:y={y}",
-                  f"drawbox=x={x0}:y={y + 60}:w={bar}:h={min(90, row - 90)}:color=0xef4444@1:t=fill",
-                  f"drawtext=fontfile=chart.ttf:textfile=v{k}.txt:expansion=none:fontsize=44:fontcolor=white:"
-                  f"x={min(x0 + bar + 20, W - 260)}:y={y + 60 + max(0, (min(90, row - 90) - 44) // 2)}"]
-    _ff(["-f", "lavfi", "-i", f"color=c=0x0f172a:s={W}x{H}", "-vf", ",".join(graph), "-frames:v", "1", out.name],
-        cwd=work)
+    look = look or templates.look("animated_infographic")
+    w, h = size
+    img = Image.new("RGB", (w, h), slides._rgb(look.background_color))
+    box = slides.Box(60, 260, w - 120, int(h * 0.62) - 260) if h > 1200 else slides.Box(40, 40, w - 80, h - 80)
+    slides.draw_chart(img, box, chart, look)
+    img.save(out)
     return out
 
 
+def plain(out: Path, *, seconds: float, look=None, size: tuple[int, int] = (W, H)) -> dict:
+    """The format's background colour as a slowly drifting two-tone gradient with
+    fine grain, `seconds` long (exact frames), silent."""
+    from .. import templates
+
+    look = look or templates.look("kinetic_typography")
+    frames = max(9, round(seconds * FPS))
+    base = look.background_color.lstrip("#")
+    r, g, b = (int(base[k:k + 2], 16) for k in (0, 2, 4))
+    lift = "{:02X}{:02X}{:02X}".format(min(255, r + 34), min(255, g + 30), min(255, b + 46))
+    w, h = size
+    src = (f"gradients=s={w}x{h}:r={FPS}:c0=0x{base}:c1=0x{lift}:x0=0:y0=0:x1={w}:y1={h}:nb_colors=2:"
+           f"speed=0.004:d={frames / FPS + 1:.3f}")
+    _ff(["-f", "lavfi", "-i", src, "-vf", "noise=alls=5:allf=t,format=yuv420p,setsar=1", "-an"]
+        + _encode(frames) + [out.name], cwd=out.parent)
+    return {"frames": frames, "plain": look.background_color}
+
+
 def ken_burns(src: Path, out: Path, *, seconds: float, idx: int = 0, credit: str | None = None,
-              layout: str | None = None, zoom: float = KEN_BURNS_ZOOM) -> dict:
-    """A picture → the finished shot `out`: composed to 9:16, slowly zooming."""
+              layout: str | None = None, zoom: float = KEN_BURNS_ZOOM, focus: dict | None = None,
+              size: tuple[int, int] = (W, H)) -> dict:
+    """A picture → the finished shot `out`: composed to the shot's shape, slowly zooming."""
     work = out.parent
     i = info(src)
     frames = max(9, round(seconds * FPS))
-    layout = layout or choose_layout(i.w, i.h)
+    crop, fw, fh = _focus(focus, "0:v", "f")
+    layout = layout or choose_layout(round(i.w * fw), round(i.h * fh))
+    w, h = size
     # Composed at twice the size, so the zoom's sub-pixel steps don't judder.
     still = work / "still.png"
-    _ff(["-i", str(src.resolve()), "-filter_complex", _layout(layout, "0:v", "s", 2 * W, 2 * H), "-map", "[s]",
-         "-frames:v", "1", still.name], cwd=work)
+    _ff(["-i", str(src.resolve()), "-filter_complex", crop + ";" + _layout(layout, "f", "s", 2 * w, 2 * h),
+         "-map", "[s]", "-frames:v", "1", still.name], cwd=work)
     z = f"1+{zoom}*on/{frames}" if idx % 2 == 0 else f"{1 + zoom}-{zoom}*on/{frames}"
-    graph = (f"[0:v]zoompan=z='{z}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s={W}x{H}:fps={FPS},"
+    graph = (f"[0:v]zoompan=z='{z}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s={w}x{h}:fps={FPS},"
              f"setsar=1[kb];" + _credit(work, credit, "kb", "v"))
     _ff(["-loop", "1", "-framerate", str(FPS), "-i", still.name, "-filter_complex", graph, "-map", "[v]", "-an"]
         + _encode(frames) + [out.name], cwd=work)

@@ -8,7 +8,7 @@ import path from "node:path";
 // /app/prompts; in development they are two directories up.
 // The paths are runtime-only (turbopackIgnore): the image copies prompts/ itself,
 // and letting the bundler trace a dynamic path would pull the whole project in.
-function promptsDir(): string {
+export function promptsDir(): string {
   for (const d of [process.env.PROMPTS_DIR,
                    path.resolve(/*turbopackIgnore: true*/ process.cwd(), "prompts"),
                    path.resolve(/*turbopackIgnore: true*/ process.cwd(), "../../prompts")]) {
@@ -45,5 +45,5 @@ export const PLACEHOLDERS = {
                 "format_name", "format_description", "trends", "avoid", "rejected", "count"],
   script_prompt: ["channel_name", "channel_niche", "channel_audience", "channel_voice", "script_language",
                   "visual_style", "target_seconds", "shot_count_hint", "narration_words",
-                  "narration_words_per_second", "revision_note"],
+                  "narration_words_per_second", "voice_rules", "slide_count_hint", "revision_note"],
 } as const;

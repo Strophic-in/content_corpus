@@ -419,3 +419,40 @@ export async function refreshModels(): Promise<ActionState> {
   await wakeWorker();
   return { ok: true, message: "Asking OpenAI for the list…" };
 }
+
+// ── the owner's own footage ──────────────────────────────────────────────────
+
+const VIDEO_EXT = ["mp4", "mov", "m4v", "webm"];
+const IMAGE_EXT = ["jpg", "jpeg", "png", "webp"];
+
+/** Make room for one upload (an asset row and its storage); the browser then PUTs
+ *  the file to /api/upload/<assetId>. */
+export async function startUpload(postId: string, name: string, bytes: number,
+                                  type: string): Promise<ActionState & { assetId?: string }> {
+  const user = await requireUser();
+  const ext = (name.split(".").pop() ?? "").toLowerCase();
+  const kind = type.startsWith("video/") || VIDEO_EXT.includes(ext) ? "video"
+    : type.startsWith("image/") || IMAGE_EXT.includes(ext) ? "image" : null;
+  if (!kind || ![...VIDEO_EXT, ...IMAGE_EXT].includes(ext))
+    return { ok: false, error: `${name}: use MP4, MOV or WebM video, or JPEG, PNG or WebP pictures.` };
+  if (!Number.isInteger(bytes) || bytes <= 0) return { ok: false, error: `${name} is empty.` };
+  try {
+    const assetId = await asUser(user.id, async (db) =>
+      (await db.query("select (api.start_upload($1, $2, $3, $4, $5)).id", [postId, kind, bytes, ext, name.slice(0, 200)]))
+        .rows[0].id as string);
+    return { ok: true, assetId };
+  } catch (err) {
+    return { ok: false, error: `${name}: ${friendly(err)}` };
+  }
+}
+
+export async function deleteUpload(assetId: string): Promise<ActionState> {
+  const user = await requireUser();
+  try {
+    await asUser(user.id, (db) => db.query("select api.delete_upload($1)", [assetId]));
+  } catch (err) {
+    return { ok: false, error: friendly(err) };
+  }
+  refresh();
+  return { ok: true };
+}

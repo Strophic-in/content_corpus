@@ -15,21 +15,24 @@ const CategoryInput = z.object({
   color: z.string().regex(/^#[0-9a-fA-F]{6}$/, "Pick a colour."),
   brief: z.string().trim().max(4000, "Keep the category prompt under 4,000 characters."),
   keywords: z.string().trim().max(500),
-  format_id: z.union([z.literal(""), z.string().uuid()]).transform((v) => v || null),
+  format_ids: z.array(z.string().uuid()).max(40),
   ideas_per_batch: z.coerce.number().int().min(1, "At least 1 idea.").max(30, "At most 30 ideas."),
   enabled: z.string().optional().transform((v) => v === "on"),
 });
 
+// The ticked formats come as repeated "format_ids" fields.
+const fields = (form: FormData) => ({ ...Object.fromEntries(form), format_ids: form.getAll("format_ids").map(String) });
+
 export async function createCategory(channelId: string, _: ActionState, form: FormData): Promise<ActionState> {
   const user = await requireUser();
-  const parsed = CategoryInput.safeParse(Object.fromEntries(form));
+  const parsed = CategoryInput.safeParse(fields(form));
   if (!parsed.success) return { ok: false, error: parsed.error.issues[0].message };
   const v = parsed.data;
   try {
     await asUser(user.id, (db) => db.query(
-      `insert into categories (user_id, channel_id, name, color, brief, keywords, format_id, ideas_per_batch, enabled)
-       values ($1, $2, $3, $4, $5, $6, $7, $8, true)`,
-      [user.id, channelId, v.name, v.color, v.brief, v.keywords, v.format_id, v.ideas_per_batch]));
+      `insert into categories (user_id, channel_id, name, color, brief, keywords, format_ids, ideas_per_batch, enabled)
+       values ($1, $2, $3, $4, $5, $6, $7::uuid[], $8, true)`,
+      [user.id, channelId, v.name, v.color, v.brief, v.keywords, v.format_ids, v.ideas_per_batch]));
   } catch (err) {
     return { ok: false, error: friendly(err) };
   }
@@ -39,15 +42,15 @@ export async function createCategory(channelId: string, _: ActionState, form: Fo
 
 export async function updateCategory(categoryId: string, _: ActionState, form: FormData): Promise<ActionState> {
   const user = await requireUser();
-  const parsed = CategoryInput.safeParse(Object.fromEntries(form));
+  const parsed = CategoryInput.safeParse(fields(form));
   if (!parsed.success) return { ok: false, error: parsed.error.issues[0].message };
   const v = parsed.data;
   try {
     await asUser(user.id, (db) => db.query(
-      `update categories set name = $2, color = $3, brief = $4, keywords = $5, format_id = $6,
+      `update categories set name = $2, color = $3, brief = $4, keywords = $5, format_ids = $6::uuid[],
                              ideas_per_batch = $7, enabled = $8
         where id = $1`,
-      [categoryId, v.name, v.color, v.brief, v.keywords, v.format_id, v.ideas_per_batch, v.enabled]));
+      [categoryId, v.name, v.color, v.brief, v.keywords, v.format_ids, v.ideas_per_batch, v.enabled]));
   } catch (err) {
     return { ok: false, error: friendly(err) };
   }

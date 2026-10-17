@@ -1,0 +1,32 @@
+{
+  "template_id": "kinetic_typography",
+  "display_name": "Kinetic Typography / Text-Only Motion",
+  "content_type": "video",
+  "supported_platforms": ["youtube_shorts", "instagram_reels"],
+  "aspect_ratio": "9:16",
+  "recommended_duration_seconds": [8, 30],
+  "required_assets": ["script", "typography_system", "background"],
+  "optional_assets": ["narration", "music"],
+  "scene_structure": ["hook_phrase", "progression", "emphasis", "closing_line"],
+  "caption_style": "kinetic",
+  "visual_style": "Words are the picture: they pop, scale and land in rhythm on a plain or softly moving background.",
+  "music_mood": ["energetic-hype", "uplifting", "cinematic"],
+  "music_source_mode": "licensed_asset",
+  "automation_level": "high",
+  "estimated_render_cost": "low",
+  "rights_requirements": ["Licensed or CC0 music only."],
+  "render_notes": ["Plain backgrounds are drawn on the server; no GPU unless a shot is generated."],
+  "platform_notes": ["Readable at a glance: one to three words on screen at a time."],
+  "format": "animated words and phrases as the main visual, building to an emphasis and a closing line",
+  "best_for": ["quotes", "short stories", "announcements", "jokes", "concise facts"],
+  "topics": ["quote", "motivation", "story", "humor", "facts"],
+  "goals": ["reach", "shares"],
+  "render": {
+    "captions": "kinetic",
+    "audio": "none",
+    "audios": ["none", "kokoro"],
+    "sources": ["plain", "stock", "generate", "image"],
+    "transition": "cut",
+    "transitions": ["cut", "fade", "flash"]
+  }
+}

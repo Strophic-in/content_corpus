@@ -10,3 +10,4 @@ soundfile>=0.12
 faster-whisper>=1.0
 fonttools>=4.50
 beautifulsoup4>=4.12
+Pillow>=10.4

@@ -21,9 +21,10 @@ export function proxy(request: NextRequest) {
 
 export const config = {
   matcher: [
-    // Everything except auth API, Next internals, static assets and the app manifest
-    // and icons (a phone fetches those without cookies when installing the app), and
-    // robots.txt.
-    "/((?!api/auth|_next/static|_next/image|favicon.ico|manifest.webmanifest|robots.txt|icons/|privacy|terms|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)",
+    // Everything except auth API, uploads (the proxy would buffer a whole video; the
+    // route checks the session itself), Next internals, static assets and the app
+    // manifest and icons (a phone fetches those without cookies when installing the
+    // app), and robots.txt.
+    "/((?!api/auth|api/upload|_next/static|_next/image|favicon.ico|manifest.webmanifest|robots.txt|icons/|privacy|terms|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)",
   ],
 };

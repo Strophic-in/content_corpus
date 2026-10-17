@@ -800,3 +800,82 @@ def test_the_web_reads_only_its_own_youtube_key_and_queues_ideas_from_videos(ali
     with pytest.raises(psycopg.errors.NoDataFound):                          # not bob's category
         with web(bob) as c:
             c.execute("select api.idea_from_video(%s, %s)", (cat, Jsonb({"id": "dQw4w9WgXcQ", "title": "x"})))
+
+
+# ── templates: formats, several per category, carousels, uploads (0021) ───────
+
+def test_a_formats_kind_follows_its_template_and_categories_use_several(alice, bob):
+    with web(alice) as c:
+        ch = _new_channel(c, alice, f"tpl-{uuid.uuid4().hex[:6]}")
+        explainer = _new_format(c, alice, "Explainer", channel=ch)
+        carousel = c.execute("""insert into formats (user_id, channel_id, name, idea_prompt, script_prompt, template_id,
+                                                     audio_source)
+                                values (%s, %s, 'Slides', 'i', 's', 'educational_carousel', 'kokoro')
+                                returning content_type, audio_source, id""", (alice, ch)).fetchone()
+        assert carousel[:2] == ("carousel", "none")                    # slides have no voice
+        with pytest.raises(psycopg.errors.InsufficientPrivilege), c.transaction():   # never the web's to set
+            c.execute("update formats set content_type = 'video' where id = %s", (carousel[2],))
+        cat = c.execute("insert into categories (user_id, channel_id, name, format_ids) values (%s, %s, 'Tech', %s) "
+                        "returning ideas_per_batch, format_ids", (alice, ch, [explainer, carousel[2], explainer])).fetchone()
+        assert cat[0] == 2 and sorted(cat[1]) == sorted([explainer, carousel[2]])   # 2 a batch; each once
+        other = _new_channel(c, alice, f"other-{uuid.uuid4().hex[:6]}")
+        theirs = _new_format(c, alice, "Elsewhere", channel=other)
+        with pytest.raises(psycopg.errors.InsufficientPrivilege), c.transaction():   # another channel's format
+            c.execute("update categories set format_ids = %s where channel_id = %s", ([theirs], ch))
+        c.execute("delete from formats where id = %s", (carousel[2],))
+        assert c.execute("select format_ids from categories where channel_id = %s and name = 'Tech'",
+                         (ch,)).fetchone()[0] == [explainer]
+
+
+def test_the_swipe_can_change_the_format_and_a_carousel_renders_as_slides(alice, owner):
+    with web_session(alice) as c:
+        ch = _new_channel(c, alice, f"swipe-{uuid.uuid4().hex[:6]}")
+        reel = _new_format(c, alice, "Reel", channel=ch)
+        card = c.execute("""insert into formats (user_id, channel_id, name, idea_prompt, script_prompt, template_id)
+                            values (%s, %s, 'Card', 'i', 's', 'picture_above_text_below') returning id""",
+                         (alice, ch)).fetchone()[0]
+    idea = owner.execute("""insert into ideas (user_id, channel_id, format_id, title, brief)
+                            values (%s, %s, %s, 'Solar boom', 'b') returning id""", (alice, ch, reel)).fetchone()[0]
+    with web_session(alice) as c:
+        i = c.execute("select post_id, format_id from api.decide_idea_v2(%s, true, now() + interval '1 day', "
+                      "null, null, false, null, %s)", (idea, card)).fetchone()
+        assert i[1] == card
+        assert c.execute("select format, audio_source from posts where id = %s", (i[0],)).fetchone() == ("image", "none")
+    sid = owner.execute("""insert into scripts (post_id, version, state, title, shot_plan, slides)
+                           values (%s, 1, 'approved', 't', '[]', %s) returning id""",
+                        (i[0], Jsonb([{"heading": "h", "body": "", "visual": {"source": "none"}}]))).fetchone()[0]
+    owner.execute("update posts set status = 'approved', approved_script_id = %s where id = %s", (sid, i[0]))
+    with web_session(alice) as c:
+        j = c.execute("select lane, kind from api.request_render(%s)", (i[0],)).fetchone()
+        assert j == ("cpu", "render_slides")
+    owner.execute("delete from jobs where post_id = %s", (i[0],))
+    other = owner.execute("""insert into ideas (user_id, channel_id, title, brief) values (%s, %s, 'x', 'b')
+                             returning id""", (alice, ch)).fetchone()[0]
+    with pytest.raises(psycopg.errors.InvalidParameterValue):         # only this channel's formats
+        with web(alice) as c:
+            c.execute("select api.decide_idea_v2(%s, true, now() + interval '1 day', null, null, false, null, %s)",
+                      (other, uuid.uuid4()))
+
+
+def test_uploads_reserve_storage_and_queue_their_check(alice, bob, owner):
+    with web_session(alice) as c:
+        pid = _new_post(c, alice)
+        a = c.execute("select id, state, rights, license, origin, fetch_from->>'upload_key' "
+                      "from api.start_upload(%s, 'video', 1000000, 'mov', 'interview.mov')", (pid,)).fetchone()
+        assert a[1:5] == ("uploading", "approved", "owned", "upload") and a[5].endswith(f"/uploads/{a[0]}.mov")
+        assert owner.execute("select state, bytes, kind from storage_objects where key = %s",
+                             (a[5],)).fetchone() == ("reserved", 1000000, "asset")
+        for bad in (("video", 10, "exe"), ("video", 400_000_000, "mp4"), ("image", 10, "mp4")):
+            with pytest.raises(psycopg.errors.InvalidParameterValue):
+                c.execute("select api.start_upload(%s, %s, %s, %s)", (pid, *bad))
+        j = c.execute("select lane, kind from api.finish_upload(%s)", (a[0],)).fetchone()
+        assert j == ("ideas", "fetch_asset")
+        with pytest.raises(psycopg.errors.NoDataFound):                  # only once
+            c.execute("select api.finish_upload(%s)", (a[0],))
+    with pytest.raises(psycopg.errors.NoDataFound):                      # bob can't touch it
+        with web(bob) as c:
+            c.execute("select api.delete_upload(%s)", (a[0],))
+    with web_session(alice) as c:
+        c.execute("select api.delete_upload(%s)", (a[0],))
+        assert c.execute("select count(*) from assets where id = %s", (a[0],)).fetchone()[0] == 0
+    owner.execute("delete from jobs where post_id = %s", (pid,))

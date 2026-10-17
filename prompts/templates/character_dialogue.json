@@ -1,0 +1,33 @@
+{
+  "template_id": "character_dialogue",
+  "display_name": "Characters Speak",
+  "content_type": "video",
+  "supported_platforms": ["youtube_shorts", "instagram_reels"],
+  "aspect_ratio": "9:16",
+  "recommended_duration_seconds": [10, 30],
+  "required_assets": ["script", "visual_clips", "dialogue"],
+  "optional_assets": ["music"],
+  "scene_structure": ["setup", "exchange", "punchline"],
+  "caption_style": "animated_keywords",
+  "visual_style": "Generated scenes where the characters speak on screen, picture and sound rendered together.",
+  "music_mood": ["playful", "uplifting"],
+  "music_source_mode": "none",
+  "automation_level": "high",
+  "estimated_render_cost": "high",
+  "rights_requirements": ["Generated characters only; no real person's likeness."],
+  "render_notes": ["Every shot is rendered on the GPU with its own voices."],
+  "platform_notes": [],
+  "format": "a short generated scene where characters speak their lines on screen",
+  "best_for": ["sketches", "jokes", "dialogue scenes", "stories"],
+  "topics": ["humor", "story", "fiction"],
+  "goals": ["reach", "shares", "comments"],
+  "base_prompt": "script_reel.md",
+  "render": {
+    "captions": "karaoke",
+    "audio": "ltx_native",
+    "audios": ["ltx_native"],
+    "sources": ["generate"],
+    "transition": "cut",
+    "transitions": ["cut"]
+  }
+}

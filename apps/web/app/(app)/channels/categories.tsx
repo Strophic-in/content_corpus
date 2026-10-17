@@ -13,7 +13,7 @@ export type SourceRow = {
   last_items: number | null; last_error: string | null;
 };
 export type CategoryData = {
-  id: string; name: string; color: string; brief: string; keywords: string; format_id: string | null;
+  id: string; name: string; color: string; brief: string; keywords: string; format_ids: string[];
   ideas_per_batch: number; enabled: boolean; sources: SourceRow[]; checking: boolean;
   suggestion: { state: string; result: { communities?: { name: string; exists: boolean; why: string }[];
                                          lemmy?: { name: string; exists: boolean; why: string }[];
@@ -33,7 +33,8 @@ const KINDS: { kind: SourceKind; label: string; placeholder: string; note?: stri
   { kind: "hackernews", label: "Hacker News", placeholder: "front page, or search terms" },
   { kind: "youtube", label: "YouTube trending", placeholder: "IN",
     note: "The country's most-popular videos (thumbnails only). Needs a YouTube API key in Settings." },
-  { kind: "site", label: "News site", placeholder: "reuters.com" },
+  { kind: "site", label: "Website", placeholder: "reuters.com or yoursite.com",
+    note: "Any site: its RSS feeds when it has them, otherwise the headlines on its homepage." },
   { kind: "rss", label: "RSS feed", placeholder: "https://example.com/feed.xml" },
   { kind: "search", label: "News search", placeholder: "monsoon floods Kerala" },
   { kind: "google_trends", label: "Google Trends", placeholder: "IN" },
@@ -68,19 +69,33 @@ function Note({ state }: { state: ActionState }) {
     : state.message ? <p role="status" className="text-sm text-ok">{state.message}</p> : null;
 }
 
-function CategoryFields({ c, formats }: { c?: CategoryData; formats: { id: string; name: string }[] }) {
+export type FormatOption = { id: string; name: string; kind: string };
+
+function CategoryFields({ c, formats }: { c?: CategoryData; formats: FormatOption[] }) {
   const [color, setColor] = useState(c?.color ?? COLORS[6]);
+  const [ticked, setTicked] = useState<string[]>(c?.format_ids ?? []);
   return (
     <div className="grid gap-3 sm:grid-cols-2">
-      <label className="flex flex-col gap-1 text-sm">Name
+      <label className="flex flex-col gap-1 text-sm sm:col-span-2">Name
         <input name="name" required maxLength={60} defaultValue={c?.name} placeholder="Crime & courts" className={input} />
       </label>
-      <label className="flex flex-col gap-1 text-sm">Format (how its videos are made)
-        <select name="format_id" defaultValue={c?.format_id ?? ""} className={input}>
-          <option value="">The channel&apos;s default</option>
-          {formats.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
-        </select>
-      </label>
+      <fieldset className="flex flex-col gap-2 text-sm sm:col-span-2">
+        <legend className="mb-1">Formats its ideas may use <span className="text-muted">— the agent picks one per idea; you
+          can change it when you swipe</span></legend>
+        <div className="flex flex-wrap gap-2">
+          {formats.map((f) => (
+            <label key={f.id} className={`flex cursor-pointer items-center gap-2 rounded-full border px-3 py-1.5 ${ticked.includes(f.id)
+              ? "border-accent text-foreground" : "border-border text-muted"}`}>
+              <input type="checkbox" name="format_ids" value={f.id} checked={ticked.includes(f.id)}
+                     onChange={() => setTicked((t) => t.includes(f.id) ? t.filter((x) => x !== f.id) : [...t, f.id])}
+                     className="size-3.5 accent-accent" />
+              {f.name} <span className="text-xs text-muted">{f.kind}</span>
+            </label>
+          ))}
+        </div>
+        <span className="text-xs text-muted">{ticked.length ? `${ticked.length} ticked.` : "None ticked: any of the channel's formats."}
+          {" "}Make more in Formats.</span>
+      </fieldset>
       <label className="flex flex-col gap-1 text-sm sm:col-span-2">
         <span>Category prompt <span className="text-muted">— what the agent should look for, take and refuse</span></span>
         <textarea name="brief" rows={6} maxLength={4000} defaultValue={c?.brief}
@@ -93,7 +108,7 @@ function CategoryFields({ c, formats }: { c?: CategoryData; formats: { id: strin
         <input name="keywords" maxLength={500} defaultValue={c?.keywords} placeholder="court, arrest, police" className={input} />
       </label>
       <label className="flex flex-col gap-1 text-sm">Ideas per batch
-        <input name="ideas_per_batch" type="number" min={1} max={30} defaultValue={c?.ideas_per_batch ?? 6} className={input} />
+        <input name="ideas_per_batch" type="number" min={1} max={30} defaultValue={c?.ideas_per_batch ?? 2} className={input} />
       </label>
       <div className="flex flex-col gap-1 text-sm">Colour
         <input type="hidden" name="color" value={color} />
@@ -215,7 +230,7 @@ function Sources({ c }: { c: CategoryData }) {
   );
 }
 
-function CategoryCard({ c, formats }: { c: CategoryData; formats: { id: string; name: string }[] }) {
+function CategoryCard({ c, formats }: { c: CategoryData; formats: FormatOption[] }) {
   const [state, action, saving] = useActionState<ActionState, FormData>(updateCategory.bind(null, c.id), null);
   const [delState, setDel] = useState<ActionState>(null);
   const [deleting, start] = useTransition();
@@ -253,7 +268,7 @@ function CategoryCard({ c, formats }: { c: CategoryData; formats: { id: string; 
 }
 
 export function CategoriesSection({ channelId, categories, formats }: {
-  channelId: string; categories: CategoryData[]; formats: { id: string; name: string }[];
+  channelId: string; categories: CategoryData[]; formats: FormatOption[];
 }) {
   const [state, action, adding] = useActionState<ActionState, FormData>(createCategory.bind(null, channelId), null);
   return (

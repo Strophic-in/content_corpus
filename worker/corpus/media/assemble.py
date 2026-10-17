@@ -16,6 +16,7 @@ wraps onto a second line, measured with the bundled caption font.
 
 from __future__ import annotations
 
+import dataclasses
 import difflib
 import functools
 import json
@@ -171,6 +172,32 @@ def _line_px(grp: Words, style: CaptionStyle) -> float:
 
 def captions_ass(words: Words, breaks_after: set[int], style: CaptionStyle) -> str:
     """ASS file text. `breaks_after`: word indexes that end a sentence or a shot."""
+    events = "\n".join(caption_events(words, breaks_after, style))
+    return f"""[Script Info]
+ScriptType: v4.00+
+PlayResX: 1080
+PlayResY: 1920
+WrapStyle: 0
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+{caption_style_line(style)}
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+{events}
+"""
+
+
+def caption_style_line(style: CaptionStyle) -> str:
+    primary = _ass_color(style.primary_color)
+    margin_v = int(1920 * (1 - style.position_y))
+    return (f"Style: Cap,{style.font_family},{_ass_font_size(style):.0f},{primary},{primary},&H00000000,&H64000000,"
+            f"-1,0,0,0,100,100,0,0,1,{style.outline_px},{style.shadow_px},2,60,60,{margin_v},1")
+
+
+def caption_events(words: Words, breaks_after: set[int], style: CaptionStyle) -> list[str]:
+    """The word groups as ASS events (style "Cap"), the active word enlarged and accented."""
     bs = chr(92)  # a literal backslash for ASS override tags
     primary, accent = _ass_color(style.primary_color), _ass_color(style.accent_color)
     scale = int(round(style.active_scale * 100))
@@ -203,22 +230,7 @@ def captions_ass(words: Words, breaks_after: set[int], style: CaptionStyle) -> s
             states.append([st, stop, text])
     for a, b in zip(states, states[1:]):
         a[1] = min(a[1], b[0])
-    events = "\n".join(f"Dialogue: 0,{_ts(st)},{_ts(sp)},Cap,,0,0,0,,{tx}" for st, sp, tx in states if sp > st)
-    margin_v = int(1920 * (1 - style.position_y))
-    return f"""[Script Info]
-ScriptType: v4.00+
-PlayResX: 1080
-PlayResY: 1920
-WrapStyle: 0
-
-[V4+ Styles]
-Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Cap,{style.font_family},{_ass_font_size(style):.0f},{primary},{primary},&H00000000,&H64000000,-1,0,0,0,100,100,0,0,1,{style.outline_px},{style.shadow_px},2,60,60,{margin_v},1
-
-[Events]
-Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
-{events}
-"""
+    return [f"Dialogue: 0,{_ts(st)},{_ts(sp)},Cap,,0,0,0,,{tx}" for st, sp, tx in states if sp > st]
 
 
 def _spoken_words(line: str) -> list[str]:
@@ -238,7 +250,7 @@ FPS = 24
 RATE = 48000
 BREAK_AFTER = (".", "!", "?", "—", "–")   # a caption group never runs past these
 # Bump when a segment's content changes, so cached segments are not reused.
-SEGMENT_VERSION = 3
+SEGMENT_VERSION = 4
 
 
 def narration_words(wav: Path, line: str,
@@ -282,31 +294,88 @@ def _frames(p: Path) -> int:
     return int(r.stdout.strip())
 
 
+def _hex(c: str) -> str:
+    return "0x" + c.lstrip("#")
+
+
 def build_segment(clip: Path, out_video: Path, out_audio: Path, *, narration: Path | None = None,
                   words: Words | None = None, style: CaptionStyle = CaptionStyle(),
-                  label: str | None = None) -> dict:
+                  label: str | None = None, look=None, extras: dict | None = None,
+                  panel: Path | None = None, panel_credit: str | None = None) -> dict:
     """One rendered shot → its finished piece of the reel.
 
     `words` are timed from the start of the shot. With `narration` the shot's own
     sound is ducked under the voice, which starts LEAD_IN into the shot. `label`
     ("AI reconstruction", an animated picture's credit) is drawn at the top, as
-    footage credits are."""
+    footage credits are.
+
+    `look` (templates.Look) and `extras` (the shot's on-screen fields) add what the
+    format's template draws: its captions mode (word groups, text beats, kinetic
+    words or none), a headline, a chip or rank number, and a split screen — the
+    picture's middle in the top half, the format's panel colour or `panel` (a
+    second picture) in the bottom half."""
+    from . import overlays
+
+    ex = extras or {}
+    split = look is not None and (ex.get("layout") or look.layout) == "split"
+    if split:       # the panel holds a headline at its top: captions go lower, clear of the app's own buttons
+        style = dataclasses.replace(style, position_y=max(style.position_y, 0.79))
+    seconds = probe_duration(clip)
     with tempfile.TemporaryDirectory() as tmp:
         work = Path(tmp)
-        vf = "scale=1080:-2:flags=lanczos,crop=1080:1920,setsar=1,fps=24,format=yuv420p"
-        if words or label:
+        inputs = ["-i", str(clip.resolve())]
+        chain: list[str] = []               # filters, each from the last link to a new one
+
+        def add(f: str) -> None:
+            chain.append(f"[v{len(chain)}]{f}[v{len(chain) + 1}]")
+
+        if split:
+            first = ("[0:v]scale=1080:960:force_original_aspect_ratio=increase:flags=lanczos,crop=1080:960,setsar=1,"
+                     f"fps=24,pad=1080:1920:0:0:color={_hex(look.panel_color)}[v0]")
+            if panel is not None:
+                inputs += ["-loop", "1", "-framerate", "24", "-i", str(panel.resolve())]
+                first += (";[1:v]scale=1080:960:force_original_aspect_ratio=increase:flags=lanczos,crop=1080:960,"
+                          "setsar=1[pan]")
+                add("[pan]overlay=0:960:shortest=1")
+        else:
+            first = "[0:v]scale=1080:-2:flags=lanczos,crop=1080:1920,setsar=1,fps=24[v0]"
+        mode = look.captions if look is not None else "karaoke"
+        events: list[str] = []
+        clean: Words = []
+        breaks: set[int] = set()
+        if words and mode in ("karaoke", "speech"):
+            breaks = {i for i, (_, _, w) in enumerate(words) if w.rstrip('"”').endswith(BREAK_AFTER)}
+            clean = [(st, en, (w.upper() if style.uppercase else w).strip(",.!?;:—–\"“”")) for st, en, w in words]
+            events += caption_events(clean, breaks, style)
+        if look is not None:
+            text = (ex.get("text") or "").strip()
+            if mode == "beats":
+                events += overlays.beat(text, look, seconds, split)
+            elif mode == "kinetic":
+                events += overlays.kinetic(list(words or []) or overlays.even_words(text, seconds), look, seconds,
+                                           split)
+            if look.text == "headline" and mode != "beats" and not (mode == "kinetic" and not words):
+                events += overlays.headline(text, look, seconds, split, ex.get("label") or "")
+            events += overlays.label(ex.get("label") or "", look, seconds)
+        if events or label or panel_credit:
             # A relative fontsdir: ffmpeg's filter syntax mangles Windows drive paths.
             shutil.copytree(FONTS_DIR, work / "fonts")
         if label:
             (work / "label.txt").write_text(label.strip()[:120], encoding="utf-8")
-            vf += (",drawtext=fontfile=fonts/Montserrat-Bold.ttf:textfile=label.txt:expansion=none:fontsize=34:"
-                   "fontcolor=white:box=1:boxcolor=black@0.5:boxborderw=14:x=40:y=110")
-        if words:
-            breaks = {i for i, (_, _, w) in enumerate(words) if w.rstrip('"”').endswith(BREAK_AFTER)}
-            clean = [(st, en, (w.upper() if style.uppercase else w).strip(",.!?;:—–\"“”")) for st, en, w in words]
-            (work / "captions.ass").write_text(captions_ass(clean, breaks, style), encoding="utf-8")
-            vf += ",ass=captions.ass:fontsdir=fonts"
-        _run(["ffmpeg", "-y", "-v", "error", "-i", str(clip.resolve()), "-vf", vf, "-an",
+            add("drawtext=fontfile=fonts/Montserrat-Bold.ttf:textfile=label.txt:expansion=none:fontsize=34:"
+                "fontcolor=white:box=1:boxcolor=black@0.5:boxborderw=14:x=40:y=110")
+        if split and panel is not None and panel_credit:
+            (work / "panel.txt").write_text(panel_credit.strip()[:120], encoding="utf-8")
+            add("drawtext=fontfile=fonts/Montserrat-Bold.ttf:textfile=panel.txt:expansion=none:fontsize=30:"
+                "fontcolor=white:box=1:boxcolor=black@0.5:boxborderw=12:x=40:y=990")
+        if events:
+            doc = (overlays.document(look, caption_style_line(style), events) if look is not None
+                   else captions_ass(clean, breaks, style))
+            (work / "captions.ass").write_text(doc, encoding="utf-8")
+            add("ass=captions.ass:fontsdir=fonts")
+        add("format=yuv420p")
+        graph = ";".join([first, *chain])
+        _run(["ffmpeg", "-y", "-v", "error", *inputs, "-filter_complex", graph, "-map", f"[v{len(chain)}]", "-an",
               "-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p",
               str(out_video.resolve())], cwd=work)
     frames = _frames(out_video)
@@ -366,8 +435,45 @@ def _check_reel(out: Path, frames: int) -> float:
 DUCK = "threshold=0.03:ratio=4:attack=20:release=500"
 
 
+# A shot's transition in: the ffmpeg xfade it becomes, and how many frames the two
+# shots overlap (picture and sound alike). A cut is a one-frame blend.
+XFADE = {"cut": ("fade", 1), "fade": ("fadeblack", 10), "crossfade": ("fade", 8), "whip": ("smoothleft", 7),
+         "wipe": ("wipeleft", 10), "zoom": ("zoomin", 9), "flash": ("fadewhite", 8)}
+LOOP_FRAMES = 12            # a loop's last half-second blends into its first frame
+
+
+def _bed(total: float, music_gain: float, fades: bool) -> str:
+    fade = (f",afade=t=in:d=1.5,afade=t=out:st={max(0.0, total - 2):.3f}:d=2" if fades else "")
+    return (f"[1:a]aformat=sample_fmts=fltp:sample_rates={RATE}:channel_layouts=stereo,atrim=duration={total:.3f},"
+            f"volume={music_gain}{fade}[m0];"
+            f"[0:a]aformat=sample_fmts=fltp:sample_rates={RATE}:channel_layouts=stereo,asplit=2[v][key];"
+            f"[m0][key]sidechaincompress={DUCK}[m];"
+            f"[v][m]amix=inputs=2:normalize=0:duration=first,{SOUND_FILTERS}[out]")
+
+
+def _sound(source: list[str], out: Path, total: float, music: Path | None, music_gain: float,
+           fades: bool = True) -> None:
+    """The joined sound (`source`: ffmpeg input args) → normalised AAC, music mixed in."""
+    if music is None:
+        _run(["ffmpeg", "-y", "-v", "error", *source, "-af", SOUND_FILTERS, *SOUND_CODEC, str(out)])
+    else:
+        _run(["ffmpeg", "-y", "-v", "error", *source, "-stream_loop", "-1", "-i", str(music),
+              "-filter_complex", _bed(total, music_gain, fades), "-map", "[out]", *SOUND_CODEC, str(out)])
+
+
+def overlaps(transitions: list[str] | None, frames: list[int]) -> list[tuple[str, int]]:
+    """(xfade name, overlap frames) for each boundary; never more than a third of either shot."""
+    out = []
+    for k in range(1, len(frames)):
+        t = (transitions[k] if transitions and k < len(transitions) else "") or "cut"
+        name, n = XFADE.get(t, XFADE["cut"])
+        out.append((name, max(1, min(n, frames[k - 1] // 3, frames[k] // 3))))
+    return out
+
+
 def join_segments(segments: list[tuple[Path, Path]], out: Path, log: Callable[[str], None] = print,
-                  music: Path | None = None, music_gain: float = 0.30) -> dict:
+                  music: Path | None = None, music_gain: float = 0.30, transitions: list[str] | None = None,
+                  loop: bool = False) -> dict:
     """Finished segments -> the reel, checked before it is returned.
 
     `music`: a track laid under the whole reel (looped if short, faded in and out)
@@ -379,26 +485,19 @@ def join_segments(segments: list[tuple[Path, Path]], out: Path, log: Callable[[s
     stereo explicitly, normalised once and encoded to AAC. The pictures are copied
     as they are. If that fast join fails or comes out wrong, the pictures are
     re-encoded instead: slower, but a render is never lost to the final step.
+
+    `transitions` (one per segment, how it begins; the first is ignored) other than
+    cuts, or `loop`, blend shots into each other (_join_blended).
     """
+    if loop or any(t not in (None, "", "cut") for t in (transitions or [])[1:]):
+        return _join_blended(segments, out, log, music, music_gain, transitions, loop)
     frames = sum(_frames(v) for v, _ in segments)
     with tempfile.TemporaryDirectory() as tmp:
         work = Path(tmp)
         pictures = _listing(work / "pictures.txt", [v for v, _ in segments])
         sounds = _listing(work / "sounds.txt", [a for _, a in segments])
         sound = work / "sound.m4a"
-        if music is None:
-            _run(["ffmpeg", "-y", "-v", "error", "-f", "concat", "-safe", "0", "-i", str(sounds),
-                  "-af", SOUND_FILTERS, *SOUND_CODEC, str(sound)])
-        else:
-            total = frames / FPS
-            bed = (f"[1:a]aformat=sample_fmts=fltp:sample_rates={RATE}:channel_layouts=stereo,atrim=duration={total:.3f},"
-                   f"volume={music_gain},afade=t=in:d=1.5,afade=t=out:st={max(0.0, total - 2):.3f}:d=2[m0];"
-                   f"[0:a]aformat=sample_fmts=fltp:sample_rates={RATE}:channel_layouts=stereo,asplit=2[v][key];"
-                   f"[m0][key]sidechaincompress={DUCK}[m];"
-                   f"[v][m]amix=inputs=2:normalize=0:duration=first,{SOUND_FILTERS}[out]")
-            _run(["ffmpeg", "-y", "-v", "error", "-f", "concat", "-safe", "0", "-i", str(sounds),
-                  "-stream_loop", "-1", "-i", str(music), "-filter_complex", bed, "-map", "[out]",
-                  *SOUND_CODEC, str(sound)])
+        _sound(["-f", "concat", "-safe", "0", "-i", str(sounds)], sound, frames / FPS, music, music_gain)
         try:
             _run(["ffmpeg", "-y", "-v", "error", "-f", "concat", "-safe", "0", "-i", str(pictures),
                   "-i", str(sound), "-map", "0:v", "-map", "1:a", "-c", "copy", "-movflags", "+faststart",
@@ -411,6 +510,62 @@ def join_segments(segments: list[tuple[Path, Path]], out: Path, log: Callable[[s
                   "-crf", "18", "-pix_fmt", "yuv420p", "-c:a", "copy", "-movflags", "+faststart", str(out)])
             seconds, how = _check_reel(out, frames), "re-encode"
     return {"seconds": round(seconds, 2), "shots": len(segments), "join": how, "music": music is not None}
+
+
+def _join_blended(segments: list[tuple[Path, Path]], out: Path, log: Callable[[str], None], music: Path | None,
+                  music_gain: float, transitions: list[str] | None, loop: bool) -> dict:
+    """Shots blended into each other (ffmpeg xfade), the sound crossfaded over exactly
+    the same frames (acrossfade by sample count), so captions stay on their words.
+    A loop's last LOOP_FRAMES blend into the first frame, and its sound into the
+    first half-second, so the replay has no seam; its music runs without fades.
+    Every blend overlaps — the reel is shorter than the shots by the overlaps."""
+    frames = [_frames(v) for v, _ in segments]
+    joins = overlaps(transitions, frames)
+    per = RATE // FPS                                  # samples per frame
+    with tempfile.TemporaryDirectory() as tmp:
+        work = Path(tmp)
+        inputs, vgraph, agraph = [], [], []
+        for v, a in segments:
+            inputs += ["-i", str(v)]
+        n = len(segments)
+        for _, a in segments:
+            inputs += ["-i", str(a)]
+        # One frame rate, time base and pixel format for every input: xfade insists.
+        norm = "fps=24,settb=1/24,format=yuv420p,setsar=1"
+        vgraph += [f"[{k}:v]{norm}[s{k}]" for k in range(n)]
+        vlast, alast, length = "s0", f"{n}:a", frames[0]
+        for k, (name, ov) in enumerate(joins, 1):
+            vgraph.append(f"[{vlast}][s{k}]xfade=transition={name}:duration={ov / FPS:.6f}:"
+                          f"offset={(length - ov) / FPS:.6f}[x{k}]")
+            agraph.append(f"[{alast}][{n + k}:a]acrossfade=ns={ov * per}:c1=tri:c2=tri[y{k}]")
+            vlast, alast, length = f"x{k}", f"y{k}", length + frames[k] - ov
+        if loop:
+            first = work / "first.png"
+            _run(["ffmpeg", "-y", "-v", "error", "-i", str(segments[0][0]), "-frames:v", "1", str(first)])
+            lf = max(1, min(LOOP_FRAMES, length // 4))
+            inputs += ["-loop", "1", "-framerate", str(FPS), "-t", f"{lf / FPS:.6f}", "-i", str(first),
+                       "-i", str(segments[0][1])]
+            still, head = 2 * n, 2 * n + 1
+            vgraph.append(f"[{still}:v]{norm}[still];[{vlast}][still]xfade=transition=fade:"
+                          f"duration={lf / FPS:.6f}:offset={(length - lf) / FPS:.6f}[xl]")
+            agraph.append(f"[{head}:a]atrim=end_sample={lf * per}[head];"
+                          f"[{alast}][head]acrossfade=ns={lf * per}:c1=tri:c2=tri[yl]")
+            vlast, alast = "xl", "yl"
+        joined = work / "joined.wav"
+        _run(["ffmpeg", "-y", "-v", "error", *inputs, "-filter_complex", ";".join(agraph), "-map", f"[{alast}]",
+              "-c:a", "pcm_s16le", "-ar", str(RATE), str(joined)])
+        sound = work / "sound.m4a"
+        _sound(["-i", str(joined)], sound, length / FPS, music, music_gain, fades=not loop)
+        picture = work / "picture.mp4"
+        _run(["ffmpeg", "-y", "-v", "error", *inputs, "-filter_complex", ";".join(vgraph), "-map", f"[{vlast}]",
+              "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p", "-r", str(FPS),
+              str(picture)])
+        _run(["ffmpeg", "-y", "-v", "error", "-i", str(picture), "-i", str(sound), "-map", "0:v", "-map", "1:a",
+              "-c", "copy", "-movflags", "+faststart", str(out)])
+        seconds = _check_reel(out, length)
+    log(f"blended {len(joins)} transition(s){' and a loop seam' if loop else ''}")
+    return {"seconds": round(seconds, 2), "shots": len(segments), "join": "blend", "music": music is not None,
+            "transitions": [name for name, _ in joins], "loop": loop}
 
 
 def shifted(words: Words, by: float) -> Words:

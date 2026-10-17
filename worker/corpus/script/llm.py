@@ -36,9 +36,15 @@ def spoken_seconds(words: int, speed: float = 1.1) -> float:
     return words / (NARRATOR_WORDS_PER_SECOND * speed)
 
 
-SOURCES = ("generate", "clip", "image", "stock", "chart")
+SOURCES = ("generate", "clip", "image", "stock", "chart", "plain")
 # Background music moods (music.MOODS); "" = no music.
-MUSIC_MOODS = ("", "breaking-tension", "somber", "uplifting", "energetic-hype", "neutral-corporate", "playful")
+MUSIC_MOODS = ("", "breaking-tension", "somber", "uplifting", "energetic-hype", "neutral-corporate", "playful",
+               "cinematic", "curious")
+LAYOUTS = ("", "full", "split")
+TRANSITIONS = ("", "cut", "fade", "crossfade", "whip", "wipe", "zoom", "flash")
+CHART_KINDS = ("bar", "stat", "compare", "line")
+# How many labels (and values) each kind of chart takes.
+CHART_POINTS = {"bar": (2, 6), "stat": (1, 1), "compare": (2, 3), "line": (3, 12)}
 # A clip that plays with its own sound (someone speaking, the moment itself) may run
 # longer than a generated shot: nothing has to be rendered.
 MAX_CLIP_SECONDS = 20
@@ -46,10 +52,19 @@ MIN_CLIP_SECONDS = 1.5
 
 
 class Chart(BaseModel):
+    kind: str           # "bar" | "stat" (one big number) | "compare" (2-3 side by side) | "line"; "" if unused
     title: str
     labels: list[str]
     values: list[float]
     unit: str
+
+
+class Focus(BaseModel):
+    """A region of the frame to punch in on, as fractions (0 0 0 0 = the whole frame)."""
+    x: float
+    y: float
+    w: float
+    h: float
 
 
 class Shot(BaseModel):
@@ -68,15 +83,34 @@ class Shot(BaseModel):
     visual: str     # what we see, in order: subject, action, setting, camera, light
     audio: str      # sounds in the shot; on-screen dialogue in double quotes (native mode only)
     narration: str  # voice-over spoken over this shot (narrated mode); "" otherwise
+    # On screen, drawn by us (templates/): the shot's step in the template's structure,
+    # its headline or text beat, a chip ("Myth", "#3", "Before"), its layout and how it
+    # begins, a second picture for a split screen's bottom panel, a punch-in region,
+    # and whether a long clip window plays sped up.
+    role: str
+    text: str
+    label: str
+    layout: str         # "" (the template's) | "full" | "split"
+    transition: str     # "" (the template's) | cut | fade | crossfade | whip | wipe | zoom | flash
+    panel_asset: int
+    focus: Focus
+    timelapse: bool
 
 
-NO_CHART = {"title": "", "labels": [], "values": [], "unit": ""}
+NO_CHART = {"kind": "", "title": "", "labels": [], "values": [], "unit": ""}
+NO_FOCUS = {"x": 0.0, "y": 0.0, "w": 0.0, "h": 0.0}
+ON_SCREEN = {"role": "", "text": "", "label": "", "layout": "", "transition": "", "panel_asset": 0,
+             "focus": NO_FOCUS, "timelapse": False}
 GENERATED = {"source": "generate", "asset": 0, "start": 0.0, "end": 0.0, "keep_audio": False, "stock_query": "",
-             "chart": NO_CHART}
+             "chart": NO_CHART, **ON_SCREEN}
 
 
 def generated_shot(**fields) -> Shot:
-    """A generated shot: the footage fields at their "unused" values."""
+    """A generated shot: the footage and on-screen fields at their "unused" values
+    (a partial chart or focus is filled in the same way)."""
+    for k, empty in (("chart", NO_CHART), ("focus", NO_FOCUS)):
+        if isinstance(fields.get(k), dict):
+            fields[k] = {**empty, **fields[k]}
     return Shot(**{**GENERATED, **fields})
 
 
@@ -174,10 +208,14 @@ def _footage_problems(i: int, s: Shot, footage: Footage | None, narrated: bool) 
             "animate a listed picture, or set asset 0"]
     if src == "chart":
         c = s.chart
-        if not c.title.strip() or not 2 <= len(c.labels) <= 6 or len(c.labels) != len(c.values):
-            return [f"shot {i} is a chart: give it a title and 2-6 labels with one value each"]
-        if any(v < 0 for v in c.values):
+        lo, hi = CHART_POINTS.get(c.kind or "bar", (2, 6))
+        if not c.title.strip() or not lo <= len(c.labels) <= hi or len(c.labels) != len(c.values):
+            what = "one label and its value" if hi == 1 else f"{lo}-{hi} labels with one value each"
+            return [f"shot {i} is a {c.kind or 'bar'} chart: give it a title and {what}"]
+        if any(v < 0 for v in c.values) and c.kind != "line":
             return [f"shot {i}'s chart has a negative value; charts show amounts of 0 or more"]
+        return []
+    if src == "plain":
         return []
     if src == "stock":
         if footage is None or not footage.stock:
@@ -245,7 +283,7 @@ def shot_seconds(s: Shot, narrated: bool, speed: float = 1.1) -> float:
 
 
 def validate(out: ScriptOut, target_seconds: int, narrated: bool = False, speed: float = 1.1,
-             footage: Footage | None = None) -> list[str]:
+             footage: Footage | None = None, *, dialogue: bool = True, template=None, look=None) -> list[str]:
     """Problems that make a script unusable. Empty list = fine. Each problem is
     written as an instruction the model can act on when asked to repair the draft.
 
@@ -259,6 +297,11 @@ def validate(out: ScriptOut, target_seconds: int, narrated: bool = False, speed:
 
     footage: what this reel may show besides generated shots; a shot that names
     footage or stock the reel doesn't have is a problem.
+
+    dialogue: whether anyone may speak on screen (characters-speak formats); a
+    format without a voice carries effects and ambience only. template/look: the
+    format's template and resolved look — its structure and on-screen text are
+    checked too (script/structure.py).
     """
     problems = []
     if not out.shots:
@@ -283,6 +326,9 @@ def validate(out: ScriptOut, target_seconds: int, narrated: bool = False, speed:
                                 f"shorten it, or split it across two shots")
             if quoted:
                 problems.append(f"shot {i} audio contains dialogue; narrated shots carry sound effects only")
+        elif quoted and not dialogue:
+            problems.append(f"shot {i} audio contains dialogue; nobody speaks in this format — effects and "
+                            "ambience only")
         elif quoted and len(quoted.split()) > s.seconds * MAX_WORDS_PER_SECOND:
             problems.append(f"shot {i} has {len(quoted.split())} spoken words for {s.seconds}s; "
                             f"cut the dialogue or lengthen the shot")
@@ -293,4 +339,10 @@ def validate(out: ScriptOut, target_seconds: int, narrated: bool = False, speed:
     if out.shots and not 0.6 * target_seconds <= total <= 1.4 * target_seconds:
         problems.append(f"{what} {total}s against a {target_seconds}s target; "
                         f"{'add' if total < target_seconds else 'cut'} material to fit")
+    if template is not None and look is not None:
+        from . import structure
+
+        problems += structure.problems(out, template, look,
+                                       audio="kokoro" if narrated else "ltx_native" if dialogue else "none",
+                                       footage=footage)
     return problems

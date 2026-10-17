@@ -34,11 +34,12 @@ export async function requestIdeas(target: { categoryId: string } | { channelId:
  */
 export async function decideIdea(ideaId: string, accept: boolean, date: string | null, time: string | null,
                                  reason: string | null, platforms: string[] | null,
-                                 media: "none" | "original" | "ai" = "none",
+                                 media: "none" | "original" | "ai" = "none", formatId: string | null = null,
                                  ): Promise<ActionState & { postId?: string }> {
   const user = await requireUser();
   if (accept && !(date && /^\d{4}-\d{2}-\d{2}$/.test(date) && time && /^\d{2}:\d{2}(:\d{2})?$/.test(time)))
     return { ok: false, error: "Pick a date and time." };
+  if (formatId && !/^[0-9a-f-]{36}$/i.test(formatId)) return { ok: false, error: "Pick a format." };
   try {
     const postId = await asUser(user.id, async (db) => {
       const r = await db.query(
@@ -46,10 +47,10 @@ export async function decideIdea(ideaId: string, accept: boolean, date: string |
                    case when $2 then ($3::date + $4::time) at time zone
                      (select c.timezone from ideas i join channels c on c.id = i.channel_id where i.id = $1)
                    end,
-                   $5, $6::text[], false, $7::text)).post_id`,
+                   $5, $6::text[], false, $7::text, $8::uuid)).post_id`,
         [ideaId, accept, date, time, reason?.slice(0, 200) || null,
          platforms?.filter((p) => p === "youtube" || p === "instagram") ?? null,
-         accept && ["original", "ai"].includes(media) ? media : "none"],
+         accept && ["original", "ai"].includes(media) ? media : "none", accept ? formatId : null],
       );
       return r.rows[0]?.post_id as string | undefined;
     });

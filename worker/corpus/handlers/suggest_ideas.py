@@ -19,6 +19,12 @@ deleted, in Postgres and in the memory; accepted ones (posts) are kept.
 Payloads from before categories ({"format_id": …}) are mapped to that format's
 category.
 
+The category allows some of the channel's formats (all of them when it names
+none); the agent picks one per idea — by topic, by what the items carry, by cost
+and by how each format has done here — and says why. Formats that need the
+owner's own footage are the owner's to pick. The idea prompt is the first allowed
+format's (the channel's default when it is allowed).
+
 As idea_from_video (Explore YouTube → "Make an idea"), the payload carries one
 YouTube video: it is the only item, one idea is asked for (or none, if it doesn't
 suit the channel), the category's sources aren't read, and a category whose
@@ -31,7 +37,7 @@ import httpx
 import numpy as np
 from psycopg.types.json import Jsonb
 
-from .. import channels, costs, db, prompts, stats, vault
+from .. import channels, costs, db, prompts, stats, templates, vault
 from ..config import settings
 from ..ideas import feeds, memory, reddit, select, sources
 from ..ideas.agent import OpenAIIdeaWriter
@@ -78,13 +84,32 @@ def _category(c, payload: dict) -> dict | None:
     return None
 
 
-def _format(c, cat: dict) -> dict | None:
-    if cat.get("format_id"):
-        f = c.execute("select * from formats where id = %s", (cat["format_id"],)).fetchone()
-        if f:
-            return f
-    return c.execute("""select * from formats where channel_id = %s
-                         order by is_default desc, created_at limit 1""", (cat["channel_id"],)).fetchone()
+def _formats(c, cat: dict) -> list[dict]:
+    """The formats the agent may choose from, in the channel's order (its default
+    first): the category's, or all of the channel's; not those that need the
+    owner's own footage, unless nothing else is allowed."""
+    rows = c.execute("select * from formats where channel_id = %s order by is_default desc, created_at",
+                     (cat["channel_id"],)).fetchall()
+    allowed = set(cat.get("format_ids") or [])
+    pool = [f for f in rows if not allowed or f["id"] in allowed] or rows
+    pickable = [f for f in pool if templates.get(f["template_id"]).ai_pick]
+    return pickable or pool[:1]
+
+
+def formats_block(fmts: list[dict], performance: dict) -> str:
+    if len(fmts) == 1:
+        t = templates.get(fmts[0]["template_id"])
+        return (f"\n\n## Format\nEvery idea is made as \"{fmts[0]['name']}\" ({t.display_name}: {t.format}). "
+                "Set `format` to 1 and `format_why` to \"\".")
+    lines = [templates.describe_for_planner(n, f["name"], templates.get(f["template_id"]), performance.get(f["id"], ""))
+             for n, f in enumerate(fmts, 1)]
+    return ("\n\n## Formats you can make an idea in\n" + "\n".join(lines) + "\n\n"
+            "For each idea, `format` is the number of the format that suits it best. Judge by the topic (a list → a "
+            "countdown or a carousel; a few striking numbers → an infographic or a picture card; a common belief → "
+            "myth vs fact; a process → a timelapse; a story with an arc → documentary), by what its items carry (a "
+            "video or pictures to show → a format that uses footage; nothing to show → a generated or text format), "
+            "by what the format costs to make, and by how it has done on this channel. Vary formats across the "
+            "batch when the ideas allow. `format_why`: a few words on why that format.")
 
 
 def _record_outcomes(outcomes: list[sources.Outcome]) -> None:
@@ -136,9 +161,10 @@ def run(ctx: JobContext) -> dict:
             return {"skipped": "category deleted"}
         if not cat["enabled"] and not video:
             return {"skipped": "category is turned off"}
-        fmt = _format(c, cat)
-        if fmt is None:
+        fmts = _formats(c, cat)
+        if not fmts:
             return {"skipped": "channel has no format"}
+        fmt = fmts[0]                       # its idea prompt finds the ideas
         st = c.execute("select * from app_settings where user_id = %s", (cat["user_id"],)).fetchone() or {}
         prof = channels.profile(c, cat["user_id"], cat["channel_id"])
         rows = c.execute("""select id, kind, value, options from category_sources
@@ -154,6 +180,7 @@ def run(ctx: JobContext) -> dict:
                                    and created_at > now() - interval '30 days'
                                  order by decided_at desc limit 25""", (cat["channel_id"],)).fetchall()
         performance = stats.summary(c, cat["channel_id"])
+        per_format = stats.by_format(c, cat["channel_id"])
     model = st.get("script_model")
     if not model:
         raise Permanent("Choose a script model in Settings.", stage="config")
@@ -182,7 +209,7 @@ def run(ctx: JobContext) -> dict:
     template = fmt["idea_prompt"]
     if "{category_name}" not in template:
         template += CATEGORY_BLOCK
-    system = prompts.fill(template + performance + OUTPUT_NOTE, {
+    system = prompts.fill(template + performance + formats_block(fmts, per_format) + OUTPUT_NOTE, {
         **{k: prof.get(k) or "(not set)" for k in channels.PROFILE_KEYS},
         "format_name": fmt["name"], "format_description": fmt["description"] or "(none)",
         "category_name": cat["name"],
@@ -236,14 +263,15 @@ def run(ctx: JobContext) -> dict:
         for i in kept:
             its = [cands[n - 1] for n in dict.fromkeys(i["items"]) if 1 <= n <= len(cands)][:5]
             media = any(_has_media(it) for it in its)
+            chosen = fmts[i["format"] - 1] if 1 <= i.get("format", 0) <= len(fmts) else fmt
             rid = c.execute(
                 """insert into ideas (user_id, channel_id, format_id, category_id, title, hook, brief, why_now,
-                                      sources, items, media_state, batch_job_id)
-                   values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) returning id""",
-                (cat["user_id"], cat["channel_id"], fmt["id"], cat["id"], i["title"][:200], i["hook"], i["brief"],
+                                      sources, items, media_state, batch_job_id, format_why)
+                   values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) returning id""",
+                (cat["user_id"], cat["channel_id"], chosen["id"], cat["id"], i["title"][:200], i["hook"], i["brief"],
                  i["why_now"], Jsonb([{"url": it.url, "title": it.title} for it in its if it.url]),
                  Jsonb([_item_json(it) for it in its]), "pending" if media else "none",
-                 ctx.job.get("id"))).fetchone()["id"]
+                 ctx.job.get("id"), (i.get("format_why") or "")[:200] if len(fmts) > 1 else "")).fetchone()["id"]
             rows_out.append(rid)
             if media:
                 db.enqueue(c, user_id=cat["user_id"], lane="ideas", kind="attach_media",

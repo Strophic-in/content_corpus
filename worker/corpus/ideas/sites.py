@@ -16,6 +16,7 @@ Every request goes through net.get (public addresses only, size-capped).
 
 from __future__ import annotations
 
+import re
 import threading
 from html.parser import HTMLParser
 from urllib.parse import parse_qs, quote_plus, urljoin, urlparse
@@ -162,6 +163,46 @@ def discover(client: httpx.Client, domain: str) -> list[str]:
     with _cache_lock:
         _feed_cache[base] = found
     return found
+
+
+# Links that are site furniture, not stories.
+_NAV = re.compile(r"/(tags?|categor(y|ies)|authors?|topics?|about|contact|login|sign-?up|subscribe|privacy|terms|"
+                  r"search|page|account|newsletter|careers|advertise)([-/_]|$)", re.I)
+
+
+def homepage_headlines(client: httpx.Client, domain: str, limit: int = 30) -> list[feeds.Item]:
+    """A site without a feed: the stories its homepage links to — links on the same
+    site whose text reads like a headline (in a heading or an article first), in
+    page order. Raises when the page has none."""
+    from bs4 import BeautifulSoup
+
+    base = normalize_domain(domain)
+    html = _get_text(client, base) if base else None
+    if not html:
+        raise RuntimeError(f"{domain} did not answer")
+    host = (urlparse(base).hostname or "").removeprefix("www.")
+    soup = BeautifulSoup(html, "html.parser")
+    found, seen = [], set()
+    for i, a in enumerate(soup.find_all("a", href=True)):
+        text = " ".join(a.get_text(" ").split())
+        if not 25 <= len(text) <= 220 or len(text.split()) < 4 or a.find_parent(["nav", "footer"]) is not None:
+            continue
+        url = urljoin(base, a["href"]).split("#")[0]
+        u = urlparse(url)
+        h = (u.hostname or "").removeprefix("www.")
+        if u.scheme not in ("http", "https") or not (h == host or h.endswith("." + host)):
+            continue
+        if len(u.path.strip("/")) < 8 or _NAV.search(u.path) or url in seen:
+            continue
+        seen.add(url)
+        heading = a.find_parent(["h1", "h2", "h3", "h4"]) is not None or a.find(["h1", "h2", "h3", "h4"]) is not None
+        story = a.find_parent("article") is not None
+        found.append((-(2 * heading + story), i, text, url))
+    if not found:
+        raise RuntimeError(f"{domain} has no feed, and no headlines were found on its homepage")
+    found.sort()
+    return [feeds.Item(source=host, title=text, summary="", url=url, rank=r, media_hint="link")
+            for r, (_, _, text, url) in enumerate(found[:limit])]
 
 
 def read_feed(client: httpx.Client, name: str, url: str) -> list[feeds.Item]:

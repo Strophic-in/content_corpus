@@ -115,8 +115,8 @@ def _one(row: dict, client: httpx.Client, youtube_key: str | None = None) -> lis
         return sites.read_feed(client, opts.get("name") or sites.host_key(value) or value, value)[:PER_SOURCE]
     if kind == "site":
         urls = sites.discover(client, value)
-        if not urls:
-            raise RuntimeError(f"no feeds found for {value}")
+        if not urls:            # a site without a feed: the headlines on its homepage
+            return sites.homepage_headlines(client, value)[:PER_SOURCE]
         got: list[feeds.Item] = []
         for u in urls:
             try:

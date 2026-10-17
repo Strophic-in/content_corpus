@@ -5,7 +5,8 @@ import type { PoolClient } from "pg";
 import { cache } from "react";
 
 import { asUser } from "./db";
-import { defaultPrompts, type Source, type Template } from "./prompt-defaults";
+import { defaultPrompts, type Source } from "./prompt-defaults";
+import { templateDefaults, type ContentType } from "./templates";
 
 export type Channel = {
   id: string; name: string; niche: string; audience: string; voice: string; language: string;
@@ -15,9 +16,10 @@ export type Channel = {
 
 export type Format = {
   id: string; channel_id: string; name: string; description: string; is_default: boolean;
-  audio_source: "kokoro" | "ltx_native"; target_seconds: number; idea_prompt: string;
+  audio_source: "kokoro" | "ltx_native" | "none"; target_seconds: number; idea_prompt: string;
   script_prompt: string; visual_style: string; sources: Source[]; ideas_per_batch: number;
-  version: number; updated_at: Date;
+  version: number; updated_at: Date; template_id: string; content_type: ContentType;
+  params: Record<string, unknown>;
 };
 
 export type Account = {
@@ -32,24 +34,43 @@ export const CHANNEL_COLS = `id, name, niche, audience, voice, language, timezon
   to_char(default_publish_time, 'HH24:MI') as default_publish_time, ideas_daily,
   to_char(ideas_daily_at, 'HH24:MI') as ideas_daily_at, is_default`;
 export const FORMAT_COLS = `id, channel_id, name, description, is_default, audio_source, target_seconds,
-  idea_prompt, script_prompt, visual_style, sources, ideas_per_batch, version, updated_at`;
+  idea_prompt, script_prompt, visual_style, sources, ideas_per_batch, version, updated_at, template_id,
+  content_type, params`;
 export const ACCOUNT_COLS = `id, channel_id, platform, external_id, handle, display_name, avatar_url, status,
   token_expires_at, connected_at`;
 
-/** A new format from the shipped defaults (inside the caller's transaction).
- *  `ifMissing`: another request may have just created it — then return null. */
+// The names formats were made from before templates.
+const LEGACY: Record<string, string> = {
+  narrated: "cinematic_3d_explainer", dialogue: "character_dialogue", news: "mini_news_explainer",
+};
+
+/** A new format of a template, from its shipped prompts (inside the caller's
+ *  transaction). `ifMissing`: another request may have just created it — then null. */
 export async function insertFormat(db: PoolClient, userId: string, channelId: string, name: string,
-                                   template: Template, description = "", ifMissing = false): Promise<string> {
-  const d = defaultPrompts(template);
+                                   templateId: string, description = "", ifMissing = false): Promise<string> {
+  const id = LEGACY[templateId] ?? templateId;
+  const d = templateDefaults(id);
   const r = await db.query(
     `insert into formats (user_id, channel_id, name, description, audio_source, idea_prompt, script_prompt,
-                          visual_style, sources)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                          visual_style, sources, template_id, target_seconds)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
      ${ifMissing ? "on conflict (channel_id, name) do nothing" : ""} returning id`,
     [userId, channelId, name, description, d.audio_source, d.idea_prompt, d.script_prompt, d.visual_style,
-     JSON.stringify(d.sources)],
+     JSON.stringify(defaultPrompts("narrated").sources), id, d.target_seconds],
   );
   return r.rows[0]?.id as string;
+}
+
+/** What every new channel starts with: a narrated explainer (its default), a
+ *  carousel and a picture card. */
+export async function starterFormats(db: PoolClient, userId: string, channelId: string): Promise<void> {
+  const fid = await insertFormat(db, userId, channelId, "3D explainer", "cinematic_3d_explainer",
+    "Narrated 3D-animated explainers: one curiosity question answered in under a minute.", true);
+  if (fid) await db.query("select api.set_default_format($1)", [fid]);
+  await insertFormat(db, userId, channelId, "Carousel", "educational_carousel",
+    "Swipeable slides: a cover hook, one idea per slide, a summary.", true);
+  await insertFormat(db, userId, channelId, "Picture card", "picture_above_text_below",
+    "One picture on top, a bold headline and a few lines below.", true);
 }
 
 // Every account has a channel, and every channel a default format: the first
@@ -74,11 +95,7 @@ async function ensureBasics(db: PoolClient, userId: string) {
   const bare = await db.query(
     `select c.id from channels c where not exists (select 1 from formats f where f.channel_id = c.id)`,
   );
-  for (const row of bare.rows) {
-    const fid = await insertFormat(db, userId, row.id, "3D explainer", "narrated",
-      "Narrated 3D-animated explainers: one curiosity question answered in under a minute.", true);
-    if (fid) await db.query("select api.set_default_format($1)", [fid]);
-  }
+  for (const row of bare.rows) await starterFormats(db, userId, row.id);
 }
 
 /** The signed-in user's channels, the active one (cookie, else the default) and its formats. */

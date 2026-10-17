@@ -37,6 +37,8 @@ MOODS: dict[str, list[str]] = {
     "energetic-hype": ["upbeat synthwave loop", "upbeat music", "electronic beat loop"],
     "neutral-corporate": ["corporate background music", "soft synth background loop", "lofi", "background music"],
     "playful": ["happy ukulele", "upbeat acoustic", "cheerful music", "fun music loop", "happy background music"],
+    "cinematic": ["epic cinematic ambient", "orchestral ambient", "cinematic music", "cinematic background"],
+    "curious": ["mysterious ambient", "curious documentary music", "ambient pad soft", "mystery music"],
 }
 FALLBACK = "neutral-corporate"          # when a mood finds nothing usable
 

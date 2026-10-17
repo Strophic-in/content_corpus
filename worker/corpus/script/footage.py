@@ -17,6 +17,8 @@ from .llm import GENERATED, MAX_CLIP_SECONDS, NO_CHART, Footage, ScriptOut
 # How long write_script waits for footage still being fetched or analysed before
 # writing without it.
 WAIT_MINUTES = 30
+# What having no footage resets (the on-screen fields stay).
+FOOTAGE_FIELDS = ("source", "asset", "start", "end", "keep_audio", "stock_query")
 
 
 def load(c, post_id, stock: bool) -> tuple[Footage, list[dict]]:
@@ -77,11 +79,12 @@ def _describe(a: dict, label: str | None = None) -> str:
 def prompt_section(footage: Footage, narrated: bool) -> str:
     """Appended to the format's script prompt: the shot sources this reel has."""
     unused = ("Fields a source does not use take these values: asset 0, start 0, end 0, keep_audio false, "
-              "stock_query \"\", and a chart with an empty title, no labels, no values and unit \"\" (a "
-              "generated shot may set `asset` to animate a picture, below).")
-    chart = ("- \"chart\": a simple bar chart, for a story that turns on a few numbers — `chart` has a short "
-             "title, 2-6 labels and their values in the same order, and a unit (\"%\", \"crore\", \"deaths\", or "
-             "\"\"). Only numbers stated in the sources; never estimates.")
+              "stock_query \"\", and a chart with kind \"\", an empty title, no labels, no values and unit \"\" "
+              "(a generated shot may set `asset` to animate a picture, below).")
+    chart = ("- \"chart\": a chart, for a story that turns on a few numbers — `chart` has its `kind` (\"bar\": "
+             "2-6 labels; \"stat\": one big number; \"compare\": 2-3 side by side; \"line\": 3-12 points in time "
+             "order), a short title, the labels and their values in the same order, and a unit (\"%\", \"crore\", "
+             "\"deaths\", or \"\"). Only numbers stated in the sources; never estimates.")
     if not footage.any:
         return ("\n\n## Shot sources\nEach shot has a `source`:\n- \"generate\": the AI video model renders its "
                 f"`visual`.\n{chart}\n{unused}")
@@ -143,8 +146,21 @@ def normalize(out: ScriptOut, footage: Footage, music: bool = False) -> None:
     for s in out.shots:
         if s.source != "chart":
             s.chart = Chart(**NO_CHART)
+        if s.timelapse:
+            s.keep_audio = False            # a sped-up window plays without its sound
         if footage.any:
             continue
-        for k, v in GENERATED.items():
-            if k != "chart" and not (k == "source" and s.source == "chart"):
-                setattr(s, k, v)
+        for k in FOOTAGE_FIELDS:
+            if not (k == "source" and s.source in ("chart", "plain")):
+                setattr(s, k, GENERATED[k])
+
+
+def picture_section(footage: Footage) -> str:
+    """For carousels and cards: the post's pictures a slide may show (videos can't be)."""
+    pics = [a for a in footage.assets if a["kind"] == "image"]
+    if not pics:
+        return ("\n\n## Pictures\nThis post has no pictures of its own: slides use an AI picture (where the "
+                "template allows), a chart, or \"none\".")
+    return ("\n\n## Pictures you may use (`visual.source` \"asset\" with its number)\n"
+            "Real pictures are the strongest: use them where they fit. Each is credited on the slide "
+            "automatically; never mention credits in the text.\n" + "\n".join(_describe(a) for a in pics))

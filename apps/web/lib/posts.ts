@@ -5,7 +5,7 @@ import { asUser } from "./db";
 export type PostRow = {
   id: string;
   topic: string;
-  audio_source: "ltx_native" | "kokoro";
+  audio_source: "ltx_native" | "kokoro" | "none";
   brief: string | null;
   slot_date: string; // YYYY-MM-DD
   publish_time: string | null; // HH:MM in the post's timezone
@@ -21,6 +21,10 @@ export type PostRow = {
   research_state: "pending" | "ready" | "none" | null;
   music: { name: string; author: string; page: string; mood: string } | null;
   updated_at: Date;
+  // A carousel or picture post: its slides (Instagram), and its template.
+  format: "reel" | "longform" | "carousel" | "image";
+  slides: { key: string; w: number; h: number }[] | null;
+  template_id: string | null;
 };
 
 export type ScriptRow = {
@@ -34,8 +38,14 @@ export type ScriptRow = {
   intended_dialogue: string;
   shot_plan: { seconds: number; visual: string; audio: string; narration?: string;
                // Footage shots (absent on older scripts: those are all generated).
-               source?: "generate" | "clip" | "image" | "stock"; asset?: number; start?: number; end?: number;
-               keep_audio?: boolean; stock_query?: string }[];
+               source?: "generate" | "clip" | "image" | "stock" | "chart" | "plain"; asset?: number; start?: number;
+               end?: number; keep_audio?: boolean; stock_query?: string;
+               // On-screen fields (templates): absent on older scripts.
+               role?: string; text?: string; label?: string; layout?: string; transition?: string;
+               chart?: { kind?: string; title: string; labels: string[]; values: number[]; unit: string } }[];
+  slides: { role: string; heading: string; body: string;
+            visual: { source: string; asset: number; prompt: string;
+                      chart: { kind: string; title: string; labels: string[]; values: number[] } } }[] | null;
   style_prompt: string | null;
   model: string | null;
   review: { score: number; risks: string[]; notes: string } | null;
@@ -47,14 +57,14 @@ export type ScriptRow = {
 
 export type ShotRow = {
   id: string; idx: number; num_frames: number; fps: number; seed: string; state: string;
-  voiced: boolean; rendered: boolean; source: "generate" | "clip" | "image" | "stock";
+  voiced: boolean; rendered: boolean; source: "generate" | "clip" | "image" | "stock" | "chart" | "plain";
 };
 /** Footage a post may use: the accepted idea's own picture or video. */
 export type AssetRow = {
   id: string; n: number; kind: "video" | "image"; origin: string; credit: string;
-  rights: "needs_review" | "approved" | "rejected"; state: "pending" | "ready" | "failed";
+  rights: "needs_review" | "approved" | "rejected"; state: "uploading" | "pending" | "ready" | "failed";
   w: number | null; h: number | null; seconds: string | null; error: string | null; summary: string | null;
-  made_from: string | null; has_file: boolean;
+  made_from: string | null; has_file: boolean; file_name: string | null; license: string;
 };
 export type ResearchInfo = { articles?: { url: string; site: string; title: string; from_idea: boolean }[];
                               unreadable?: { url: string }[] } | null;
@@ -67,7 +77,8 @@ export type EventRow = { id: string; from_state: string | null; to_state: string
 const POST_COLS = `id, topic, brief, audio_source, to_char(slot_date, 'YYYY-MM-DD') as slot_date,
                    to_char(publish_at at time zone publish_tz, 'HH24:MI') as publish_time, channel_id, format_id, status,
                    target_seconds, auto_approve, approved_script_id, error, final_key,
-                   final_duration_s, updated_at, research_state, music`;
+                   final_duration_s, updated_at, research_state, music, format, slides,
+                   (select f.template_id from formats f where f.id = posts.format_id) as template_id`;
 
 export async function postsBetween(userId: string, channelId: string, from: string, to: string): Promise<PostRow[]> {
   return asUser(userId, async (db) => {
@@ -89,7 +100,7 @@ export async function postDetail(userId: string, id: string) {
     const scripts = (
       await db.query(
         `select id, version, state, title, hook, description, hashtags, intended_dialogue, shot_plan,
-                style_prompt, model, review, rejection_note, approved_at, approved_by, created_at
+                style_prompt, model, review, rejection_note, approved_at, approved_by, created_at, slides
            from scripts where post_id = $1 order by version desc`,
         [id],
       )
@@ -113,7 +124,7 @@ export async function postDetail(userId: string, id: string) {
     const assets = (
       await db.query(
         `select id, n, kind, origin, credit, rights, state, w, h, seconds::text, error, made_from,
-                key is not null as has_file,
+                key is not null as has_file, file_name, license,
                 coalesce(analysis->>'summary', analysis->'card'->>'summary') as summary
            from assets where post_id = $1 order by n`,
         [id],

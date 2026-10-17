@@ -50,7 +50,9 @@ def run(ctx: JobContext) -> dict:
         if a["kind"] == "video":
             if a["has_audio"]:
                 try:
-                    analysis["transcript"] = TRANSCRIBE(path)
+                    # The owner's own recordings (an interview, a walkthrough) are heard in full.
+                    analysis["transcript"] = (TRANSCRIBE(path, max_seconds=900) if a["origin"] == "upload"
+                                              else TRANSCRIBE(path))
                     transcript = "\n".join(f"{t['start']:.1f}-{t['end']:.1f}s: {t['text']}"
                                            for t in analysis["transcript"])
                 except Exception as e:  # noqa: BLE001 - the picture still tells most of it

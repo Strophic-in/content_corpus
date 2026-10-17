@@ -13,3 +13,4 @@ node_modules/
 # Superseded Supabase drafts (replaced by db/); kept locally, not published.
 supabase/
 secrets/
+template-demos/

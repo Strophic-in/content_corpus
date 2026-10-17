@@ -11,18 +11,22 @@ import { PLATFORM_NAMES, publishInfo, type PublishTarget } from "@/lib/publish";
 import { signedUrl } from "@/lib/r2";
 import { requireUser } from "@/lib/session";
 import { IN_FLIGHT, statusBadge } from "@/lib/status";
+import { template } from "@/lib/templates";
 
 import { PostForm } from "../post-form";
 import {
   AssetRightsButton, AutoRefresh, CancelPublishButton, DeletePostButton, GenerateButton, PublishForm, RenderButton,
   ReviewActions,
 } from "./post-actions";
+import { DeleteUploadButton, UploadFootage } from "./upload";
 
 export const metadata = { title: "Post · Content Corpus" };
 
 const EDITABLE = new Set(["draft", "awaiting_approval", "failed"]);
 // A finished reel: playable, and postable.
 const FINISHED = new Set(["ready", "scheduled", "published", "needs_review"]);
+// Footage can be added while the script can still be (re)written.
+const UPLOADABLE = new Set(["draft", "awaiting_approval", "approved", "failed"]);
 
 function fmt(d: Date) {
   return new Intl.DateTimeFormat("en-IN", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Kolkata" }).format(d);
@@ -43,6 +47,8 @@ export default async function PostPage({ params }: { params: Promise<{ id: strin
   const live = scripts.find((s) => ["awaiting_approval", "approved", "draft"].includes(s.state));
   const older = scripts.filter((s) => s !== live);
   const badge = statusBadge(post.status);
+  const t = template(post.template_id);
+  const slides = post.format === "carousel" || post.format === "image";
   // After a failed final join the paid-for shots are all stored: the way forward is
   // Retry assembly (in the render panel), not a new script that would leave them behind.
   const canGenerate = ["draft", "awaiting_approval", "failed"].includes(post.status) &&
@@ -51,7 +57,7 @@ export default async function PostPage({ params }: { params: Promise<{ id: strin
   return (
     <div className="flex flex-col gap-6">
       {(IN_FLIGHT.has(post.status) || post.status === "rendered" ||
-        (post.status === "approved" && (shots.length === 0 ||
+        (post.status === "approved" && !slides && (shots.length === 0 ||
           (post.audio_source === "kokoro" && shots.some((s) => !s.voiced)))) ||
         assets.some((a) => a.state === "pending")) && <AutoRefresh everyMs={4000} />}
       <div className="flex flex-wrap items-start gap-3">
@@ -60,6 +66,7 @@ export default async function PostPage({ params }: { params: Promise<{ id: strin
             ← {post.slot_date}
           </Link>
           <h1 className="mt-1 text-2xl font-semibold tracking-tight">{post.topic}</h1>
+          {post.template_id && <p className="mt-0.5 text-xs text-muted">{t.display_name}</p>}
           {post.brief && <p className="mt-1 max-w-3xl text-sm whitespace-pre-line text-muted">{post.brief}</p>}
         </div>
         <span className={`rounded-md px-2 py-1 text-sm font-medium ${badge.className}`}>{badge.label}</span>
@@ -81,7 +88,8 @@ export default async function PostPage({ params }: { params: Promise<{ id: strin
         )}
       </div>
 
-      {live ? <ScriptCard script={live} narrated={post.audio_source === "kokoro"} /> : post.status === "draft" && (
+      {live ? (slides ? <SlidesCard script={live} /> : <ScriptCard script={live} audio={post.audio_source} />)
+        : post.status === "draft" && (
         <p className="text-sm text-muted">No script yet. Press “Write script” to draft one from the topic and brief.</p>
       )}
 
@@ -89,9 +97,10 @@ export default async function PostPage({ params }: { params: Promise<{ id: strin
 
       {post.research_state && <SourcesPanel state={post.research_state} research={research} />}
 
-      {assets.length > 0 && <FootagePanel assets={assets} />}
+      {(assets.length > 0 || UPLOADABLE.has(post.status)) &&
+        <FootagePanel postId={post.id} assets={assets} uploads={UPLOADABLE.has(post.status)} />}
 
-      {post.approved_script_id && <RenderPanel post={post} shots={shots} />}
+      {post.approved_script_id && (slides ? <SlidesPanel post={post} /> : <RenderPanel post={post} shots={shots} />)}
 
       {post.final_key && FINISHED.has(post.status) && <PublishPanel post={post} userId={user.id} />}
 
@@ -180,10 +189,11 @@ function StatsPanel({ stats }: { stats: StatRow[] }) {
   );
 }
 
-function FootagePanel({ assets }: { assets: AssetRow[] }) {
+function FootagePanel({ postId, assets, uploads }: { postId: string; assets: AssetRow[]; uploads: boolean }) {
   const twinOf = (a: AssetRow) => assets.find((x) => x.id === a.made_from);
-  const status = (a: AssetRow) => a.state === "pending"
-      ? (a.made_from ? "being drawn…" : "fetching and watching it…")
+  const status = (a: AssetRow) => a.state === "uploading" ? "uploading…"
+    : a.state === "pending"
+      ? (a.made_from ? "being drawn…" : a.origin === "upload" ? "checking and watching it…" : "fetching and watching it…")
     : a.state === "failed" ? `couldn't be ${a.made_from ? "drawn" : "fetched"}${a.error ? ` — ${a.error}` : ""}`
     : a.rights === "needs_review" ? "only informs the script — you chose an AI version, so it is never shown"
     : `${a.kind === "video" ? `${Number(a.seconds ?? 0).toFixed(0)} s, ` : ""}${a.w}×${a.h}`;
@@ -191,8 +201,8 @@ function FootagePanel({ assets }: { assets: AssetRow[] }) {
     <section className="flex flex-col gap-3 rounded-xl border border-border bg-surface p-5 text-sm">
       <div>
         <h2 className="font-medium">Footage</h2>
-        <p className="text-muted">The idea&apos;s own picture or video, as you chose: shown with credit, or an AI version
-          made from it. The script waits until it is ready.</p>
+        <p className="text-muted">The idea&apos;s own picture or video, as you chose — shown with credit, or an AI version
+          made from it — and anything you upload. The script waits until it is ready.</p>
       </div>
       <ul className="flex flex-col divide-y divide-border">
         {assets.map((a) => (
@@ -205,15 +215,17 @@ function FootagePanel({ assets }: { assets: AssetRow[] }) {
             <span className="min-w-0 flex-1">
               <span className={`font-medium ${a.rights === "rejected" ? "text-muted line-through" : ""}`}>
                 #{a.n} · {a.made_from ? `AI version of #${twinOf(a)?.n ?? "?"}` : a.kind === "video" ? "Video" : "Picture"}
-                {" · "}{a.credit || a.origin}
+                {" · "}{a.origin === "upload" ? `your upload${a.file_name ? ` (${a.file_name})` : ""}` : a.credit || a.origin}
               </span>
               <span className="block text-xs text-muted">{status(a)}</span>
               {a.summary && <span className="block text-xs text-muted">{a.summary}</span>}
             </span>
-            {a.state !== "pending" && <AssetRightsButton assetId={a.id} allowed={a.rights === "approved"} />}
+            {a.origin === "upload" ? (a.state !== "uploading" && <DeleteUploadButton assetId={a.id} />)
+              : a.state !== "pending" && <AssetRightsButton assetId={a.id} allowed={a.rights === "approved"} />}
           </li>
         ))}
       </ul>
+      {uploads && <UploadFootage postId={postId} />}
     </section>
   );
 }
@@ -439,18 +451,99 @@ function sourceLabel(s: ScriptRow["shot_plan"][number]) {
     case "clip": return `🎞 clip from footage #${s.asset}, ${clock(s.start)}–${clock(s.end)}${s.keep_audio ? ", its own sound" : ""}`;
     case "image": return `🖼 picture #${s.asset}`;
     case "stock": return `📦 stock video: “${s.stock_query}”`;
+    case "chart": return `📊 ${s.chart?.kind ?? "bar"} chart: ${s.chart?.title ?? ""}`;
+    case "plain": return "▭ plain background";
     default: return "✨ generated";
   }
 }
 
-function ScriptCard({ script, narrated }: { script: ScriptRow; narrated: boolean }) {
+const AUDIO_LABEL = { kokoro: "narrated voice-over", ltx_native: "characters speak", none: "no voice" } as const;
+
+function SlidesCard({ script }: { script: ScriptRow }) {
+  const visual = (v: NonNullable<ScriptRow["slides"]>[number]["visual"]) =>
+    v.source === "asset" ? `🖼 picture #${v.asset}` : v.source === "ai_image" ? `✨ AI picture: ${v.prompt}`
+      : v.source === "chart" ? `📊 ${v.chart.kind} chart: ${v.chart.title}` : "▭ background colour";
+  return (
+    <section className="flex flex-col gap-4 rounded-xl border border-border bg-surface p-5">
+      <div className="flex flex-wrap items-baseline gap-2">
+        <h2 className="text-lg font-semibold">{script.title}</h2>
+        <span className="text-xs text-muted">v{script.version} · {script.model} · {script.slides?.length ?? 0} slides</span>
+      </div>
+      <dl className="grid gap-3 text-sm sm:grid-cols-[8rem_1fr]">
+        <dt className="text-muted">Cover line</dt><dd>{script.hook}</dd>
+        <dt className="text-muted">Caption</dt><dd className="whitespace-pre-line">{script.description}</dd>
+        <dt className="text-muted">Hashtags</dt><dd>{script.hashtags.join(" ")}</dd>
+      </dl>
+      <ol className="flex flex-col gap-3">
+        {(script.slides ?? []).map((s, i) => (
+          <li key={i} className="rounded-lg border border-border p-3 text-sm">
+            <div className="text-xs font-medium text-muted">Slide {i + 1}{s.role ? ` · ${s.role.replaceAll("_", " ")}` : ""} · {visual(s.visual)}</div>
+            {s.heading && <p className="mt-1 font-semibold">{s.heading}</p>}
+            {s.body && <p className="mt-1 text-muted">{s.body}</p>}
+          </li>
+        ))}
+      </ol>
+      {script.review && (
+        <div className="rounded-lg bg-background p-3 text-sm">
+          <div className="font-medium">AI self-review · {script.review.score}/10 <span className="font-normal text-muted">(advice only)</span></div>
+          {script.review.risks.length > 0 && (
+            <ul className="mt-1 list-disc pl-5 text-muted">{script.review.risks.map((r, i) => <li key={i}>{r}</li>)}</ul>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
+
+async function SlidesPanel({ post }: { post: PostRow }) {
+  const box = "flex flex-col gap-3 rounded-xl border border-border bg-surface p-5 text-sm";
+  if (FINISHED.has(post.status) && post.slides?.length) {
+    const urls = await Promise.all(post.slides.map((s) => signedUrl(s.key)));
+    const play = post.final_key ? await signedUrl(post.final_key) : null;
+    return (
+      <section className={box}>
+        <h2 className="font-medium">{post.slides.length === 1 ? "Your picture post" : `Your carousel · ${post.slides.length} slides`}</h2>
+        <div className="-mx-1 flex snap-x gap-2 overflow-x-auto px-1 pb-1">
+          {urls.map((u, i) => u && (
+            // eslint-disable-next-line @next/next/no-img-element -- a private, signed link
+            <img key={i} src={u} alt={`Slide ${i + 1}`} className="h-72 w-auto shrink-0 snap-start rounded-lg bg-black" />
+          ))}
+        </div>
+        <p className="text-xs text-muted">Instagram gets these as {post.slides.length === 1 ? "a picture post" : "a carousel"};
+          YouTube gets the slideshow below.</p>
+        {play && <video src={play} controls playsInline className="aspect-[9/16] w-full max-w-[220px] rounded-lg bg-black" />}
+        {post.music && (
+          <p className="text-xs text-muted">
+            Music: <a href={post.music.page} target="_blank" rel="noreferrer" className="underline">“{post.music.name}”</a>{" "}
+            by {post.music.author} · {post.music.mood} · CC0
+          </p>
+        )}
+      </section>
+    );
+  }
+  if (post.status === "queued_for_render" || post.status === "rendering")
+    return <section className={box}><h2 className="font-medium">Drawing the slides…</h2>
+      <p className="text-muted">Then the slideshow for YouTube — a minute or two on the server, no GPU.</p></section>;
+  if (post.status === "approved" || post.status === "failed")
+    return (
+      <section className={box}>
+        <h2 className="font-medium">Ready to make the slides</h2>
+        <p className="text-muted">The slides for Instagram and a slideshow Short for YouTube — on the server, no GPU
+          (an AI picture, if the script asks for one, costs about ₹1.3).</p>
+        <RenderButton postId={post.id} retry={post.status === "failed"} label={post.status === "failed" ? "Try again" : "Make the slides"} />
+      </section>
+    );
+  return null;
+}
+
+function ScriptCard({ script, audio }: { script: ScriptRow; audio: PostRow["audio_source"] }) {
   const total = script.shot_plan.reduce((t, s) => t + s.seconds, 0);
   return (
     <section className="flex flex-col gap-4 rounded-xl border border-border bg-surface p-5">
       <div className="flex flex-wrap items-baseline gap-2">
         <h2 className="text-lg font-semibold">{script.title}</h2>
         <span className="text-xs text-muted">
-          v{script.version} · {script.model} · {total}s · {narrated ? "narrated voice-over" : "characters speak"}
+          v{script.version} · {script.model} · {total}s · {AUDIO_LABEL[audio]}
         </span>
       </div>
       <dl className="grid gap-3 text-sm sm:grid-cols-[8rem_1fr]">
@@ -462,7 +555,14 @@ function ScriptCard({ script, narrated }: { script: ScriptRow; narrated: boolean
       <ol className="flex flex-col gap-3">
         {script.shot_plan.map((s, i) => (
           <li key={i} className="rounded-lg border border-border p-3 text-sm">
-            <div className="text-xs font-medium text-muted">Shot {i + 1} · {s.seconds}s · {sourceLabel(s)}</div>
+            <div className="text-xs font-medium text-muted">Shot {i + 1}{s.role ? ` · ${s.role.replaceAll("_", " ")}` : ""} · {s.seconds}s · {sourceLabel(s)}
+              {s.layout === "split" ? " · split screen" : ""}{s.transition ? ` · ${s.transition} in` : ""}</div>
+            {(s.label || s.text) && (
+              <p className="mt-1 flex flex-wrap items-center gap-2">
+                {s.label && <span className="rounded bg-accent/15 px-1.5 py-0.5 text-xs font-semibold text-accent uppercase">{s.label}</span>}
+                {s.text && <span className="font-semibold">“{s.text}”</span>}
+              </p>
+            )}
             {s.narration && <p className="mt-1 font-medium">🎙 “{s.narration}”</p>}
             <p className="mt-1">{s.visual}</p>
             <p className="mt-1 text-muted">🔊 {s.audio}</p>

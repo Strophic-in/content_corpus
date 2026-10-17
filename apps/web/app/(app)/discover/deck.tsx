@@ -14,6 +14,8 @@ export type CardMedia = {
 export type IdeaCard = {
   id: string; title: string; hook: string; brief: string; whyNow: string;
   category: { id: string; name: string; color: string } | null;
+  format: { id: string; name: string; kind: string } | null;   // the agent's pick
+  formatWhy: string;
   media: CardMedia[];
   mediaPending: boolean;
   summary: string | null;      // what the video shows (vision model)
@@ -27,6 +29,7 @@ type Props = {
   looking: boolean;
   channel: { id: string; name: string; timezone: string };
   categories: { id: string; name: string; color: string }[];
+  formats: { id: string; name: string; kind: string }[];
   platforms: { id: "youtube" | "instagram"; label: string }[];
   suggestion: { date: string; time: string; min: string };
 };
@@ -76,7 +79,7 @@ function Media({ m, active, muted }: { m: CardMedia; active: boolean; muted: boo
   );
 }
 
-export function Deck({ picker, cards, looking, channel, categories, platforms, suggestion }: Props) {
+export function Deck({ picker, cards, looking, channel, categories, formats, platforms, suggestion }: Props) {
   const router = useRouter();
   // The deck is the server's cards minus the ones decided here; cards put back
   // (Undo, Back) go to the front. Derived, so fresh server data (a new batch,
@@ -100,6 +103,7 @@ export function Deck({ picker, cards, looking, channel, categories, platforms, s
   const [slot, setSlot] = useState({ date: suggestion.date, time: suggestion.time });
   const [chosen, setChosen] = useState<string[]>(platforms.map((p) => p.id));
   const [media, setMedia] = useState<"none" | "original" | "ai">("none");
+  const [formatId, setFormatId] = useState<string>("");
   const [skip, setSkip] = useState<{ card: IdeaCard; timer: ReturnType<typeof setTimeout> } | null>(null);
   const [notice, setNotice] = useState<{ text: string; href?: string; error?: boolean } | null>(null);
   const [target, setTarget] = useState("all");
@@ -126,6 +130,7 @@ export function Deck({ picker, cards, looking, channel, categories, platforms, s
       remove(card.id);
       if (dir === 1) {
         setSheet(card);
+        setFormatId(card.format?.id ?? formats[0]?.id ?? "");
       } else {
         setSkip((prev) => {
           if (prev) { clearTimeout(prev.timer); commitSkip(prev.card, null); }
@@ -133,7 +138,7 @@ export function Deck({ picker, cards, looking, channel, categories, platforms, s
         });
       }
     }, 240);
-  }, [commitSkip]);
+  }, [commitSkip, formats]);
 
   // ← / → on a keyboard.
   useEffect(() => {
@@ -175,7 +180,7 @@ export function Deck({ picker, cards, looking, channel, categories, platforms, s
     if (!sheet) return;
     const card = sheet;
     start(async () => {
-      const r = await decideIdea(card.id, true, slot.date, slot.time, null, chosen, media);
+      const r = await decideIdea(card.id, true, slot.date, slot.time, null, chosen, media, formatId || null);
       if (!r.ok) {
         setNotice({ text: r.error ?? "Couldn't schedule it.", error: true });
         return;
@@ -286,6 +291,11 @@ export function Deck({ picker, cards, looking, channel, categories, platforms, s
                 {card.category && (
                   <span className="rounded-full px-2 py-0.5 font-medium text-white" style={{ background: card.category.color }}>
                     {card.category.name}
+                  </span>
+                )}
+                {card.format && (
+                  <span className="rounded-full border border-border px-2 py-0.5 text-muted" title={card.formatWhy || undefined}>
+                    {card.format.name}
                   </span>
                 )}
                 {card.whyNow && <span className="rounded-full bg-accent/15 px-2 py-0.5 text-accent">{card.whyNow}</span>}
@@ -405,6 +415,16 @@ export function Deck({ picker, cards, looking, channel, categories, platforms, s
                        className="rounded-xl border border-border bg-background px-3 py-2.5 outline-none focus:border-accent" />
               </label>
             </div>
+            {formats.length > 1 && (
+              <label className="mt-3 flex flex-col gap-1 text-sm">Make it as
+                <select value={formatId} onChange={(e) => setFormatId(e.target.value)}
+                        className="rounded-xl border border-border bg-background px-3 py-2.5 outline-none focus:border-accent">
+                  {formats.map((f) => <option key={f.id} value={f.id}>{f.name} · {f.kind}</option>)}
+                </select>
+                {sheet.formatWhy && formatId === sheet.format?.id &&
+                  <span className="text-xs text-muted">The agent&apos;s pick: {sheet.formatWhy}</span>}
+              </label>
+            )}
             {platforms.length > 0 && (
               <fieldset className="mt-3 flex flex-wrap gap-x-5 gap-y-2 text-sm">
                 <legend className="mb-1 text-muted">Post to</legend>

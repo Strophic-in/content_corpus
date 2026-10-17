@@ -20,7 +20,7 @@ from typing import Callable
 
 import psycopg
 
-from . import db
+from . import db, templates
 
 
 def _note(post_id, reason: str) -> None:
@@ -68,6 +68,13 @@ def request_publish(post_id, log: Callable[[str], None] = print) -> bool:
     platforms = [pf for pf in (p["platforms"] or []) if pf in connected]
     if not platforms:
         _note(post_id, "not posted automatically: none of its platforms is connected")
+        return False
+    with db.conn() as c:
+        post = c.execute("select format_id, audio_source from posts where id = %s", (post_id,)).fetchone()
+        mode = templates.look_for_post(c, post).music_source_mode
+    if mode == "platform_native":
+        _note(post_id, "ready — not posted automatically: its format leaves the music to you; add a song in the app "
+                       "and post it from there, or post it here as it is")
         return False
     try:
         with db.tx() as c:

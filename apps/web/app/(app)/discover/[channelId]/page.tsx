@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { CHANNEL_COLS, workspace, type Channel } from "@/lib/channels";
 import { asUser } from "@/lib/db";
 import { requireUser } from "@/lib/session";
+import { KIND_LABEL, template } from "@/lib/templates";
 
 import { ChannelPicker } from "../../nav";
 import { AutoRefresh } from "../../posts/[id]/post-actions";
@@ -21,7 +22,7 @@ function host(url: string) {
 
 type Row = {
   id: string; title: string; hook: string; brief: string; why_now: string; category_id: string | null;
-  media_state: string; created_at: Date;
+  media_state: string; created_at: Date; format_id: string | null; format_why: string;
   media: { type: "image" | "video"; w: number; h: number; seconds?: number; credit?: string; gallery?: boolean;
            poster_key?: string }[];
   items: { url?: string; title?: string; source?: string; subreddit?: string; author?: string; platform?: string }[];
@@ -43,7 +44,10 @@ function roundRobin(rows: Row[]): Row[] {
   return out;
 }
 
-function card(r: Row, cats: Map<string, { id: string; name: string; color: string }>): IdeaCard {
+type FormatOpt = { id: string; name: string; kind: string };
+
+function card(r: Row, cats: Map<string, { id: string; name: string; color: string }>,
+              fmts: Map<string, FormatOpt>): IdeaCard {
   const v = r.analysis?.video;
   const flags: string[] = [];
   if (v?.logos_or_watermarks) flags.push(v.logo_names?.length ? `Logo: ${v.logo_names.join(", ")}` : "Watermark or logo");
@@ -64,6 +68,7 @@ function card(r: Row, cats: Map<string, { id: string; name: string; color: strin
   return {
     id: r.id, title: r.title, hook: r.hook, brief: r.brief, whyNow: r.why_now,
     category: r.category_id ? cats.get(r.category_id) ?? null : null,
+    format: r.format_id ? fmts.get(r.format_id) ?? null : null, formatWhy: r.format_why ?? "",
     media, mediaPending: r.media_state === "pending", summary: v?.summary ?? null, flags, sources,
   };
 }
@@ -83,8 +88,12 @@ export default async function ChannelDeckPage({ params }: { params: Promise<{ ch
       "select id, name, color from categories where channel_id = $1 and enabled order by created_at", [channelId],
     )).rows as { id: string; name: string; color: string }[];
     const ideas = (await db.query(
-      `select id, title, hook, brief, why_now, category_id, media_state, created_at, media, items, sources, analysis
+      `select id, title, hook, brief, why_now, category_id, media_state, created_at, media, items, sources, analysis,
+              format_id, format_why
          from ideas where channel_id = $1 and status = 'new' order by created_at desc, id`, [channelId])).rows as Row[];
+    const formats = (await db.query(
+      "select id, name, template_id from formats where channel_id = $1 order by is_default desc, created_at",
+      [channelId])).rows as { id: string; name: string; template_id: string }[];
     const accounts = (await db.query(
       "select platform from channel_accounts where channel_id = $1 and status = 'connected' order by platform",
       [channelId])).rows as { platform: "youtube" | "instagram" }[];
@@ -103,12 +112,15 @@ export default async function ChannelDeckPage({ params }: { params: Promise<{ ch
         limit 1`, [channelId, channel.timezone])).rows[0]?.day as string | undefined;
     const today = (await db.query("select to_char(now() at time zone $1, 'YYYY-MM-DD') as d",
                                   [channel.timezone])).rows[0].d as string;
-    return { channel, categories, ideas, accounts, looking, next, today };
+    return { channel, categories, ideas, formats, accounts, looking, next, today };
   });
   if (!data) notFound();
   const { channel, categories } = data;
   const cats = new Map(categories.map((c) => [c.id, c]));
-  const cards = roundRobin(data.ideas).map((r) => card(r, cats));
+  const formats: FormatOpt[] = data.formats.map((f) => ({ id: f.id, name: f.name,
+                                                          kind: KIND_LABEL[template(f.template_id).content_type] }));
+  const fmts = new Map(formats.map((f) => [f.id, f]));
+  const cards = roundRobin(data.ideas).map((r) => card(r, cats, fmts));
   const names = { youtube: "YouTube", instagram: "Instagram" } as const;
 
   return (
@@ -122,6 +134,7 @@ export default async function ChannelDeckPage({ params }: { params: Promise<{ ch
         looking={data.looking > 0}
         channel={{ id: channel.id, name: channel.name, timezone: channel.timezone }}
         categories={categories}
+        formats={formats}
         platforms={data.accounts.map((a) => ({ id: a.platform, label: names[a.platform] }))}
         suggestion={{ date: data.next ?? data.today, time: channel.default_publish_time, min: data.today }}
       />

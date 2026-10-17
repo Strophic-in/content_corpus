@@ -48,7 +48,8 @@ class FakeMemory:
 
 
 def idea(title, brief="An explainer.", items=()):
-    return Idea(title=title, hook=f"{title}?", brief=brief, why_now="Evergreen", items=list(items))
+    return Idea(title=title, hook=f"{title}?", brief=brief, why_now="Evergreen", items=list(items),
+                format=1, format_why="")
 
 
 class FakeWriter:

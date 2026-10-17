@@ -82,6 +82,28 @@ def read_back(client: httpx.Client, log: Callable[[str], None] = print) -> int:
     return n
 
 
+def by_format(c, channel_id) -> dict:
+    """How each of the channel's formats has done against the channel's own usual
+    views (its average per published post): {format_id: "…"}, for formats with at
+    least two posts with numbers. Formats are never called viral — only compared."""
+    rows = c.execute("""select p.format_id, count(*) as posts, avg(v.views) as views
+                          from posts p
+                          join (select post_id, sum(coalesce(views, 0)) as views from post_stats group by post_id) v
+                            on v.post_id = p.id
+                         where p.channel_id = %s
+                         group by p.format_id""", (channel_id,)).fetchall()
+    total = sum(r["posts"] for r in rows)
+    if not total:
+        return {}
+    base = sum(float(r["views"] or 0) * r["posts"] for r in rows) / total
+    out = {}
+    for r in rows:
+        if r["format_id"] and r["posts"] >= 2 and base > 0:
+            out[r["format_id"]] = (f"On this channel: {r['posts']} posts, {float(r['views'] or 0) / base:.1f}x "
+                                   "its usual views.")
+    return out
+
+
 def summary(c, channel_id, limit: int = 10) -> str:
     """The channel's recent reels with how they did, best first — for the idea agent."""
     rows = c.execute("""select p.topic, sum(s.views) as views, sum(s.likes) as likes, sum(s.comments) as comments

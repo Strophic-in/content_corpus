@@ -12,6 +12,12 @@ its own sound lasts as long as its window and carries no narration.
 A generated shot that names a picture animates it: the picture is its first frame
 (image-to-video) and its credit goes on screen. When the owner chose an AI version
 of a video, the generated shots recreate it and are labelled "AI reconstruction".
+
+What the template draws over a shot — its role, text, label, layout, transition,
+bottom-panel picture, punch-in and timelapse — goes to shots.extras as written. A
+"plain" shot is the format's background colour, made on the server. A format with
+no voice (audio 'none') has no narration and asks the video model for no speech.
+Carousels and cards have no shots: their slides are made by render_slides.
 """
 
 from __future__ import annotations
@@ -24,6 +30,8 @@ from .. import auto, db, prompts
 from ..config import settings
 from ..runner import Handler, JobContext, Permanent
 from ..script.llm import MAX_CLIP_SECONDS, MAX_SHOT_SECONDS, MIN_SHOT_SECONDS
+
+EXTRAS = ("role", "text", "label", "layout", "transition", "timelapse")
 
 FPS = 24
 # 9:16-ish and on LTX-2.5's grid: both sides are multiples of 64, because stage 1
@@ -72,6 +80,19 @@ def shot_prompt(shot: dict, style: str | None, narrated: bool = False, look: str
     return " ".join(p for p in parts if p)
 
 
+def extras(shot: dict, assets: dict) -> dict:
+    """The on-screen fields, with the bottom panel's picture resolved to its asset."""
+    out = {k: shot[k] for k in EXTRAS if shot.get(k) not in (None, "", False)}
+    panel = assets.get(int(shot.get("panel_asset") or 0))
+    if panel is not None and panel["kind"] == "image":
+        out["panel_asset_id"] = str(panel["id"])
+        out["panel_credit"] = panel["credit"] or None
+    f = shot.get("focus") or {}
+    if float(f.get("w") or 0) > 0 and float(f.get("h") or 0) > 0:
+        out["focus"] = {k: round(float(f.get(k) or 0), 4) for k in ("x", "y", "w", "h")}
+    return out
+
+
 def _plan_footage(c, s: dict, idx: int, shot: dict, source: str, assets: dict, narrated: bool) -> float:
     asset = assets.get(int(shot.get("asset") or 0)) if source in ("clip", "image") else None
     if source in ("clip", "image") and (asset is None or asset["kind"] != ("video" if source == "clip" else "image")):
@@ -87,14 +108,15 @@ def _plan_footage(c, s: dict, idx: int, shot: dict, source: str, assets: dict, n
     c.execute(
         """insert into shots (post_id, script_id, idx, scene_group, chain_role, prompt, seed, width, height,
                               num_frames, fps, narration, source, asset_id, clip_in, clip_out, audio_mode,
-                              stock_query, credit, chart)
-           values (%s, %s, %s, %s, 'anchor', %s, 0, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                              stock_query, credit, chart, extras)
+           values (%s, %s, %s, %s, 'anchor', %s, 0, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
         (s["post_id"], s["id"], idx, idx, (shot.get("visual") or "").strip() or source, REEL_W, REEL_H,
          footage_frames(seconds), FPS, narration, source, asset["id"] if asset else None,
          start if source == "clip" else None, end if source == "clip" else None,
          "keep" if keep else ("duck" if source == "clip" else "mute"),
          (shot.get("stock_query") or "").strip() or None if source == "stock" else None,
-         asset["credit"] if asset else None, Jsonb(shot.get("chart")) if source == "chart" else None))
+         asset["credit"] if asset else None, Jsonb(shot.get("chart")) if source == "chart" else None,
+         Jsonb(extras(shot, assets))))
     return seconds
 
 
@@ -110,13 +132,15 @@ def run(ctx: JobContext) -> dict:
                          (script_id,)).fetchone()["n"]
         if have:
             return {"shots": have, "reused": True}
-        plan = s["shot_plan"] or []
-        if not plan:
-            raise Permanent("approved script has no shots", stage="input")
-        post = c.execute("""select p.audio_source, f.visual_style from posts p
+        post = c.execute("""select p.audio_source, p.format, f.visual_style from posts p
                               left join formats f on f.id = p.format_id where p.id = %s""",
                          (s["post_id"],)).fetchone()
+        slides = post["format"] in ("carousel", "image")
+        plan = s["shot_plan"] or []
+        if not plan and not slides:
+            raise Permanent("approved script has no shots", stage="input")
         narrated = post["audio_source"] == "kokoro"
+        silent = post["audio_source"] == "none"     # nobody speaks: text, music and the shots' own sound
         look = post["visual_style"] or ""
 
         assets = {r["n"]: r for r in c.execute(
@@ -124,6 +148,8 @@ def run(ctx: JobContext) -> dict:
         # The owner wanted an AI version of the idea's video: what is generated recreates it.
         reconstruction = any(a["kind"] == "video" and a["rights"] == "needs_review" for a in assets.values())
         total = 0.0
+        if slides:
+            plan = []
         for idx, shot in enumerate(plan):
             source = shot.get("source") or "generate"
             if source != "generate":
@@ -140,15 +166,17 @@ def run(ctx: JobContext) -> dict:
             c.execute(
                 """insert into shots (post_id, script_id, idx, scene_group, chain_role, prompt,
                                       negative_prompt, seed, width, height, num_frames, fps,
-                                      narration, asset_id, guide_kind, guide_key, credit)
-                   values (%s, %s, %s, %s, 'anchor', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
-                (s["post_id"], script_id, idx, idx, shot_prompt(shot, s["style_prompt"], narrated, look),
-                 NEGATIVE_NARRATED if narrated else NEGATIVE, seed_for(str(script_id), idx),
+                                      narration, asset_id, guide_kind, guide_key, credit, extras)
+                   values (%s, %s, %s, %s, 'anchor', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                (s["post_id"], script_id, idx, idx,
+                 shot_prompt(shot, s["style_prompt"], narrated or silent, look),
+                 NEGATIVE_NARRATED if narrated or silent else NEGATIVE, seed_for(str(script_id), idx),
                  WIDTH, HEIGHT, frames, FPS, (shot.get("narration") or None) if narrated else None,
                  guide["id"] if guide else None, "first_frame" if guide else None,
-                 guide["key"] if guide else None, credit))
-        db.log_event(c, s["post_id"], "approved", "approved", f"worker:{settings().worker_id}",
-                     "shots planned", {"shots": len(plan), "seconds": round(total, 2)})
+                 guide["key"] if guide else None, credit, Jsonb(extras(shot, assets))))
+        if not slides:
+            db.log_event(c, s["post_id"], "approved", "approved", f"worker:{settings().worker_id}",
+                         "shots planned", {"shots": len(plan), "seconds": round(total, 2)})
         if narrated:
             # The voice sets each shot's final length, so narration comes next.
             user_id = c.execute("select user_id from posts where id = %s",
@@ -157,7 +185,9 @@ def run(ctx: JobContext) -> dict:
                        dedupe_key=f"narrate:{script_id}", payload={"script_id": str(script_id)},
                        post_id=s["post_id"], max_attempts=3, lease_seconds=600)
     if not narrated:
-        auto.request_render(s["post_id"])        # Automatic mode: nothing to voice, on to the GPU
+        auto.request_render(s["post_id"])        # Automatic mode: nothing to voice, on to rendering
+    if slides:
+        return {"slides": True}
     return {"shots": len(plan), "seconds": round(total, 2)}
 
 

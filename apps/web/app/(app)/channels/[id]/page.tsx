@@ -5,6 +5,7 @@ import { ACCOUNT_COLS, type Account, CHANNEL_COLS, type Channel } from "@/lib/ch
 import { asUser } from "@/lib/db";
 import { configured } from "@/lib/oauth";
 import { requireUser } from "@/lib/session";
+import { KIND_LABEL, template } from "@/lib/templates";
 
 import { AutoRefresh } from "../../posts/[id]/post-actions";
 import { CategoriesSection, type CategoryData } from "../categories";
@@ -22,11 +23,12 @@ export default async function ChannelPage({ params, searchParams }: {
     const channel = (await db.query(`select ${CHANNEL_COLS} from channels where id = $1`, [id])).rows[0] as Channel | undefined;
     if (!channel) return null;
     const accounts = (await db.query(`select ${ACCOUNT_COLS} from channel_accounts where channel_id = $1`, [id])).rows as Account[];
-    const formats = (await db.query("select id, name from formats where channel_id = $1 order by is_default desc, name",
-                                    [id])).rows as { id: string; name: string }[];
+    const formats = (await db.query(
+      "select id, name, template_id from formats where channel_id = $1 order by is_default desc, created_at",
+      [id])).rows as { id: string; name: string; template_id: string }[];
     // Each category with its sources, whether a check is running, and the latest suggestions.
     const categories = (await db.query(
-      `select k.id, k.name, k.color, k.brief, k.keywords, k.format_id, k.ideas_per_batch, k.enabled,
+      `select k.id, k.name, k.color, k.brief, k.keywords, k.format_ids, k.ideas_per_batch, k.enabled,
               coalesce((select json_agg(json_build_object('id', s.id, 'kind', s.kind, 'value', s.value,
                                  'enabled', s.enabled, 'status', s.status, 'last_items', s.last_items,
                                  'last_error', s.last_error) order by s.created_at)
@@ -70,7 +72,8 @@ export default async function ChannelPage({ params, searchParams }: {
       </section>
 
       {busy && <AutoRefresh everyMs={5000} />}
-      <CategoriesSection channelId={channel.id} categories={categories} formats={formats} />
+      <CategoriesSection channelId={channel.id} categories={categories}
+                         formats={formats.map((f) => ({ id: f.id, name: f.name, kind: KIND_LABEL[template(f.template_id).content_type] }))} />
 
       <section className="rounded-2xl border border-border bg-surface p-5">
         <h2 className="font-medium">Profile</h2>

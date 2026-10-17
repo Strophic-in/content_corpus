@@ -1,4 +1,4 @@
-"""Instagram: a Reel through the Instagram API with Instagram Login.
+"""Instagram: a Reel, a carousel or a picture, through the Instagram API with Instagram Login.
 
 Create a REELS container from `video_url` (a short-lived signed link to the reel
 in R2: Instagram fetches the file itself), wait while Instagram processes it,
@@ -11,6 +11,11 @@ continues from what the container says:
     PUBLISHED            → find the post it became and record it
     FINISHED             → publish it
     anything else        → it never went out: start a new container
+
+A carousel is a container per slide (is_carousel_item, from `image_urls`) and a
+CAROUSEL container holding them, which is the one saved and published; a single
+picture is one IMAGE container. Slides are JPEGs at 4:5 or 1:1 — the shapes the
+API accepts.
 """
 
 from __future__ import annotations
@@ -55,10 +60,11 @@ def caption(title: str, description: str, hashtags: list[str], credits: list[str
     return "\n\n".join(x for x in (title.strip(), description.strip(), footage, tags) if x)[:2200]
 
 
-def publish(client: httpx.Client, *, token: str, ig_user_id: str, video_url: str, caption: str,
+def publish(client: httpx.Client, *, token: str, ig_user_id: str, video_url: str | None = None, caption: str,
             attempt: dict, save: Callable[..., object], sleep: Callable[[float], None] = time.sleep,
-            clock: Callable[[], float] = time.monotonic) -> dict:
-    """Post the video at `video_url` as a Reel and return what to record on the attempt."""
+            clock: Callable[[], float] = time.monotonic, image_urls: list[str] | None = None) -> dict:
+    """Post the video at `video_url` as a Reel — or `image_urls` as a carousel (or,
+    one of them, a picture) — and return what to record on the attempt."""
     container = _container_of(attempt)
     if container:
         status = _status(client, token, container)
@@ -67,14 +73,15 @@ def publish(client: httpx.Client, *, token: str, ig_user_id: str, video_url: str
         if status != "FINISHED":
             container = None        # never published; Instagram drops it within a day
     if not container:
-        container = _create(client, token, ig_user_id, video_url, caption)
+        container = (_create_images(client, token, ig_user_id, image_urls, caption, sleep, clock) if image_urls
+                     else _create(client, token, ig_user_id, video_url or "", caption))
         save(upload_session_uri=CONTAINER + container, state="uploading")
         _wait_until_processed(client, token, container, sleep, clock)
 
     save(state="uploaded")          # from here on, the post may be live
     media = _ok(client.post(f"{GRAPH}/{ig_user_id}/media_publish",
                             data={"creation_id": container, "access_token": token}),
-                "publishing the reel")
+                "publishing the post")
     return _result(client, token, media["id"])
 
 
@@ -87,6 +94,23 @@ def _create(client: httpx.Client, token: str, ig_user_id: str, video_url: str, t
     return _ok(client.post(f"{GRAPH}/{ig_user_id}/media", data={
         "media_type": "REELS", "video_url": video_url, "caption": text,
         "share_to_feed": "true", "access_token": token}), "creating the reel")["id"]
+
+
+def _create_images(client: httpx.Client, token: str, ig_user_id: str, urls: list[str], text: str,
+                   sleep: Callable[[float], None], clock: Callable[[], float]) -> str:
+    """A picture's container, or a carousel's: one per slide, then the CAROUSEL one."""
+    if len(urls) == 1:
+        return _ok(client.post(f"{GRAPH}/{ig_user_id}/media", data={
+            "image_url": urls[0], "caption": text, "access_token": token}), "creating the picture post")["id"]
+    children = []
+    for k, url in enumerate(urls[:10], 1):
+        child = _ok(client.post(f"{GRAPH}/{ig_user_id}/media", data={
+            "image_url": url, "is_carousel_item": "true", "access_token": token}), f"adding slide {k}")["id"]
+        _wait_until_processed(client, token, child, sleep, clock)
+        children.append(child)
+    return _ok(client.post(f"{GRAPH}/{ig_user_id}/media", data={
+        "media_type": "CAROUSEL", "children": ",".join(children), "caption": text, "access_token": token}),
+        "creating the carousel")["id"]
 
 
 def _status(client: httpx.Client, token: str, container: str) -> str:

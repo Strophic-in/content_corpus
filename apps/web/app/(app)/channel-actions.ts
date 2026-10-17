@@ -5,7 +5,7 @@ import { refresh, revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
 
-import { CHANNEL_COOKIE, insertFormat } from "@/lib/channels";
+import { CHANNEL_COOKIE, starterFormats } from "@/lib/channels";
 import { asUser } from "@/lib/db";
 import { requireUser } from "@/lib/session";
 
@@ -56,9 +56,7 @@ export async function createChannel(_: ActionState, form: FormData): Promise<Act
         [user.id, v.name, v.niche, v.audience, v.voice, v.language, v.timezone, v.default_publish_time,
          v.ideas_daily, v.ideas_daily_at],
       );
-      const fid = await insertFormat(db, user.id, r.rows[0].id, "3D explainer", "narrated",
-        "Narrated 3D-animated explainers: one curiosity question answered in under a minute.");
-      await db.query("select api.set_default_format($1)", [fid]);
+      await starterFormats(db, user.id, r.rows[0].id);
       return r.rows[0].id as string;
     });
   } catch (err) {

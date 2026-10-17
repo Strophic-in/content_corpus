@@ -82,7 +82,7 @@ grant select, insert, update, delete on "user", "session", "account", "verificat
 grant select on app_settings, caption_styles, render_batches, posts, scripts, shots,
                 jobs, publish_attempts, post_events, workers, lane_config,
                 storage_objects, storage_config, channels, formats, format_versions, ideas,
-                categories, category_sources, costs, prices, fx_rates
+                categories, category_sources, costs, prices, fx_rates, templates
   to corpus_web;
 
 -- Settings rows are created by api.ensure_settings(); the form edits intent only.
@@ -136,11 +136,12 @@ grant delete on posts to corpus_web;
 -- Prompt library: the owner edits what a format makes. `version` and `is_default`
 -- are absent: versions are kept by a trigger, the default is switched by
 -- api.set_default_format, and history is restored by api.restore_format_version.
+-- `content_type` follows `template_id` (a trigger), so it is not the web's to set.
 grant insert (user_id, channel_id, name, description, audio_source, target_seconds, idea_prompt,
-              script_prompt, visual_style, sources, ideas_per_batch)
+              script_prompt, visual_style, sources, ideas_per_batch, template_id, params)
   on formats to corpus_web;
 grant update (name, description, audio_source, target_seconds, idea_prompt,
-              script_prompt, visual_style, sources, ideas_per_batch)
+              script_prompt, visual_style, sources, ideas_per_batch, template_id, params)
   on formats to corpus_web;
 grant delete on formats to corpus_web;
 -- ideas are read-only: a swipe goes through api.decide_idea, a batch through api.request_ideas.
@@ -171,9 +172,10 @@ grant delete on channel_accounts to corpus_web;
 
 -- Categories and their sources: the owner edits what a category covers and where
 -- it looks. A source's status, fetch times and errors are the ideas worker's.
-grant insert (user_id, channel_id, name, color, brief, keywords, format_id, ideas_per_batch, enabled)
+grant insert (user_id, channel_id, name, color, brief, keywords, format_id, format_ids, ideas_per_batch,
+              enabled)
   on categories to corpus_web;
-grant update (name, color, brief, keywords, format_id, ideas_per_batch, enabled)
+grant update (name, color, brief, keywords, format_id, format_ids, ideas_per_batch, enabled)
   on categories to corpus_web;
 grant delete on categories to corpus_web;
 grant insert (user_id, category_id, kind, value, options, enabled) on category_sources to corpus_web;

@@ -21,7 +21,12 @@ DEFAULTS = {
 
 
 def default(name: str) -> str:
-    return (settings().prompts_dir / DEFAULTS[name]).read_text(encoding="utf-8").strip()
+    return read(DEFAULTS[name])
+
+
+def read(file: str) -> str:
+    """A shipped prompt by file name (a template's base prompt, say)."""
+    return (settings().prompts_dir / file).read_text(encoding="utf-8").strip()
 
 
 def fill(template: str, values: dict) -> str:
