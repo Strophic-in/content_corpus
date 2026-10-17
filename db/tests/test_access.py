@@ -575,6 +575,27 @@ def test_categories_belong_to_their_channel_and_owner(alice, bob, owner):
                       "values (%s, %s, 'rss', 'https://old.reddit.com/r/news/.rss')", (alice, k))
 
 
+@pytest.mark.parametrize("kind,value,ok", [
+    ("bluesky", "whats-hot", True), ("bluesky", "https://bsky.app/profile/someone.test/feed/science", True),
+    ("bluesky", "https://evil.test/feed/x", False),
+    ("mastodon", "mastodon.social", True), ("mastodon", "#science@fosstodon.org", True), ("mastodon", "#x", False),
+    ("lemmy", "technology@lemmy.world", True), ("lemmy", "lemmy.world", True), ("lemmy", "http://lemmy.world/", False),
+    ("hackernews", "front_page", True), ("youtube", "IN:28", True), ("youtube", "india", False),
+])
+def test_open_sources_take_only_their_own_shape_of_value(alice, kind, value, ok):   # 0015
+    def add():
+        with web(alice) as c:
+            k = c.execute("insert into categories (user_id, channel_id, name) values (%s, %s, 'x') returning id",
+                          (alice, _new_channel(c, alice))).fetchone()[0]
+            c.execute("insert into category_sources (user_id, category_id, kind, value) values (%s, %s, %s, %s)",
+                      (alice, k, kind, value))
+    if ok:
+        add()
+    else:
+        with pytest.raises(psycopg.errors.CheckViolation):
+            add()
+
+
 @pytest.mark.parametrize("stmt", [
     "update category_sources set status = 'ok', last_items = 9 where user_id = %s",
     "insert into costs (user_id, kind, provider) values (%s, 'llm', 'openai')",

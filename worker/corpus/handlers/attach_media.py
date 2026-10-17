@@ -1,11 +1,12 @@
 """ideas/attach_media — a card's picture or video, checked and made small.
 
-For the idea's first item with media (a Reddit video, image or gallery, else an
-article's lead picture):
+For the idea's first item with media (a post's video, image or gallery — Reddit,
+Bluesky, Mastodon, Lemmy, a YouTube thumbnail — else an article's lead picture):
 
   1. moderation on the post's text and preview: sexual content removes the idea
      (recorded as rejected, never shown); graphic content keeps the story, text only;
-  2. the preview: a ≤480p MP4 with sound plus a poster, or an image ≤1080 px;
+  2. the preview: a ≤480p MP4 with sound plus a poster, or an image ≤1080 px (a
+     video that can't be fetched falls back to its thumbnail);
   3. for a video, one vision call on a contact sheet (if a vision model is set in
      Settings): what it shows, and whether it carries a logo or watermark;
   4. stored as idea_media (its own storage budget; when full, the oldest
@@ -33,10 +34,39 @@ from ..runner import Handler, JobContext, Retryable
 VISION = OpenAIVision
 
 
+PLATFORMS = {"bluesky": "Bluesky", "mastodon": "Mastodon", "lemmy": "Lemmy", "youtube": "YouTube"}
+
+
 def _credit(item: dict) -> str:
     if item.get("subreddit"):
         return f"u/{item.get('author') or 'unknown'} on r/{item['subreddit']}"
-    return urlparse(item.get("url") or "").netloc.removeprefix("www.") or item.get("source", "")
+    if item.get("platform") in PLATFORMS and item.get("author"):
+        where = f"c/{item['community']}" if item.get("community") else PLATFORMS[item["platform"]]
+        return f"{item['author']} on {where}"
+    url = item.get("link") or item.get("url") or ""
+    return urlparse(url).netloc.removeprefix("www.") or item.get("source", "")
+
+
+def _origin(item: dict) -> str:
+    return item.get("platform") or ("reddit" if item.get("subreddit") else "article")
+
+
+def _video(client, item: dict, link: str, work: Path) -> Path | None:
+    if media.vreddit_id(link):
+        return media.reddit_video(client, link, work)
+    if item.get("video_url"):
+        return media.direct_video(client, item["video_url"], work)
+    if item.get("hls_url"):
+        return media.hls_video(client, item["hls_url"], work)
+    return None
+
+
+def _picture_url(client, item: dict, hint: str | None, link: str) -> str | None:
+    if hint == "image":
+        return item.get("image_url") or link
+    if hint in ("gallery", "video"):                       # a video we couldn't fetch: its thumbnail
+        return item.get("image_url") or item.get("thumbnail")
+    return media.page_image(client, item.get("link") or item.get("url") or link) or item.get("thumbnail")
 
 
 def _store(idea: dict, path: Path, name: str, content_type: str, log) -> tuple[str, int]:
@@ -115,14 +145,20 @@ def run(ctx: JobContext) -> dict:
 
         out: list[dict] = []
         try:
-            if hint == "video" and media.vreddit_id(link):
-                vid = media.reddit_video(client, link, work)
+            vid = None
+            if hint == "video":
+                try:
+                    vid = _video(client, item, link, work)
+                except Exception as e:  # noqa: BLE001 - the thumbnail still makes a card
+                    log(f"{idea['title'][:60]}: video not fetched ({type(e).__name__}: {str(e)[:160]})")
+                    analysis["video_error"] = f"{type(e).__name__}: {str(e)[:300]}"
+            if vid is not None:
                 pst = media.poster(vid, work / "poster.jpg")
                 p = media.probe(vid)
                 vkey, _ = _store(idea, vid, "video.mp4", "video/mp4", log)
                 pkey, _ = _store(idea, pst, "poster.jpg", "image/jpeg", log)
                 out.append({"type": "video", "key": vkey, "poster_key": pkey, "w": p.w, "h": p.h,
-                            "seconds": round(p.seconds, 1), "has_audio": p.has_audio, "origin": "reddit",
+                            "seconds": round(p.seconds, 1), "has_audio": p.has_audio, "origin": _origin(item),
                             "source_url": item.get("url"), "credit": credit})
                 if st.get("vision_model"):
                     sheet = media.contact_sheet(vid, work / "sheet.jpg")
@@ -135,19 +171,14 @@ def run(ctx: JobContext) -> dict:
                             costs.record_llm(e.usage, kind="vision", note="unparsable description", **billed)
                         log(f"vision skipped: {e}")
             else:
-                if hint == "image":
-                    url = link
-                elif hint == "gallery":
-                    url = item.get("thumbnail")
-                else:
-                    url = media.page_image(client, item.get("url") or link) or item.get("thumbnail")
+                url = _picture_url(client, item, hint, link)
                 if url:
                     src = media.download_image(client, url, work / "source")
                     img = media.image_preview(src, work / "image.jpg")
                     p = media.probe(img)
                     ikey, _ = _store(idea, img, "image.jpg", "image/jpeg", log)
                     out.append({"type": "image", "key": ikey, "w": p.w, "h": p.h,
-                                "origin": "reddit" if item.get("subreddit") else "article",
+                                "origin": _origin(item),
                                 "source_url": item.get("url"), "credit": credit,
                                 "gallery": hint == "gallery"})
         except Exception as e:  # noqa: BLE001 - no media is a fine outcome

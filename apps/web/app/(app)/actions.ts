@@ -350,6 +350,28 @@ export async function saveRedditKeys(_: ActionState, form: FormData): Promise<Ac
   return { ok: true, message: "Saved. The ideas worker uses Reddit's API from its next batch." };
 }
 
+/** A YouTube Data API key (a Google Cloud API key) for the trending-chart source. Write-only. */
+export async function saveYouTubeKey(_: ActionState, form: FormData): Promise<ActionState> {
+  const user = await requireUser();
+  if (form.get("remove") === "1") {
+    await asUser(user.id, (db) => db.query("delete from user_keys where name = 'youtube_api_key'"));
+    refresh();
+    return { ok: true, message: "Removed — YouTube trending sources will pause." };
+  }
+  const key = String(form.get("key") ?? "").trim();
+  if (!/^AIza[0-9A-Za-z_-]{35}$/.test(key))
+    return { ok: false, error: "That isn't a Google API key (they start with AIza and are 39 characters)." };
+  try {
+    await asUser(user.id, (db) => db.query(
+      `insert into user_keys (user_id, name, ciphertext, updated_at) values ($1, 'youtube_api_key', $2, now())
+       on conflict (user_id, name) do update set ciphertext = $2, updated_at = now()`,
+      [user.id, encrypt(key)]));
+  } catch (err) {
+    return { ok: false, error: friendly(err) };
+  }
+  refresh();
+  return { ok: true, message: "Saved. YouTube trending sources work from the next batch." };
+}
 
 /** Re-read which models the stored key can use (the ideas worker does it: the web
  *  can't read the key back). Daily it happens by itself. */

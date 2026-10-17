@@ -6,7 +6,7 @@ import { requireUser } from "@/lib/session";
 import { userSettings } from "@/lib/posts";
 
 import { SignOutButton } from "../sign-out-button";
-import { KeyForm, PricesForm, RedditKeysForm, SettingsForm } from "./settings-forms";
+import { KeyForm, PricesForm, RedditKeysForm, SettingsForm, YouTubeKeyForm } from "./settings-forms";
 
 export const metadata = { title: "Settings · Content Corpus" };
 
@@ -22,6 +22,7 @@ export default async function SettingsPage() {
     userSettings(user.id), monthUsage(user.id), priceTable(user.id)]);
   const openai = keys.find((k) => k.name === "openai");
   const reddit = keys.some((k) => k.name === "reddit_client_id");
+  const youtube = keys.some((k) => k.name === "youtube_api_key");
   const byChannel = new Map<string, { kind: string; amount: number | null; unpriced: number }[]>();
   for (const r of usage.rows)
     byChannel.set(r.channel, [...(byChannel.get(r.channel) ?? []),
@@ -86,11 +87,25 @@ export default async function SettingsPage() {
 
       <section className="flex flex-col gap-3 rounded-xl border border-border bg-surface p-5">
         <div>
+          <h2 className="font-medium">YouTube API key (for trending sources)</h2>
+          <p className="mt-1 text-sm text-muted">
+            Lets a category follow YouTube&apos;s most-popular chart. Free: in Google Cloud Console (the project you use for
+            sign-in), open APIs &amp; Services → Credentials → Create credentials → API key, and restrict it to the
+            YouTube Data API v3. It reads public charts only — never your channel — and uses 1 of the 10,000 daily
+            quota units per read. Stored encrypted.
+          </p>
+          <p className="mt-2 text-sm">{youtube ? "Saved." : "Not set — YouTube trending sources wait for it."}</p>
+        </div>
+        <YouTubeKeyForm saved={youtube} />
+      </section>
+
+      <section className="flex flex-col gap-3 rounded-xl border border-border bg-surface p-5">
+        <div>
           <h2 className="font-medium">Reddit API (optional)</h2>
           <p className="mt-1 text-sm text-muted">
             Without keys, communities are read through Reddit&apos;s public feeds — about one request a minute, which is
-            enough for daily ideas. Keys add vote counts and NSFW flags, but Reddit now approves every app by hand
-            (weeks, often refused) and wants written permission for commercial use.
+            enough for daily ideas. Reddit ends those feeds on 13 Nov 2026 and stops taking new API requests on
+            31 Oct 2026; its public API closes in March 2027. Follow topics on Bluesky, Mastodon or Lemmy as well.
           </p>
           <p className="mt-2 text-sm">{reddit ? "Saved — the ideas worker uses the API." : "Not set — using public feeds."}</p>
         </div>

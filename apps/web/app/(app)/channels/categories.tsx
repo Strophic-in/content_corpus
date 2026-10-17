@@ -16,20 +16,47 @@ export type CategoryData = {
   id: string; name: string; color: string; brief: string; keywords: string; format_id: string | null;
   ideas_per_batch: number; enabled: boolean; sources: SourceRow[]; checking: boolean;
   suggestion: { state: string; result: { communities?: { name: string; exists: boolean; why: string }[];
+                                         lemmy?: { name: string; exists: boolean; why: string }[];
+                                         hashtags?: { name: string; why: string }[];
                                          sites?: { domain: string; feeds: number; why: string }[] } | null } | null;
 };
 
-const KINDS: { kind: SourceKind; label: string; placeholder: string }[] = [
-  { kind: "reddit", label: "Reddit community", placeholder: "r/worldnews" },
+const KINDS: { kind: SourceKind; label: string; placeholder: string; note?: string }[] = [
+  { kind: "reddit", label: "Reddit community", placeholder: "r/worldnews",
+    note: "Reddit ends its public feeds on 13 Nov 2026 — add Bluesky, Mastodon or Lemmy too." },
+  { kind: "bluesky", label: "Bluesky", placeholder: "whats-hot, trending, or a feed link",
+    note: "whats-hot is Bluesky's Discover feed; topic feeds are links like bsky.app/profile/…/feed/…" },
+  { kind: "mastodon", label: "Mastodon", placeholder: "mastodon.social or #science",
+    note: "A server's trending posts and links, or one hashtag (#science, or #science@fosstodon.org)." },
+  { kind: "lemmy", label: "Lemmy community", placeholder: "technology@lemmy.world",
+    note: "Reddit-like communities: today's top posts of one (pics@lemmy.world) or a whole server (lemmy.world)." },
+  { kind: "hackernews", label: "Hacker News", placeholder: "front page, or search terms" },
+  { kind: "youtube", label: "YouTube trending", placeholder: "IN",
+    note: "The country's most-popular videos (thumbnails only). Needs a YouTube API key in Settings." },
   { kind: "site", label: "News site", placeholder: "reuters.com" },
   { kind: "rss", label: "RSS feed", placeholder: "https://example.com/feed.xml" },
   { kind: "search", label: "News search", placeholder: "monsoon floods Kerala" },
   { kind: "google_trends", label: "Google Trends", placeholder: "IN" },
   { kind: "wikipedia", label: "Wikipedia most read", placeholder: "en" },
 ];
+const YT_CATEGORIES: [string, string][] = [
+  ["", "All videos"], ["25", "News & Politics"], ["28", "Science & Technology"], ["24", "Entertainment"],
+  ["23", "Comedy"], ["17", "Sports"], ["20", "Gaming"], ["10", "Music"], ["26", "Howto & Style"], ["27", "Education"],
+  ["22", "People & Blogs"], ["1", "Film & Animation"], ["2", "Autos & Vehicles"], ["15", "Pets & Animals"],
+  ["19", "Travel & Events"],
+];
 const SHOW: Record<SourceKind, (v: string) => string> = {
   reddit: (v) => `r/${v}`, site: (v) => v, rss: (v) => v.replace(/^https?:\/\//, ""), search: (v) => `“${v}”`,
   google_trends: (v) => `Google Trends · ${v}`, wikipedia: (v) => `Wikipedia most read · ${v}`,
+  bluesky: (v) => v === "whats-hot" ? "Bluesky · What's Hot" : v === "trending" ? "Bluesky · trending topics"
+    : `Bluesky feed · ${v.split("/feed/")[1] ?? v}`,
+  mastodon: (v) => v.startsWith("#") ? `Mastodon ${v.replace("@", " · ")}` : `Mastodon trending · ${v}`,
+  lemmy: (v) => v.includes("@") ? `Lemmy c/${v.replace("@", " · ")}` : `Lemmy top · ${v}`,
+  hackernews: (v) => v === "front_page" ? "Hacker News front page" : `Hacker News “${v}”`,
+  youtube: (v) => {
+    const [region, cat] = v.split(":");
+    return `YouTube trending · ${region}${cat ? ` · ${YT_CATEGORIES.find(([id]) => id === cat)?.[1] ?? cat}` : ""}`;
+  },
 };
 const COLORS = ["#ef4444", "#f97316", "#eab308", "#22c55e", "#14b8a6", "#3b82f6", "#818cf8", "#a855f7", "#ec4899"];
 const input = "rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:border-accent";
@@ -54,10 +81,13 @@ function CategoryFields({ c, formats }: { c?: CategoryData; formats: { id: strin
           {formats.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
         </select>
       </label>
-      <label className="flex flex-col gap-1 text-sm sm:col-span-2">Brief — what to take and what to refuse
-        <textarea name="brief" rows={3} maxLength={2000} defaultValue={c?.brief}
-                  placeholder="Arrests, verdicts and raids with a clear consequence. Never name victims or minors; nobody is guilty before a verdict."
+      <label className="flex flex-col gap-1 text-sm sm:col-span-2">
+        <span>Category prompt <span className="text-muted">— what the agent should look for, take and refuse</span></span>
+        <textarea name="brief" rows={6} maxLength={4000} defaultValue={c?.brief}
+                  placeholder={"Arrests, verdicts and raids in India with a clear consequence. Prefer stories that come with video.\n"
+                    + "Never name victims or minors; nobody is guilty before a verdict. Skip celebrity gossip."}
                   className={input} />
+        <span className="text-xs text-muted">Used when finding ideas for this category and when writing each of its scripts.</span>
       </label>
       <label className="flex flex-col gap-1 text-sm">Keywords
         <input name="keywords" maxLength={500} defaultValue={c?.keywords} placeholder="court, arrest, police" className={input} />
@@ -86,13 +116,14 @@ function CategoryFields({ c, formats }: { c?: CategoryData; formats: { id: strin
 }
 
 function Sources({ c }: { c: CategoryData }) {
-  const [kind, setKind] = useState<SourceKind>("reddit");
+  const [kind, setKind] = useState<SourceKind>("bluesky");
   const [value, setValue] = useState("");
+  const [ytCat, setYtCat] = useState("");
   const [state, setState] = useState<ActionState>(null);
   const [pending, start] = useTransition();
   const meta = KINDS.find((k) => k.kind === kind)!;
   const add = (k: SourceKind, v: string) => start(async () => {
-    const r = await addSource(c.id, k, v);
+    const r = await addSource(c.id, k, k === "youtube" && ytCat && !v.includes(":") ? `${v.trim()}:${ytCat}` : v);
     setState(r);
     if (r?.ok) setValue("");
   });
@@ -124,19 +155,26 @@ function Sources({ c }: { c: CategoryData }) {
         <input value={value} onChange={(e) => setValue(e.target.value)} placeholder={meta.placeholder}
                onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); add(kind, value); } }}
                aria-label="Source" className={`${input} min-w-0 flex-1`} />
+        {kind === "youtube" && (
+          <select value={ytCat} onChange={(e) => setYtCat(e.target.value)} aria-label="YouTube category" className={input}>
+            {YT_CATEGORIES.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
+          </select>
+        )}
         <button onClick={() => add(kind, value)} disabled={pending}
                 className="rounded-md bg-accent px-4 py-2 text-sm font-medium text-accent-foreground disabled:opacity-60">Add</button>
       </div>
+      {meta.note && <p className="-mt-1 text-xs text-muted">{meta.note}</p>}
       <div className="flex flex-wrap gap-3 text-sm">
         <button disabled={pending || c.checking} onClick={() => start(async () => setState(await categoryJob(c.id, "check")))}
                 className="text-accent hover:underline disabled:opacity-50">{c.checking ? "Checking…" : "Check sources now"}</button>
         <button disabled={pending || c.suggestion?.state === "queued" || c.suggestion?.state === "claimed"}
                 onClick={() => start(async () => setState(await categoryJob(c.id, "suggest")))}
                 className="text-accent hover:underline disabled:opacity-50">
-          {c.suggestion?.state === "queued" || c.suggestion?.state === "claimed" ? "Finding communities…" : "Suggest communities and sites"}
+          {c.suggestion?.state === "queued" || c.suggestion?.state === "claimed" ? "Finding sources…" : "Suggest sources"}
         </button>
       </div>
-      {s && ((s.communities?.length ?? 0) + (s.sites?.length ?? 0) > 0) && (
+      {s && ((s.communities?.length ?? 0) + (s.lemmy?.length ?? 0) + (s.hashtags?.length ?? 0)
+             + (s.sites?.length ?? 0) > 0) && (
         <div className="rounded-xl bg-background p-3 text-sm">
           <p className="font-medium">Suggestions</p>
           <ul className="mt-2 flex flex-col gap-2">
@@ -145,6 +183,20 @@ function Sources({ c }: { c: CategoryData }) {
                 <span className="min-w-0 flex-1"><b>r/{m.name}</b>{!m.exists && <span className="text-warn"> · not confirmed</span>}
                   <span className="block text-xs text-muted">{m.why}</span></span>
                 <button onClick={() => add("reddit", m.name)} disabled={pending} className="text-xs font-medium text-accent">Add</button>
+              </li>
+            ))}
+            {s.lemmy?.map((m) => (
+              <li key={m.name} className="flex items-start gap-2">
+                <span className="min-w-0 flex-1"><b>Lemmy c/{m.name}</b>{!m.exists && <span className="text-warn"> · not confirmed</span>}
+                  <span className="block text-xs text-muted">{m.why}</span></span>
+                <button onClick={() => add("lemmy", m.name)} disabled={pending} className="text-xs font-medium text-accent">Add</button>
+              </li>
+            ))}
+            {s.hashtags?.map((m) => (
+              <li key={m.name} className="flex items-start gap-2">
+                <span className="min-w-0 flex-1"><b>Mastodon #{m.name}</b>
+                  <span className="block text-xs text-muted">{m.why}</span></span>
+                <button onClick={() => add("mastodon", `#${m.name}`)} disabled={pending} className="text-xs font-medium text-accent">Add</button>
               </li>
             ))}
             {s.sites?.map((m) => (
@@ -209,8 +261,8 @@ export function CategoriesSection({ channelId, categories, formats }: {
       <div>
         <h2 className="font-medium">Categories</h2>
         <p className="text-sm text-muted">
-          What this channel covers. Each category has its own sources — Reddit communities, news sites, feeds — and
-          its cards carry its tag in Discover.
+          What this channel covers. Each category has its own prompt and sources — communities, social feeds, news
+          sites — and its cards carry its tag in Discover.
         </p>
       </div>
       {categories.map((c) => <CategoryCard key={c.id} c={c} formats={formats} />)}

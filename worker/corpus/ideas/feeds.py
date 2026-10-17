@@ -154,6 +154,14 @@ def _age(dt: datetime | None) -> str:
     return f", {max(0, round(hours))}h ago" if hours < 48 else f", {round(hours / 24)}d ago"
 
 
+def _reach(i: Item) -> str:
+    """How many people took notice, where the source says (likes, votes, views)."""
+    views, score = i.extra.get("views"), i.extra.get("score")
+    if views:
+        return f", {views:,} views"
+    return f", {score:,} votes" if isinstance(score, int) and score > 0 else ""
+
+
 def as_prompt(items: list[Item], limit: int = 70) -> str:
     """Numbered, so the model can say which items an idea came from. A media hint
     (video, image) tells it which stories come with footage or pictures."""
@@ -162,6 +170,6 @@ def as_prompt(items: list[Item], limit: int = 70) -> str:
     lines = []
     for n, i in enumerate(items[:limit], 1):
         media = f" · {i.media_hint}" if i.media_hint in ("video", "image", "gallery") else ""
-        lines.append(f"{n}. [{i.source}{media}{_age(i.published)}] {i.title}"
+        lines.append(f"{n}. [{i.source}{media}{_age(i.published)}{_reach(i)}] {i.title}"
                      + (f" — {i.summary}" if i.summary else "") + (f" ({i.url})" if i.url else ""))
     return "\n".join(lines)

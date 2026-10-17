@@ -98,7 +98,7 @@ def _record_outcomes(outcomes: list[sources.Outcome]) -> None:
 
 
 def _has_media(it: feeds.Item) -> bool:
-    """A picture may be had: Reddit media, or an article's lead picture (og:image)."""
+    """A picture may be had: a post's own media, or an article's lead picture (og:image)."""
     if it.media_hint in ("video", "image", "gallery"):
         return True
     return it.media_hint in ("link", "") and (bool(it.extra.get("thumbnail")) or it.url.startswith("http"))
@@ -145,7 +145,8 @@ def run(ctx: JobContext) -> dict:
     with httpx.Client(timeout=30) as client:
         rid, rsecret = vault.secret(cat["user_id"], "reddit_client_id"), vault.secret(cat["user_id"], "reddit_client_secret")
         api = reddit.RedditAPI(client, rid, rsecret) if rid and rsecret else None
-        items, outcomes = FETCH(rows, client=client, api=api, log=log)
+        items, outcomes = FETCH(rows, client=client, api=api, log=log,
+                                youtube_key=vault.secret(cat["user_id"], "youtube_api_key"))
     _record_outcomes(outcomes)
     cands, cuts = select.prefilter(items, keep=CANDIDATES)
     if cuts:
@@ -158,7 +159,8 @@ def run(ctx: JobContext) -> dict:
     system = prompts.fill(template + OUTPUT_NOTE, {
         **{k: prof.get(k) or "(not set)" for k in channels.PROFILE_KEYS},
         "format_name": fmt["name"], "format_description": fmt["description"] or "(none)",
-        "category_name": cat["name"], "category_brief": cat["brief"] or "(no brief: follow the channel's niche)",
+        "category_name": cat["name"],
+        "category_brief": cat["brief"] or "(no category prompt: follow the channel's niche)",
         "category_keywords": cat["keywords"] or "(none)",
         "trends": feeds.as_prompt(cands),
         "avoid": "\n".join(f"- {t}" for t in avoid) or "(nothing yet)",

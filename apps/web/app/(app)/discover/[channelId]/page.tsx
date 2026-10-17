@@ -24,7 +24,7 @@ type Row = {
   media_state: string; created_at: Date;
   media: { type: "image" | "video"; w: number; h: number; seconds?: number; credit?: string; gallery?: boolean;
            poster_key?: string }[];
-  items: { url?: string; title?: string; source?: string; subreddit?: string; author?: string }[];
+  items: { url?: string; title?: string; source?: string; subreddit?: string; author?: string; platform?: string }[];
   sources: { url: string }[];
   analysis: { video?: { summary?: string; logos_or_watermarks?: boolean; logo_names?: string[]; graphic?: boolean;
                         identifiable_people?: boolean } } | null;
@@ -58,7 +58,9 @@ function card(r: Row, cats: Map<string, { id: string; name: string; color: strin
     .filter((s) => s.url)
     .map((s) => s.subreddit
       ? { url: s.url!, label: `r/${s.subreddit}`, detail: s.author ? `u/${s.author}` : undefined }
-      : { url: s.url!, label: host(s.url!), detail: s.title && s.title !== r.title ? s.title : undefined });
+      : s.platform && s.source
+        ? { url: s.url!, label: s.source, detail: s.author ?? undefined }
+        : { url: s.url!, label: host(s.url!), detail: s.title && s.title !== r.title ? s.title : undefined });
   return {
     id: r.id, title: r.title, hook: r.hook, brief: r.brief, whyNow: r.why_now,
     category: r.category_id ? cats.get(r.category_id) ?? null : null,

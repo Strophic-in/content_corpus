@@ -3,7 +3,9 @@
 import { useRouter } from "next/navigation";
 import { useActionState, useState, useTransition } from "react";
 
-import { refreshModels, saveOpenAIKey, savePrices, saveRedditKeys, saveSettings, type ActionState } from "../actions";
+import {
+  refreshModels, saveOpenAIKey, savePrices, saveRedditKeys, saveSettings, saveYouTubeKey, type ActionState,
+} from "../actions";
 
 /** The key's model list, re-read now (new models also appear by themselves daily). */
 function RefreshModels() {
@@ -195,6 +197,22 @@ export function RedditKeysForm({ saved }: { saved: boolean }) {
         <input name="client_id" autoComplete="off" spellCheck={false} placeholder="Client id" className={input} />
         <input name="client_secret" type="password" autoComplete="off" spellCheck={false} placeholder="Client secret" className={input} />
       </div>
+      <div className="flex flex-wrap items-center gap-3">
+        <button disabled={pending} className="rounded-md bg-accent px-4 py-2 text-sm font-medium text-accent-foreground disabled:opacity-60">
+          {pending ? "Saving…" : saved ? "Replace" : "Save"}
+        </button>
+        {saved && <button name="remove" value="1" disabled={pending} className="text-sm text-danger hover:underline">Remove</button>}
+      </div>
+      <Feedback state={state} />
+    </form>
+  );
+}
+
+export function YouTubeKeyForm({ saved }: { saved: boolean }) {
+  const [state, action, pending] = useActionState<ActionState, FormData>(saveYouTubeKey, null);
+  return (
+    <form action={action} className="flex flex-col gap-2">
+      <input name="key" type="password" autoComplete="off" spellCheck={false} placeholder="AIza…" className={input} />
       <div className="flex flex-wrap items-center gap-3">
         <button disabled={pending} className="rounded-md bg-accent px-4 py-2 text-sm font-medium text-accent-foreground disabled:opacity-60">
           {pending ? "Saving…" : saved ? "Replace" : "Save"}

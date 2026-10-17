@@ -5,8 +5,9 @@ notices, reviews and buying guides, deals, listicles and roundups, opinion and
 live blogs, daily-utility pages, press releases — and says which, so the log can
 show an over-eager pattern. score() ranks the survivors by what predicts a
 stop-scroll: a consequence ("arrested", "banned", "collapses"), a real figure,
-freshness, and — new here — the post's rank in Reddit's top-of-day and whether
-it comes with video or pictures. Only the top few reach the model, which may
+freshness, and — new here — the post's rank where people voted on it (Reddit's
+top-of-day, Bluesky's and Mastodon's trending, Lemmy, Hacker News, YouTube's
+chart) and whether it comes with video or pictures. Only the top few reach the model, which may
 then still pick none of them.
 """
 
@@ -60,6 +61,8 @@ _STAKES_RE = re.compile(
 _MONEY_RE = re.compile(
     r"[₹$€£]\s?\d|\b\d[\d,.]*\s?(crore|lakh|billion|million|trillion|bn|mn|k)\b|\b\d+(\.\d+)?%", re.IGNORECASE)
 _NUMBER_RE = re.compile(r"\d")
+# Sources ordered by what people voted for or shared: their rank is a signal.
+_VOTED = {"bluesky", "mastodon", "lemmy", "hackernews", "youtube"}
 
 
 def junk_reason(title: str) -> str | None:
@@ -92,9 +95,8 @@ def score(item: Item) -> float:
         s += 0.5
     elif words > 20:
         s -= 1.0
-    reddit = item.extra.get("subreddit") is not None
-    if reddit:
-        # Rank in top-of-day is Reddit's own vote count, the best signal there is.
+    if item.extra.get("subreddit") is not None or item.extra.get("platform") in _VOTED:
+        # Rank in top-of-day or trending is people's own vote, the best signal there is.
         s += 3.0 if item.rank < 5 else 2.0 if item.rank < 15 else 1.0 if item.rank < 30 else 0
     elif title.rstrip().endswith("?"):
         s -= 1.5            # on news sites a question headline is usually opinion or SEO bait

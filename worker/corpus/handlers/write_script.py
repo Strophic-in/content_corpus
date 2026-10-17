@@ -83,6 +83,7 @@ def run(ctx: JobContext) -> dict:
         st = c.execute("select * from app_settings where user_id = %s",
                        (post["user_id"],)).fetchone() or {}
         st = {**st, **channels.profile(c, post["user_id"], post.get("channel_id"))}
+        category = _category(c, post)
         rejected = c.execute(
             """select rejection_note, title from scripts
                 where post_id = %s and state = 'rejected' and rejection_note is not null
@@ -108,7 +109,7 @@ def run(ctx: JobContext) -> dict:
     narrated = post["audio_source"] == "kokoro"
     speed = float(st.get("narrator_speed") or 1.1)
     system = _system_prompt(st, target, revision, post["audio_source"], speed, fmt)
-    user = f"Topic: {post['topic']}\nBrief: {post['brief'] or '(none)'}"
+    user = f"Topic: {post['topic']}\nBrief: {post['brief'] or '(none)'}" + _category_note(category)
     input_sha = hashlib.sha256("\x1f".join([system, user, model]).encode()).hexdigest()
 
     writer: ScriptWriter = WRITER_FACTORY(key)
@@ -184,11 +185,26 @@ def run(ctx: JobContext) -> dict:
             "shots": len(shot_plan), "tokens": usage.input_tokens + usage.output_tokens}
 
 
+def _category(c, post: dict) -> dict | None:
+    if not post.get("category_id"):
+        return None
+    return c.execute("select name, brief from categories where id = %s", (post["category_id"],)).fetchone()
+
+
+def _category_note(category: dict | None) -> str:
+    """The owner's prompt for the category this post came from: what it is for, and its rules."""
+    if not category or not (category.get("brief") or "").strip():
+        return ""
+    return f"\n\n## Category: {category['name']}\nThe owner's instructions for this category:\n{category['brief'].strip()}"
+
+
 def _desk_review(key: str, model: str, out, post: dict, billed: dict) -> list[str]:
     """[] when the script may be approved unattended; else what stops it."""
     with db.conn() as c:
         items = c.execute("select items from ideas where post_id = %s", (post["id"],)).fetchone()
-    lines = [f"Topic: {post['topic']}", f"Brief: {post['brief'] or '(none)'}"]
+    with db.conn() as c:
+        category = _category(c, post)
+    lines = [f"Topic: {post['topic']}", f"Brief: {post['brief'] or '(none)'}" + _category_note(category)]
     for it in (items or {}).get("items") or []:
         lines.append(f"- {it.get('source', '')}: {it.get('title', '')} — {it.get('summary', '')} ({it.get('url', '')})")
     try:

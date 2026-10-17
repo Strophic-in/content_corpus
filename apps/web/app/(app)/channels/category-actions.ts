@@ -13,7 +13,7 @@ import type { ActionState } from "../actions";
 const CategoryInput = z.object({
   name: z.string().trim().min(1, "Give the category a name.").max(60),
   color: z.string().regex(/^#[0-9a-fA-F]{6}$/, "Pick a colour."),
-  brief: z.string().trim().max(2000),
+  brief: z.string().trim().max(4000, "Keep the category prompt under 4,000 characters."),
   keywords: z.string().trim().max(500),
   format_id: z.union([z.literal(""), z.string().uuid()]).transform((v) => v || null),
   ideas_per_batch: z.coerce.number().int().min(1, "At least 1 idea.").max(30, "At most 30 ideas."),
@@ -74,13 +74,56 @@ export async function deleteCategory(categoryId: string): Promise<ActionState> {
   return { ok: true };
 }
 
-export type SourceKind = "reddit" | "site" | "rss" | "search" | "google_trends" | "wikipedia";
+export type SourceKind = "reddit" | "site" | "rss" | "search" | "google_trends" | "wikipedia"
+  | "bluesky" | "mastodon" | "lemmy" | "hackernews" | "youtube";
+
+const HOST = /^[a-z0-9-]+(\.[a-z0-9-]+)+$/;
+const bareHost = (v: string) => v.replace(/^https?:\/\//i, "").replace(/\/.*$/, "").toLowerCase();
 
 /** What the owner typed → the stored value, or an error to show. */
 function normalize(kind: SourceKind, raw: string): { value?: string; error?: string } {
   const v = raw.trim();
   if (!v) return { error: "Type something first." };
   switch (kind) {
+    case "bluesky": {
+      if (/^(what'?s[- ]?hot|discover)$/i.test(v)) return { value: "whats-hot" };
+      if (/^trending( topics)?$/i.test(v)) return { value: "trending" };
+      const at = v.match(/^at:\/\/([^/]+)\/app\.bsky\.feed\.generator\/([A-Za-z0-9_-]+)$/);
+      if (at) return { value: `https://bsky.app/profile/${at[1]}/feed/${at[2]}` };
+      const m = v.match(/^https?:\/\/(www\.)?bsky\.app\/profile\/([A-Za-z0-9.:_-]+)\/feed\/([A-Za-z0-9_-]+)\/?$/);
+      return m ? { value: `https://bsky.app/profile/${m[2]}/feed/${m[3]}` }
+        : { error: "Type whats-hot, trending, or paste a feed link (bsky.app/profile/…/feed/…)." };
+    }
+    case "mastodon": {
+      const tagUrl = v.match(/^https?:\/\/([^/]+)\/tags\/([A-Za-z0-9_]+)/i);
+      if (tagUrl) return { value: `#${tagUrl[2]}@${tagUrl[1].toLowerCase()}` };
+      const tag = v.match(/^#([A-Za-z0-9_]{1,100})(?:@(.+))?$/);
+      if (tag) {
+        const host = bareHost(tag[2] ?? "mastodon.social");
+        return HOST.test(host) ? { value: `#${tag[1]}@${host}` } : { error: "That isn't a Mastodon server (like mastodon.social)." };
+      }
+      const host = bareHost(v);
+      return HOST.test(host) ? { value: host } : { error: "Type a server (mastodon.social) or a hashtag (#science)." };
+    }
+    case "lemmy": {
+      const url = v.match(/^https?:\/\/([^/]+)\/c\/([A-Za-z0-9_]{1,50})(?:@([^/]+))?/i);
+      if (url) return { value: `${url[2]}@${(url[3] ?? url[1]).toLowerCase()}` };
+      const comm = v.replace(/^!/, "").match(/^(?:c\/)?([A-Za-z0-9_]{1,50})@(.+)$/i);
+      if (comm) {
+        const host = bareHost(comm[2]);
+        return HOST.test(host) ? { value: `${comm[1]}@${host}` } : { error: "That isn't a Lemmy server (like lemmy.world)." };
+      }
+      const host = bareHost(v);
+      return HOST.test(host) ? { value: host }
+        : { error: "Type a server (lemmy.world) or a community on one (technology@lemmy.world)." };
+    }
+    case "hackernews":
+      if (/^(front[ _-]?page|top|frontpage)$/i.test(v)) return { value: "front_page" };
+      return v.length <= 200 ? { value: v } : { error: "Keep search terms under 200 characters." };
+    case "youtube": {
+      const m = v.toUpperCase().match(/^([A-Z]{2})(?::(\d{1,3}))?$/);
+      return m ? { value: m[2] ? `${m[1]}:${m[2]}` : m[1] } : { error: "Use a two-letter country code, like IN or US." };
+    }
     case "reddit": {
       const name = v.replace(/^https?:\/\/(www\.|old\.)?reddit\.com/i, "").replace(/^\/?r\//i, "").replace(/\/.*$/, "");
       return /^[A-Za-z0-9_]{2,21}$/.test(name) ? { value: name } : { error: "That isn't a community name (like r/worldnews)." };

@@ -1,27 +1,35 @@
 """A category's sources → one interleaved list of trend items, and how each source did.
 
 Reddit communities of a category are fetched together (one request per sort
-order, see reddit.py); every other source on its own. A source that fails is
-reported, not fatal: the batch goes on with whatever answered, and the caller
-records the error (and backs off) on that source.
+order, see reddit.py); every other source on its own — Bluesky, Mastodon, Lemmy,
+Hacker News and YouTube's chart in social.py. A source that fails is reported,
+not fatal: the batch goes on with whatever answered, and the caller records the
+error (and backs off) on that source.
+
+Reddit ends its public RSS feeds on REDDIT_RSS_END. Its sources keep being tried
+(they cost one request) but, from that day, say why they fail and are not
+retried one community at a time.
 """
 
 from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Callable
 
 import httpx
 
 from .. import net
-from . import feeds, reddit, sites
+from . import feeds, reddit, sites, social
 
 PER_SOURCE = 15
 WIKI = "https://api.wikimedia.org/feed/v1/wikipedia/{lang}/featured/{yesterday}"
 TRENDS = "https://trends.google.com/trending/rss?geo={geo}"
 ONE_BY_ONE_BUDGET_S = 480       # when a combined Reddit request fails, how long to spend retrying singly
+REDDIT_RSS_END = date(2026, 11, 13)
+SOCIAL = {"bluesky": social.bluesky, "mastodon": social.mastodon, "lemmy": social.lemmy,
+          "hackernews": social.hackernews}
 
 
 @dataclass
@@ -30,6 +38,13 @@ class Outcome:
     ok: bool
     items: int = 0
     error: str | None = None
+
+
+def _reddit_error(e: reddit.RedditError) -> str:
+    if date.today() >= REDDIT_RSS_END and e.status in (403, 404, 410):
+        return (f"{e} — Reddit ended its public feeds on 13 Nov 2026; follow this topic on Bluesky, "
+                "Mastodon or Lemmy instead")
+    return str(e)
 
 
 def _reddit_item(p: reddit.Post) -> feeds.Item:
@@ -69,8 +84,8 @@ def _reddit(rows: list[dict], client: httpx.Client, api: reddit.RedditAPI | None
                 out.append(Outcome(str(g["id"]), True, len(fetched.get(g["value"].lower(), []))))
             log(f"reddit r/{'+'.join(subs)} ({sort}): {len(posts)} posts")
         except reddit.RedditError as e:
-            if len(group) == 1 or e.status not in (403, 404):
-                out += [Outcome(str(g["id"]), False, error=str(e)) for g in group]
+            if len(group) == 1 or e.status not in (403, 404) or date.today() >= REDDIT_RSS_END:
+                out += [Outcome(str(g["id"]), False, error=_reddit_error(e)) for g in group]
                 log(f"reddit r/{'+'.join(subs)}: {e}")
                 continue
             # One bad community (banned, private, misspelt) fails the whole combined
@@ -90,8 +105,12 @@ def _reddit(rows: list[dict], client: httpx.Client, api: reddit.RedditAPI | None
     return items, out
 
 
-def _one(row: dict, client: httpx.Client) -> list[feeds.Item]:
+def _one(row: dict, client: httpx.Client, youtube_key: str | None = None) -> list[feeds.Item]:
     kind, value, opts = row["kind"], row["value"], row.get("options") or {}
+    if kind in SOCIAL:
+        return SOCIAL[kind](client, value)
+    if kind == "youtube":
+        return social.youtube(client, value, youtube_key)
     if kind == "rss":
         return sites.read_feed(client, opts.get("name") or sites.host_key(value) or value, value)[:PER_SOURCE]
     if kind == "site":
@@ -120,6 +139,7 @@ def _one(row: dict, client: httpx.Client) -> list[feeds.Item]:
 
 
 def fetch(rows: list[dict], *, client: httpx.Client, api: reddit.RedditAPI | None = None,
+          youtube_key: str | None = None,
           log: Callable[[str], None] = print) -> tuple[list[feeds.Item], list[Outcome]]:
     """All of a category's enabled sources → (items interleaved by source, outcomes)."""
     per_source: list[list[feeds.Item]] = []
@@ -136,12 +156,13 @@ def fetch(rows: list[dict], *, client: httpx.Client, api: reddit.RedditAPI | Non
         if row["kind"] == "reddit":
             continue
         try:
-            got = _one(row, client)
+            got = _one(row, client, youtube_key)
             per_source.append(got)
             outcomes.append(Outcome(str(row["id"]), True, len(got)))
             log(f"{row['kind']} {row['value'][:60]}: {len(got)} items")
         except Exception as e:  # noqa: BLE001 - one bad source must not sink the batch
-            outcomes.append(Outcome(str(row["id"]), False, error=f"{type(e).__name__}: {str(e)[:200]}"))
+            why = str(e)[:200] if isinstance(e, social.SourceError) else f"{type(e).__name__}: {str(e)[:200]}"
+            outcomes.append(Outcome(str(row["id"]), False, error=why))
             log(f"{row['kind']} {row['value'][:60]}: skipped ({type(e).__name__}: {str(e)[:120]})")
     merged, seen = [], set()
     for n in range(max((len(s) for s in per_source), default=0)):
