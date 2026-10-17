@@ -10,11 +10,9 @@ export function proxy(request: NextRequest) {
 
   // The homepage is public: Google's app verification rejects one behind a login.
   if (pathname === "/") return NextResponse.next();
-  if (pathname === "/login") {
-    return hasSession
-      ? NextResponse.redirect(new URL("/discover", request.url))
-      : NextResponse.next();
-  }
+  // The login page checks the session itself: a stale cookie (its session ended on
+  // the server) used to bounce between /login and /discover forever.
+  if (pathname === "/login") return NextResponse.next();
   if (!hasSession) {
     return NextResponse.redirect(new URL("/login", request.url));
   }

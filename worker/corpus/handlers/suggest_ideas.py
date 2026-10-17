@@ -18,6 +18,11 @@ deleted, in Postgres and in the memory; accepted ones (posts) are kept.
 
 Payloads from before categories ({"format_id": …}) are mapped to that format's
 category.
+
+As idea_from_video (Explore YouTube → "Make an idea"), the payload carries one
+YouTube video: it is the only item, one idea is asked for (or none, if it doesn't
+suit the channel), the category's sources aren't read, and a category whose
+daily batches are off still takes it — the owner asked for this one.
 """
 
 from __future__ import annotations
@@ -110,13 +115,26 @@ def _item_json(it: feeds.Item) -> dict:
             "media_hint": it.media_hint, **{k: v for k, v in it.extra.items() if v not in (None, "", {})}}
 
 
+def video_item(v: dict) -> feeds.Item:
+    """An Explore YouTube result as a trend item (the shape social.youtube() gives)."""
+    thumb = v.get("thumbnail")
+    return feeds.Item(source=f"YouTube · {v.get('channel') or 'video'}", title=str(v["title"])[:200],
+                      summary=str(v.get("description") or "")[:240],
+                      url=f"https://www.youtube.com/watch?v={v['id']}", published=feeds._when(v.get("published")),
+                      rank=0, media_hint="image" if thumb else "self",
+                      extra={"platform": "youtube", "author": v.get("channel"), "image_url": thumb, "thumbnail": thumb,
+                             "views": int(v.get("views") or 0), "score": int(v.get("likes") or 0),
+                             "comments": int(v.get("comments") or 0)})
+
+
 def run(ctx: JobContext) -> dict:
     log = lambda m: print(f"[suggest_ideas] {m}", flush=True)  # noqa: E731
+    video = ctx.payload.get("video")
     with db.conn() as c:
         cat = _category(c, ctx.payload)
         if cat is None:
             return {"skipped": "category deleted"}
-        if not cat["enabled"]:
+        if not cat["enabled"] and not video:
             return {"skipped": "category is turned off"}
         fmt = _format(c, cat)
         if fmt is None:
@@ -145,17 +163,22 @@ def run(ctx: JobContext) -> dict:
     if not key:
         raise Permanent("Add your OpenAI API key in Settings.", stage="config")
 
-    with httpx.Client(timeout=30) as client:
-        rid, rsecret = vault.secret(cat["user_id"], "reddit_client_id"), vault.secret(cat["user_id"], "reddit_client_secret")
-        api = reddit.RedditAPI(client, rid, rsecret) if rid and rsecret else None
-        items, outcomes = FETCH(rows, client=client, api=api, log=log,
-                                youtube_key=vault.secret(cat["user_id"], "youtube_api_key"))
-    _record_outcomes(outcomes)
-    cands, cuts = select.prefilter(items, keep=CANDIDATES)
-    if cuts:
-        log("cut before the model: " + ", ".join(f"{n} {why}" for why, n in sorted(cuts.items())))
+    if video:
+        items = cands = [video_item(video)]
+        cuts: dict = {}
+    else:
+        with httpx.Client(timeout=30) as client:
+            rid, rsecret = (vault.secret(cat["user_id"], "reddit_client_id"),
+                            vault.secret(cat["user_id"], "reddit_client_secret"))
+            api = reddit.RedditAPI(client, rid, rsecret) if rid and rsecret else None
+            items, outcomes = FETCH(rows, client=client, api=api, log=log,
+                                    youtube_key=vault.secret(cat["user_id"], "youtube_api_key"))
+        _record_outcomes(outcomes)
+        cands, cuts = select.prefilter(items, keep=CANDIDATES)
+        if cuts:
+            log("cut before the model: " + ", ".join(f"{n} {why}" for why, n in sorted(cuts.items())))
 
-    count = cat["ideas_per_batch"]
+    count = 1 if video else cat["ideas_per_batch"]
     template = fmt["idea_prompt"]
     if "{category_name}" not in template:
         template += CATEGORY_BLOCK
@@ -169,18 +192,21 @@ def run(ctx: JobContext) -> dict:
         "avoid": "\n".join(f"- {t}" for t in avoid) or "(nothing yet)",
         "rejected": "\n".join(f"- {r['title']}" + (f" — {r['reject_reason']}" if r["reject_reason"] else "")
                               for r in rejected) or "(nothing yet)",
-        "count": count + EXTRA,
+        "count": count if video else count + EXTRA,
     })
     billed = dict(user_id=cat["user_id"], channel_id=cat["channel_id"], category_id=cat["id"],
                   job_id=ctx.job.get("id"))
     try:
-        out, usage = WRITER_FACTORY(key).write(model=model, system=system,
-                                               user=f"Suggest up to {count + EXTRA} ideas now, or none.")
+        ask = ("The owner picked item 1, a trending YouTube video. Make one idea for this channel from its "
+               "story — our own video about it, never a copy of theirs — or none if it doesn't fit the channel."
+               if video else f"Suggest up to {count + EXTRA} ideas now, or none.")
+        out, usage = WRITER_FACTORY(key).write(model=model, system=system, user=ask)
     except Exception as e:  # noqa: BLE001 - classified like the script writer's
         if getattr(e, "usage", None) is not None:
             costs.record_llm(e.usage, note="unparsable idea batch", **billed)
         raise _classify_openai_error(e) from e
-    costs.record_llm(usage, note=f"ideas: {cat['name']}", **billed)
+    costs.record_llm(usage, note=f"idea from a YouTube video: {cat['name']}" if video else f"ideas: {cat['name']}",
+                     **billed)
     cands_ideas = [i.model_dump() for i in out.ideas]
     if not cands_ideas:
         log(f"{cat['name']}: nothing worth making today ({len(items)} items read)")

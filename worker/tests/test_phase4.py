@@ -284,3 +284,42 @@ def test_a_deleted_posts_reel_is_swept_but_a_living_ones_is_kept(s3, owner, user
     states = {r["key"]: r["state"] for r in owner.execute("select key, state from storage_objects where key = any(%s)",
                                                           (keys,))}
     assert states == {keys[0]: "stored", keys[1]: "deleted"}
+
+
+def test_a_youtube_video_becomes_one_idea_with_its_thumbnail(owner, user, monkeypatch):
+    from corpus.ideas.agent import Idea, IdeasOut
+    from corpus.script.llm import Usage as U
+
+    asked = {}
+
+    class Writer:
+        def __init__(self, key):
+            pass
+
+        def write(self, *, model, system, user):
+            asked["system"], asked["user"] = system, user
+            return IdeasOut(ideas=[Idea(title="Why everyone is filming the monsoon", hook="h", brief="b",
+                                        why_now="trending", items=[1])]), U(model, 500, 80)
+    monkeypatch.setattr(suggest_ideas, "WRITER_FACTORY", Writer)
+    monkeypatch.setattr(suggest_ideas, "EMBED", lambda texts: __import__("numpy").eye(len(texts), 384))
+
+    class Mem:
+        def nearest(self, ch, v): return (0.0, "")
+        def remember(self, pts): pass
+        def forget(self, ids): pass
+    monkeypatch.setattr(suggest_ideas, "MEMORY", lambda log: Mem())
+    monkeypatch.setattr(suggest_ideas, "FETCH", lambda *a, **k: pytest.fail("a video idea reads no sources"))
+    ch = owner.execute("insert into channels (user_id, name) values (%s, 'yt') returning id", (user,)).fetchone()["id"]
+    owner.execute("insert into formats (user_id, channel_id, name, idea_prompt, script_prompt, is_default) "
+                  "values (%s, %s, 'f', 'Ideas: {trends} Give {count}.', 's', true)", (user, ch))
+    cat = owner.execute("update categories set enabled = false where channel_id = %s returning id",
+                        (ch,)).fetchone()["id"]                                   # daily batches off: still works
+    video = {"id": "abc123XYZ_-", "title": "Monsoon floods Mumbai streets", "channel": "News Test",
+             "thumbnail": "https://i.ytimg.test/abc/hq.jpg", "views": 120000, "likes": 3000, "comments": 90,
+             "published": "2026-10-17T06:00:00Z"}
+    out = suggest_ideas.run(JobContext(job={"id": None, "payload": {"category_id": str(cat), "video": video}}))
+    assert out["ideas"] == 1 and "item 1, a trending YouTube video" in asked["user"]
+    assert "Monsoon floods Mumbai streets" in asked["system"] and "120,000 views" in asked["system"]
+    idea = owner.execute("select items, media_state from ideas where category_id = %s", (cat,)).fetchone()
+    assert idea["media_state"] == "pending" and idea["items"][0]["platform"] == "youtube"
+    assert idea["items"][0]["url"] == "https://www.youtube.com/watch?v=abc123XYZ_-"

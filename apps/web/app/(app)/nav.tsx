@@ -24,7 +24,8 @@ export const TABS: Tab[] = [
 ];
 
 function isActive(path: string, href: string) {
-  return path === href || path.startsWith(href + "/") || (href === "/calendar" && path.startsWith("/posts"));
+  return path === href || path.startsWith(href + "/") || (href === "/calendar" && path.startsWith("/posts"))
+    || (href === "/discover" && path.startsWith("/explore"));
 }
 
 export function DesktopNav() {

@@ -48,9 +48,14 @@ export default async function DiscoverHome() {
           <h1 className="text-2xl font-semibold tracking-tight">Discover</h1>
           <p className="text-sm text-muted">Pick a channel to swipe through its ideas.</p>
         </div>
-        <Link href="/channels" className="rounded-full border border-border px-3 py-1.5 text-sm font-medium hover:border-accent">
-          + Channel
-        </Link>
+        <span className="flex gap-2">
+          <Link href="/explore" className="rounded-full border border-border px-3 py-1.5 text-sm font-medium hover:border-accent">
+            Explore YouTube
+          </Link>
+          <Link href="/channels" className="rounded-full border border-border px-3 py-1.5 text-sm font-medium hover:border-accent">
+            + Channel
+          </Link>
+        </span>
       </div>
       {/* Every card the same shape: name, two lines of niche, then the counts and the
           accounts pinned to the bottom, so cards in a row line up whatever they hold. */}

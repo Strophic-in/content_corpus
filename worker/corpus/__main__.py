@@ -27,6 +27,7 @@ HANDLERS = {
     # and downloads never hold up scripts, segments or assembly.
     "ideas": {
         "suggest_ideas": suggest_ideas.HANDLER,
+        "idea_from_video": suggest_ideas.HANDLER,           # Explore YouTube → "Make an idea"
         "attach_media": attach_media.HANDLER,
         "check_sources": check_sources.CHECK_HANDLER,
         "suggest_sources": check_sources.SUGGEST_HANDLER,

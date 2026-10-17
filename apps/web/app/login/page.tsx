@@ -1,7 +1,10 @@
+import { headers } from "next/headers";
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { connection } from "next/server";
 
 import "@/lib/env";
+import { auth } from "@/lib/auth";
 
 import { LoginForm } from "./login-form";
 
@@ -11,6 +14,8 @@ export default async function LoginPage() {
   // Per request: the Docker build has no .env, so a prerendered page would always
   // hide the Google button.
   await connection();
+  // Already signed in (a real session, not just a cookie): straight to the app.
+  if (await auth.api.getSession({ headers: await headers() })) redirect("/discover");
   const googleEnabled = Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
   return (
     <main className="flex flex-1 items-center justify-center px-4 py-16">

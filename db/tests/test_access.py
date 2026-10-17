@@ -777,3 +777,26 @@ def test_a_channel_goes_with_its_posts_even_the_default_one(alice, owner):
         c.execute("delete from channels where id = %s", (a,))
         assert c.execute("select name, is_default from channels").fetchall() == [("B", True)]
         assert c.execute("select count(*) from posts").fetchone()[0] == 0
+
+
+# ── Explore YouTube (0020) ────────────────────────────────────────────────────
+
+def test_the_web_reads_only_its_own_youtube_key_and_queues_ideas_from_videos(alice, bob, owner):
+    owner.execute("insert into user_keys (user_id, name, ciphertext) values (%s, 'youtube_api_key', 'v1.yt.alice'), "
+                  "(%s, 'openai', 'v1.oa.alice'), (%s, 'youtube_api_key', 'v1.yt.bob')", (alice, alice, bob))
+    with web(alice) as c:
+        assert c.execute("select api.youtube_key_ciphertext()").fetchone()[0] == "v1.yt.alice"
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):          # the rest of the vault stays write-only
+            c.execute("select ciphertext from user_keys")
+    with web_session(alice) as c:
+        ch = _new_channel(c, alice, f"yt-{uuid.uuid4().hex[:6]}")
+        cat = c.execute("insert into categories (user_id, channel_id, name) values (%s, %s, 'YT') returning id",
+                        (alice, ch)).fetchone()[0]
+        j = c.execute("select lane, kind, payload from api.idea_from_video(%s, %s)",
+                      (cat, Jsonb({"id": "dQw4w9WgXcQ", "title": "A video", "views": 10}))).fetchone()
+        assert j[0:2] == ("ideas", "idea_from_video") and j[2]["video"]["id"] == "dQw4w9WgXcQ"
+        with pytest.raises(psycopg.errors.InvalidParameterValue):
+            c.execute("select api.idea_from_video(%s, %s)", (cat, Jsonb({"id": "../etc", "title": "x"})))
+    with pytest.raises(psycopg.errors.NoDataFound):                          # not bob's category
+        with web(bob) as c:
+            c.execute("select api.idea_from_video(%s, %s)", (cat, Jsonb({"id": "dQw4w9WgXcQ", "title": "x"})))
