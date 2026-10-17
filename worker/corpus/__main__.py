@@ -6,8 +6,9 @@ import logging
 
 from .config import settings
 from . import upkeep
-from .handlers import (assemble, attach_media, build_segment, check_sources, narrate, plan_shots, publish_post,
-                       refresh_models, render_post, suggest_ideas, write_script)
+from .handlers import (analyze_asset, assemble, attach_media, build_segment, check_sources, fetch_asset,
+                       narrate, plan_shots, prepare_shot, publish_post, refresh_models, render_post, suggest_ideas,
+                       write_script)
 from .runner import Runner
 
 HANDLERS = {
@@ -17,6 +18,9 @@ HANDLERS = {
         "narrate": narrate.HANDLER,
         "build_segment": build_segment.HANDLER,
         "assemble": assemble.HANDLER,
+        # Footage: what a post's clip or picture shows, and shots made from it or from stock.
+        "analyze_asset": analyze_asset.HANDLER,
+        "prepare_shot": prepare_shot.HANDLER,
     },
     # The only process that contacts Reddit and arbitrary URLs: its rate-limit waits
     # and downloads never hold up scripts, segments or assembly.
@@ -26,6 +30,7 @@ HANDLERS = {
         "check_sources": check_sources.CHECK_HANDLER,
         "suggest_sources": check_sources.SUGGEST_HANDLER,
         "refresh_models": refresh_models.HANDLER,
+        "fetch_asset": fetch_asset.HANDLER,
     },
     # The gpu lane runs on the same always-on box as cpu, as its own process: it
     # rents and drives the Race GPU remotely, and a long render must not block

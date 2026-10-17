@@ -4,8 +4,24 @@ import { useRouter } from "next/navigation";
 import { useActionState, useEffect, useState, useTransition } from "react";
 
 import {
-  approveScript, cancelPublish, deletePost, generateScript, rejectScript, requestPublish, requestRender, type ActionState,
+  approveScript, cancelPublish, deletePost, generateScript, rejectScript, requestPublish, requestRender, setAssetRights,
+  type ActionState,
 } from "../../actions";
+
+/** Allow or withdraw a piece of footage. */
+export function AssetRightsButton({ assetId, allowed }: { assetId: string; allowed: boolean }) {
+  const [state, setState] = useState<ActionState>(null);
+  const [pending, start] = useTransition();
+  return (
+    <span className="flex flex-col items-end gap-1">
+      <button disabled={pending} onClick={() => start(async () => setState(await setAssetRights(assetId, !allowed)))}
+              className={`text-xs font-medium disabled:opacity-50 ${allowed ? "text-danger" : "text-accent"} hover:underline`}>
+        {allowed ? "Don't use it" : "Use it"}
+      </button>
+      <ErrorNote state={state} />
+    </span>
+  );
+}
 
 /** Re-render the server page every few seconds while work is in flight. */
 export function AutoRefresh({ everyMs = 3000 }: { everyMs?: number }) {

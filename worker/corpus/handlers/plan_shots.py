@@ -3,6 +3,11 @@
 Every value a render depends on is fixed here, once: prompt, seed, size, frame
 count. That is what makes a re-render byte-comparable and "regenerate shot 4
 only" a real feature. Idempotent: a script that already has shots is left alone.
+
+Shots that show footage (clip, image, stock) are planned at the reel's own size
+(1080x1920) with an exact frame count — LTX's 8n+1 grid is for generated shots
+only; their asset is the post's asset with the script's number. A clip that keeps
+its own sound lasts as long as its window and carries no narration.
 """
 
 from __future__ import annotations
@@ -12,7 +17,7 @@ import hashlib
 from .. import auto, db, prompts
 from ..config import settings
 from ..runner import Handler, JobContext, Permanent
-from ..script.llm import MAX_SHOT_SECONDS, MIN_SHOT_SECONDS
+from ..script.llm import MAX_CLIP_SECONDS, MAX_SHOT_SECONDS, MIN_SHOT_SECONDS
 
 FPS = 24
 # 9:16-ish and on LTX-2.5's grid: both sides are multiples of 64, because stage 1
@@ -26,6 +31,14 @@ NEGATIVE = ("pc game, console game, video game, cartoon, childish, ugly, blurry,
 # invent its own speaker — that would be a second, mismatched voice.
 NEGATIVE_NARRATED = NEGATIVE + ", talking, speech, voice, dialogue, narration, singing"
 NO_SPEECH = "No one speaks; only sound effects and ambience."
+
+
+REEL_W, REEL_H = 1080, 1920
+
+
+def footage_frames(seconds: float) -> int:
+    """Exact frames for a footage shot (no LTX grid)."""
+    return max(9, round(seconds * FPS))
 
 
 def frames_for(seconds: float) -> int:
@@ -53,6 +66,32 @@ def shot_prompt(shot: dict, style: str | None, narrated: bool = False, look: str
     return " ".join(p for p in parts if p)
 
 
+def _plan_footage(c, s: dict, idx: int, shot: dict, source: str, assets: dict, narrated: bool) -> float:
+    asset = assets.get(int(shot.get("asset") or 0)) if source in ("clip", "image") else None
+    if source in ("clip", "image") and (asset is None or asset["kind"] != ("video" if source == "clip" else "image")):
+        raise Permanent(f"shot {idx + 1} uses footage #{shot.get('asset')}, which this post doesn't have",
+                        stage="input")
+    keep = source == "clip" and bool(shot.get("keep_audio"))
+    start, end = float(shot.get("start") or 0), float(shot.get("end") or 0)
+    if keep:
+        seconds = min(MAX_CLIP_SECONDS, max(1.0, end - start))
+    else:                       # an estimate: the narration, once recorded, sets the length
+        seconds = min(MAX_CLIP_SECONDS, max(MIN_SHOT_SECONDS, float(shot.get("seconds", 5))))
+    narration = (shot.get("narration") or None) if narrated and not keep else None
+    c.execute(
+        """insert into shots (post_id, script_id, idx, scene_group, chain_role, prompt, seed, width, height,
+                              num_frames, fps, narration, source, asset_id, clip_in, clip_out, audio_mode,
+                              stock_query, credit)
+           values (%s, %s, %s, %s, 'anchor', %s, 0, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+        (s["post_id"], s["id"], idx, idx, (shot.get("visual") or "").strip() or source, REEL_W, REEL_H,
+         footage_frames(seconds), FPS, narration, source, asset["id"] if asset else None,
+         start if source == "clip" else None, end if source == "clip" else None,
+         "keep" if keep else ("duck" if source == "clip" else "mute"),
+         (shot.get("stock_query") or "").strip() or None if source == "stock" else None,
+         asset["credit"] if asset else None))
+    return seconds
+
+
 def run(ctx: JobContext) -> dict:
     script_id = ctx.payload["script_id"]
     with db.tx() as c:
@@ -74,8 +113,14 @@ def run(ctx: JobContext) -> dict:
         narrated = post["audio_source"] == "kokoro"
         look = post["visual_style"] or ""
 
+        assets = {r["n"]: r for r in c.execute(
+            "select id, n, kind, credit from assets where post_id = %s", (s["post_id"],)).fetchall()}
         total = 0.0
         for idx, shot in enumerate(plan):
+            source = shot.get("source") or "generate"
+            if source != "generate":
+                total += _plan_footage(c, s, idx, shot, source, assets, narrated)
+                continue
             seconds = min(MAX_SHOT_SECONDS, max(MIN_SHOT_SECONDS, float(shot.get("seconds", 5))))
             frames = frames_for(seconds)
             total += (frames - 1) / FPS

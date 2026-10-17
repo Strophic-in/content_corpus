@@ -70,6 +70,38 @@ def sweep(log: Callable[[str], None] = print) -> int:
     return n
 
 
+ASSET_KEEP_DAYS = 14
+
+
+def sweep_assets(log: Callable[[str], None] = print) -> int:
+    """A post's footage files (kind asset): kept while the reel may still be remade,
+    deleted ASSET_KEEP_DAYS after it is published, or at once when the post is gone."""
+    with db.conn() as c:
+        rows = c.execute("""
+            select s.key, a.id as asset_id, p.status,
+                   (select max(e.at) from post_events e
+                     where e.post_id = p.id and e.to_state = 'published') as published_at
+              from storage_objects s
+              left join assets a on a.key = s.key
+              left join posts p on p.id = a.post_id
+             where s.kind = 'asset' and s.state = 'stored'""").fetchall()
+    gone, done = [], []
+    for r in rows:
+        if r["asset_id"] is None:
+            gone.append(r["key"])                                  # its post (and asset row) was deleted
+        elif r["status"] == "published" and r["published_at"] and c_days(r["published_at"]) >= ASSET_KEEP_DAYS:
+            gone.append(r["key"])
+            done.append(r["asset_id"])
+    n = _delete(gone, log)
+    if done:
+        with db.conn() as c:
+            c.execute("update assets set key = null, error = 'file removed after publishing' where id = any(%s)",
+                      (done,))
+    if n:
+        log(f"swept {n} footage file(s)")
+    return n
+
+
 def evict(bytes_needed: int, log: Callable[[str], None] = print) -> int:
     """Free at least bytes_needed of card media, oldest unswiped ideas first."""
     with db.conn() as c:

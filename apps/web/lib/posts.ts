@@ -30,7 +30,10 @@ export type ScriptRow = {
   description: string | null;
   hashtags: string[];
   intended_dialogue: string;
-  shot_plan: { seconds: number; visual: string; audio: string; narration?: string }[];
+  shot_plan: { seconds: number; visual: string; audio: string; narration?: string;
+               // Footage shots (absent on older scripts: those are all generated).
+               source?: "generate" | "clip" | "image" | "stock"; asset?: number; start?: number; end?: number;
+               keep_audio?: boolean; stock_query?: string }[];
   style_prompt: string | null;
   model: string | null;
   review: { score: number; risks: string[]; notes: string } | null;
@@ -42,7 +45,13 @@ export type ScriptRow = {
 
 export type ShotRow = {
   id: string; idx: number; num_frames: number; fps: number; seed: string; state: string;
-  voiced: boolean; rendered: boolean;
+  voiced: boolean; rendered: boolean; source: "generate" | "clip" | "image" | "stock";
+};
+/** Footage a post may use: the accepted idea's own picture or video. */
+export type AssetRow = {
+  id: string; n: number; kind: "video" | "image"; origin: string; credit: string;
+  rights: "needs_review" | "approved" | "rejected"; state: "pending" | "ready" | "failed";
+  w: number | null; h: number | null; seconds: string | null; error: string | null; summary: string | null;
 };
 export type EventRow = { id: string; from_state: string | null; to_state: string; actor: string; reason: string | null; at: Date };
 
@@ -80,8 +89,9 @@ export async function postDetail(userId: string, id: string) {
     ).rows as ScriptRow[];
     const shots = (
       await db.query(
-        `select id, idx, num_frames, fps, seed::text as seed, state,
-                narration_key is not null as voiced, state = 'uploaded' as rendered
+        `select id, idx, num_frames, fps, seed::text as seed, state, source,
+                -- a clip that keeps its own sound has no line to record
+                narration_key is not null or coalesce(narration, '') = '' as voiced, state = 'uploaded' as rendered
            from shots where post_id = $1 and script_id = $2 order by idx`,
         [id, post.approved_script_id],
       )
@@ -93,8 +103,16 @@ export async function postDetail(userId: string, id: string) {
         [id],
       )
     ).rows as EventRow[];
+    const assets = (
+      await db.query(
+        `select id, n, kind, origin, credit, rights, state, w, h, seconds::text, error,
+                coalesce(analysis->>'summary', analysis->'card'->>'summary') as summary
+           from assets where post_id = $1 order by n`,
+        [id],
+      )
+    ).rows as AssetRow[];
     const settings = (await db.query("select timezone, default_reel_seconds from app_settings")).rows[0];
-    return { post, scripts, shots, events, settings };
+    return { post, scripts, shots, events, settings, assets };
   });
 }
 

@@ -28,10 +28,11 @@ export async function requestIdeas(target: { categoryId: string } | { channelId:
 /**
  * A swipe. Right (accept) schedules the idea as a post at `date` + `time` in the
  * channel's own timezone; left (reject) records the optional reason, which the
- * agent reads before its next batch.
+ * agent reads before its next batch. `useMedia`: the owner allows the card's own
+ * picture or video in the reel (credited) — that choice is the approval.
  */
 export async function decideIdea(ideaId: string, accept: boolean, date: string | null, time: string | null,
-                                 reason: string | null, platforms: string[] | null,
+                                 reason: string | null, platforms: string[] | null, useMedia = false,
                                  ): Promise<ActionState & { postId?: string }> {
   const user = await requireUser();
   if (accept && !(date && /^\d{4}-\d{2}-\d{2}$/.test(date) && time && /^\d{2}:\d{2}(:\d{2})?$/.test(time)))
@@ -43,9 +44,9 @@ export async function decideIdea(ideaId: string, accept: boolean, date: string |
                    case when $2 then ($3::date + $4::time) at time zone
                      (select c.timezone from ideas i join channels c on c.id = i.channel_id where i.id = $1)
                    end,
-                   $5, $6::text[])).post_id`,
+                   $5, $6::text[], $7::boolean)).post_id`,
         [ideaId, accept, date, time, reason?.slice(0, 200) || null,
-         platforms?.filter((p) => p === "youtube" || p === "instagram") ?? null],
+         platforms?.filter((p) => p === "youtube" || p === "instagram") ?? null, accept && useMedia],
       );
       return r.rows[0]?.post_id as string | undefined;
     });

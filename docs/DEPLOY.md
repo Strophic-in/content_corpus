@@ -6,10 +6,10 @@ Everything runs on one always-on box (an Oracle Cloud Ampere A1: arm64, Ubuntu
 | What | Where |
 |---|---|
 | Web app | container `web` → `127.0.0.1:3400` → nginx → `https://content-corpus.strophic.in` |
-| cpu lane (scripts, narration, segments, assembly) | container `worker-cpu` |
+| cpu lane (scripts, narration, footage shots and their analysis, segments, assembly) | container `worker-cpu` |
 | gpu lane (rents Race GPUs over the API + SSH) | container `worker-gpu` |
 | publish lane (posts reels to YouTube and Instagram) | container `worker-publish` |
-| ideas lane (Reddit, news sites, trends; card media) | container `worker-ideas` |
+| ideas lane (Reddit, Bluesky, Mastodon, Lemmy, Hacker News, YouTube trending, news sites, trends; card media; fetching a post's footage) | container `worker-ideas` |
 | Database | VibeDB's Postgres on the host, reached as `host.docker.internal` |
 | Kokoro voice model | Voicer's `backend/models/`, mounted read-only (one copy on the box) |
 | Idea memory (Qdrant) | HealMem's Qdrant, collection `content_corpus_memory`; worker-cpu joins the `healmem_vector` network |

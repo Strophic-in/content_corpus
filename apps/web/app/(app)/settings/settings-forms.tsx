@@ -4,7 +4,8 @@ import { useRouter } from "next/navigation";
 import { useActionState, useState, useTransition } from "react";
 
 import {
-  refreshModels, saveOpenAIKey, savePrices, saveRedditKeys, saveSettings, saveYouTubeKey, type ActionState,
+  refreshModels, saveOpenAIKey, savePrices, saveRedditKeys, saveServiceKey, saveSettings, type ActionState,
+  type ServiceKey,
 } from "../actions";
 
 /** The key's model list, re-read now (new models also appear by themselves daily). */
@@ -208,11 +209,14 @@ export function RedditKeysForm({ saved }: { saved: boolean }) {
   );
 }
 
-export function YouTubeKeyForm({ saved }: { saved: boolean }) {
-  const [state, action, pending] = useActionState<ActionState, FormData>(saveYouTubeKey, null);
+export function ServiceKeyForm({ service, saved, placeholder }: {
+  service: ServiceKey; saved: boolean; placeholder: string;
+}) {
+  const [state, action, pending] = useActionState<ActionState, FormData>(saveServiceKey.bind(null, service), null);
   return (
     <form action={action} className="flex flex-col gap-2">
-      <input name="key" type="password" autoComplete="off" spellCheck={false} placeholder="AIza…" className={input} />
+      <input name="key" type="password" autoComplete="off" spellCheck={false} placeholder={placeholder}
+             className={input} />
       <div className="flex flex-wrap items-center gap-3">
         <button disabled={pending} className="rounded-md bg-accent px-4 py-2 text-sm font-medium text-accent-foreground disabled:opacity-60">
           {pending ? "Saving…" : saved ? "Replace" : "Save"}

@@ -16,7 +16,7 @@ from corpus import db
 from corpus.crypto import encrypt
 from corpus.handlers import plan_shots, write_script
 from corpus.runner import Runner
-from corpus.script.llm import Review, ScriptOut, Shot, Usage
+from corpus.script.llm import Review, ScriptOut, Usage, generated_shot
 
 
 def _script(seconds=(8, 8, 8), words=6) -> ScriptOut:
@@ -27,7 +27,7 @@ def _script(seconds=(8, 8, 8), words=6) -> ScriptOut:
         hashtags=["#shorts", "#startup"],
         intended_dialogue="Everything is completely on track.",
         style_prompt="Bright sitcom office lighting, photorealistic.",
-        shots=[Shot(seconds=s, visual=f"Shot {i} visual", audio='He says: "' + " ".join(["word"] * words) + '"',
+        shots=[generated_shot(seconds=s, visual=f"Shot {i} visual", audio='He says: "' + " ".join(["word"] * words) + '"',
                     narration="")
                for i, s in enumerate(seconds)],
         review=Review(score=7, risks=["fire may look CGI"], notes="ok"),

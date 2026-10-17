@@ -14,6 +14,10 @@ Resumable shot by shot: each clip is uploaded the moment it finishes (and handed
 to the cpu lane to be captioned while the GPU renders on), so a retry renders
 only what is missing. No free GPU is not a failure — the post says it is waiting
 and the job retries every 10 minutes.
+
+Only generated shots are rendered here; footage shots are made by cpu/prepare_shot
+at the same time. Assembly waits (blocked) until every shot of the script is
+uploaded and is released by the database (private.unblock_assemble).
 """
 
 from __future__ import annotations
@@ -158,8 +162,10 @@ def run(ctx: JobContext) -> dict:
             raise Permanent("post or approved script no longer exists", stage="input")
         shots = c.execute("""select id, idx, prompt, negative_prompt as negative, seed, width, height,
                                     num_frames, state, artifact_key
-                               from shots where script_id = %s order by idx""", (script_id,)).fetchall()
-    if not shots:
+                               from shots where script_id = %s and source = 'generate' order by idx""",
+                          (script_id,)).fetchall()
+        n_all = c.execute("select count(*) as n from shots where script_id = %s", (script_id,)).fetchone()["n"]
+    if not n_all:
         raise Permanent("approved script has no shots", stage="input")
     pending = [s for s in shots if s["state"] != "uploaded"]
     result: dict = {"shots": len(shots), "rendered_now": len(pending)}
@@ -284,7 +290,8 @@ def run(ctx: JobContext) -> dict:
                                 stage="render")
         with db.conn() as c:
             missing = [r["idx"] for r in c.execute(
-                "select idx from shots where script_id = %s and state <> 'uploaded' order by idx",
+                """select idx from shots where script_id = %s and source = 'generate' and state <> 'uploaded'
+                    order by idx""",
                 (script_id,)).fetchall()]
         if missing:
             raise Retryable(f"{len(missing)} shot(s) not rendered: {missing}"
@@ -292,11 +299,19 @@ def run(ctx: JobContext) -> dict:
         result["pods"] = {who: sorted(idx) for who, idx in queue.done_by.items()}
 
     with db.tx() as c:
-        db.enqueue(c, user_id=post["user_id"], lane="cpu", kind="assemble",
-                   dedupe_key=f"assemble:{script_id}", payload={"script_id": str(script_id)},
-                   post_id=post["id"], max_attempts=3, lease_seconds=900)
-    _set_post(post["id"], "rendered", "all shots rendered")
-    return result
+        left = c.execute("select count(*) as n from shots where script_id = %s and state <> 'uploaded'",
+                         (script_id,)).fetchone()["n"]
+        if not left:
+            # Normally already released by the last upload; this covers a render
+            # requested before assembly was queued blocked up front.
+            db.enqueue(c, user_id=post["user_id"], lane="cpu", kind="assemble",
+                       dedupe_key=f"assemble:{script_id}", payload={"script_id": str(script_id)},
+                       post_id=post["id"], max_attempts=3, lease_seconds=900)
+            c.execute("""update jobs set state = 'queued', not_before = now()
+                          where dedupe_key = %s and state = 'blocked'""", (f"assemble:{script_id}",))
+    if not left:
+        _set_post(post["id"], "rendered", "all shots rendered")
+    return {**result, "footage_shots_left": left}
 
 
 def on_give_up(ctx: JobContext, err: dict) -> None:

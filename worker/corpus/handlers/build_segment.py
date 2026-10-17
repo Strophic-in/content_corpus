@@ -5,6 +5,10 @@ finished piece of the reel (1080x1920, captions burned in, its exact-length soun
 bed) and waits in this worker's local cache; cpu/assemble then only has to join
 the pieces. The cache is a speed-up, never the source of truth: assemble rebuilds
 any piece it cannot find (another machine, a restart, a changed caption style).
+
+Footage shots (cpu/prepare_shot) come through here the same way. In a narrated
+reel a clip that keeps its own sound has no narration: its sound plays at full
+level and its captions are what is said in it, as heard.
 """
 
 from __future__ import annotations
@@ -26,7 +30,23 @@ from ..runner import Handler, JobContext
 WORD_TIMINGS = media.whisper_words   # swapped by tests
 
 SHOT_COLS = """id, post_id, script_id, idx, state, artifact_key, artifact_sha256,
-               narration, narration_key, narration_words"""
+               narration, narration_key, narration_words, source, audio_mode, credit, asset_id,
+               clip_in, clip_out"""
+
+
+def _clip_speaks(shot: dict) -> bool:
+    """Whether the asset's transcript (voice-activity filtered) has speech inside the
+    clip's window: Whisper asked directly about a silent clip tends to invent a
+    "Thank you." for the captions."""
+    if shot.get("source") != "clip" or not shot.get("asset_id"):
+        return True
+    with db.conn() as c:
+        row = c.execute("select analysis from assets where id = %s", (shot["asset_id"],)).fetchone()
+    lines = ((row or {}).get("analysis") or {}).get("transcript")
+    if lines is None:
+        return True                                        # never transcribed: let Whisper listen
+    lo, hi = float(shot.get("clip_in") or 0), float(shot.get("clip_out") or 1e9)
+    return any(t["end"] > lo and t["start"] < hi for t in lines)
 
 
 def caption_style(c, post: dict) -> media.CaptionStyle:
@@ -55,7 +75,8 @@ def ensure_segment(post: dict, shot: dict, style: media.CaptionStyle, hint: str)
         work = Path(tmp)
         narration = None
         words = shot.get("narration_words")
-        if narrated:
+        voiced = narrated and bool(shot.get("narration_key"))
+        if voiced:
             narration = storage.get_file(shot["narration_key"], work / "narration.wav")
             if words is None:   # voiced before word timings were recorded at narrate time
                 words = media.narration_words(narration, shot["narration"] or "", WORD_TIMINGS)
@@ -63,14 +84,20 @@ def ensure_segment(post: dict, shot: dict, style: media.CaptionStyle, hint: str)
                     c.execute("update shots set narration_words = %s where id = %s", (Jsonb(words), shot["id"]))
         key = hashlib.sha256(json.dumps(
             [media.SEGMENT_VERSION, shot["artifact_sha256"] or shot["artifact_key"], shot["narration_key"],
-             words, None if narrated else hint, asdict(style), media.LEAD_IN, media.SFX_GAIN],
+             words, None if voiced else hint, asdict(style), media.LEAD_IN, media.SFX_GAIN,
+             shot.get("source"), shot.get("audio_mode")],
             sort_keys=True, default=str).encode()).hexdigest()[:16]
         video, audio = d / f"{shot['idx']}-{key}.mp4", d / f"{shot['idx']}-{key}.wav"
         if video.exists() and audio.exists():
             return video, audio, True
         clip = storage.get_file(shot["artifact_key"], work / "clip.mp4")
-        timed = (media.shifted([tuple(w) for w in words], media.LEAD_IN) if narrated
-                 else media.dialogue_words(clip, hint, WORD_TIMINGS))
+        if voiced:
+            timed = media.shifted([tuple(w) for w in words], media.LEAD_IN)
+        elif (not media.has_audio(clip) or (shot.get("source") or "generate") in ("image", "stock")
+              or not _clip_speaks(shot)):
+            timed = []                                     # nothing is said
+        else:                                              # characters, or a clip, speak
+            timed = media.dialogue_words(clip, "" if narrated else hint, WORD_TIMINGS)
         media.build_segment(clip, work / "seg.mp4", work / "seg.wav", narration=narration, words=timed,
                             style=style)
         # Sound first, picture last: a picture on disk means the pair is complete.

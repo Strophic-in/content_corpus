@@ -6,7 +6,7 @@ import { requireUser } from "@/lib/session";
 import { userSettings } from "@/lib/posts";
 
 import { SignOutButton } from "../sign-out-button";
-import { KeyForm, PricesForm, RedditKeysForm, SettingsForm, YouTubeKeyForm } from "./settings-forms";
+import { KeyForm, PricesForm, RedditKeysForm, ServiceKeyForm, SettingsForm } from "./settings-forms";
 
 export const metadata = { title: "Settings · Content Corpus" };
 
@@ -23,6 +23,7 @@ export default async function SettingsPage() {
   const openai = keys.find((k) => k.name === "openai");
   const reddit = keys.some((k) => k.name === "reddit_client_id");
   const youtube = keys.some((k) => k.name === "youtube_api_key");
+  const pexels = keys.some((k) => k.name === "pexels_api_key");
   const byChannel = new Map<string, { kind: string; amount: number | null; unpriced: number }[]>();
   for (const r of usage.rows)
     byChannel.set(r.channel, [...(byChannel.get(r.channel) ?? []),
@@ -96,7 +97,20 @@ export default async function SettingsPage() {
           </p>
           <p className="mt-2 text-sm">{youtube ? "Saved." : "Not set — YouTube trending sources wait for it."}</p>
         </div>
-        <YouTubeKeyForm saved={youtube} />
+        <ServiceKeyForm service="youtube" saved={youtube} placeholder="AIza…" />
+      </section>
+
+      <section className="flex flex-col gap-3 rounded-xl border border-border bg-surface p-5">
+        <div>
+          <h2 className="font-medium">Pexels API key (for stock video)</h2>
+          <p className="mt-1 text-sm text-muted">
+            Lets scripts use free stock video for shots that show a setting or a subject in general — a city at night,
+            a hospital corridor — instead of rendering them on the GPU. Free at pexels.com/api (200 searches an hour).
+            Every stock clip is credited on screen and in the description. Stored encrypted.
+          </p>
+          <p className="mt-2 text-sm">{pexels ? "Saved — new scripts may use stock video." : "Not set — no stock video."}</p>
+        </div>
+        <ServiceKeyForm service="pexels" saved={pexels} placeholder="Your Pexels API key" />
       </section>
 
       <section className="flex flex-col gap-3 rounded-xl border border-border bg-surface p-5">

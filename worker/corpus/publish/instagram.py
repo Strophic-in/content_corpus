@@ -47,10 +47,12 @@ def refresh(client: httpx.Client, token: str) -> tuple[str, int]:
     return body["access_token"], int(body.get("expires_in") or 5_184_000)
 
 
-def caption(title: str, description: str, hashtags: list[str]) -> str:
-    """Instagram allows 2,200 characters and 30 hashtags."""
+def caption(title: str, description: str, hashtags: list[str], credits: list[str] | None = None) -> str:
+    """Instagram allows 2,200 characters and 30 hashtags. Credits come before the
+    hashtags, so a long caption loses tags, not credits."""
     tags = " ".join(h.strip() for h in hashtags[:30] if h.strip())
-    return "\n\n".join(x for x in (title.strip(), description.strip(), tags) if x)[:2200]
+    footage = ("Footage: " + " · ".join(c.strip() for c in credits if c.strip())) if credits else ""
+    return "\n\n".join(x for x in (title.strip(), description.strip(), footage, tags) if x)[:2200]
 
 
 def publish(client: httpx.Client, *, token: str, ig_user_id: str, video_url: str, caption: str,

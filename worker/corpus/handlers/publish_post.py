@@ -39,7 +39,9 @@ def run(ctx: JobContext) -> dict:
     if platform not in NAMES:
         raise Permanent(f"unknown platform {platform!r}", stage="input")
     name = NAMES[platform]
-    post = db.one("""select p.id, p.user_id, p.channel_id, p.status, p.final_key, p.final_sha256,
+    post = db.one("""select p.id, p.user_id, p.channel_id, p.status, p.final_key, p.final_sha256, p.credits,
+                            exists (select 1 from shots x where x.script_id = p.approved_script_id
+                                       and x.source = 'generate') as synthetic,
                             s.title, s.description, s.hashtags,
                             coalesce(st.youtube_category_id, '22') as category_id,
                             coalesce(st.youtube_privacy, 'private') as youtube_privacy
@@ -68,7 +70,8 @@ def run(ctx: JobContext) -> dict:
                     client, refresh_token=decrypt(acc["token_ciphertext"]), path=video,
                     meta=youtube.metadata(post["title"], post["description"] or "", post["hashtags"] or [],
                                           post["category_id"],
-                                          ctx.payload.get("privacy") or post["youtube_privacy"]),
+                                          ctx.payload.get("privacy") or post["youtube_privacy"],
+                                          credits=post["credits"] or [], synthetic=post["synthetic"]),
                     attempt=att, save=lambda **f: attempts.update(att, **f))
             else:
                 video = None
@@ -76,7 +79,8 @@ def run(ctx: JobContext) -> dict:
                     client, token=_instagram_token(client, acc), ig_user_id=acc["external_id"],
                     # Instagram downloads the reel itself; the link lapses well after it has.
                     video_url=storage.signed_url(post["final_key"], INSTAGRAM_LINK_SECONDS),
-                    caption=instagram.caption(post["title"], post["description"] or "", post["hashtags"] or []),
+                    caption=instagram.caption(post["title"], post["description"] or "", post["hashtags"] or [],
+                                              post["credits"] or []),
                     attempt=att, save=lambda **f: attempts.update(att, **f))
     except (youtube.AuthExpired, instagram.AuthExpired) as e:
         _set_account_status(acc, "expired")

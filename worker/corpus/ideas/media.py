@@ -16,6 +16,9 @@ a master playlist lists renditions, each a playlist of short .ts segments
 (hls_video). The smallest rendition that is at least preview size is read, its
 segments downloaded one by one through net up to PREVIEW_SECONDS, and joined
 locally — ffmpeg never fetches a playlist itself.
+
+The same readers fetch a post's footage at FULL quality (≤1080p short side, up
+to three minutes) when the owner chose to use it in a reel (fetch_asset).
 """
 
 from __future__ import annotations
@@ -44,6 +47,19 @@ PREVIEW_MAX_BYTES = 12_000_000
 
 class MediaError(Exception):
     pass
+
+
+@dataclass(frozen=True)
+class Quality:
+    side: int                  # the short side, at most
+    seconds: int               # read at most this much
+    part_bytes: int            # one download, at most
+    crf: int
+    max_bytes: int | None      # squeeze the result below this (cards only)
+
+
+PREVIEW = Quality(PREVIEW_HEIGHT, PREVIEW_SECONDS, VIDEO_PART_BYTES, 28, PREVIEW_MAX_BYTES)
+FULL = Quality(1080, 180, 150_000_000, 20, None)
 
 
 @dataclass
@@ -80,8 +96,8 @@ def vreddit_id(link: str) -> str | None:
     return m.group(1) if m else None
 
 
-def dash_parts(client: httpx.Client, vid: str) -> tuple[str, str | None]:
-    """(video part URL ≤ PREVIEW_HEIGHT, audio part URL or None) from the playlist."""
+def dash_parts(client: httpx.Client, vid: str, max_height: int = PREVIEW_HEIGHT) -> tuple[str, str | None]:
+    """(video part URL ≤ max_height, audio part URL or None) from the playlist."""
     base = f"https://v.redd.it/{vid}/"
     body = net.get(client, base + "DASHPlaylist.mpd", max_bytes=1_000_000).content
     root = ET.fromstring(body)
@@ -106,19 +122,19 @@ def dash_parts(client: httpx.Client, vid: str) -> tuple[str, str | None]:
                 videos.append((height, url))
     if not videos:
         raise MediaError("the video's playlist lists no picture")
-    fitting = [v for v in videos if v[0] <= PREVIEW_HEIGHT]
+    fitting = [v for v in videos if v[0] <= max_height]
     video = max(fitting) if fitting else min(videos)
     audio = max(audios)[1] if audios else None
     return video[1], audio
 
 
-def reddit_video(client: httpx.Client, link: str, work: Path) -> Path:
-    """A playable preview MP4 of a v.redd.it post."""
+def reddit_video(client: httpx.Client, link: str, work: Path, q: Quality = PREVIEW) -> Path:
+    """A playable MP4 of a v.redd.it post (a card preview, or FULL for a reel)."""
     vid = vreddit_id(link)
     if not vid:
         raise MediaError(f"not a Reddit video: {link[:80]}")
-    v_url, a_url = dash_parts(client, vid)
-    v = net.download(client, v_url, work / "v.mp4", max_bytes=VIDEO_PART_BYTES, accept=("video/", "application/"))
+    v_url, a_url = dash_parts(client, vid, q.side)
+    v = net.download(client, v_url, work / "v.mp4", max_bytes=q.part_bytes, accept=("video/", "application/"))
     a = None
     if a_url:
         try:
@@ -129,11 +145,11 @@ def reddit_video(client: httpx.Client, link: str, work: Path) -> Path:
     out = work / "preview.mp4"
     p = probe(v)
     vcodec = ["-c:v", "copy"] if p.vcodec == "h264" else \
-        ["-c:v", "libx264", "-preset", "veryfast", "-crf", "28", "-pix_fmt", "yuv420p"]
-    args = ["-i", v.name] + (["-i", a.name] if a else []) + ["-t", str(PREVIEW_SECONDS), "-map", "0:v:0"]
-    args += (["-map", "1:a:0", "-c:a", "aac", "-b:a", "96k"] if a else []) + vcodec
+        ["-c:v", "libx264", "-preset", "veryfast", "-crf", str(q.crf), "-pix_fmt", "yuv420p"]
+    args = ["-i", v.name] + (["-i", a.name] if a else []) + ["-t", str(q.seconds), "-map", "0:v:0"]
+    args += (["-map", "1:a:0", "-c:a", "aac", "-b:a", "96k" if q.max_bytes else "160k"] if a else []) + vcodec
     _ff(args + ["-movflags", "+faststart", out.name], cwd=work)
-    if out.stat().st_size > PREVIEW_MAX_BYTES:          # too big for a card: squeeze it
+    if q.max_bytes and out.stat().st_size > q.max_bytes:          # too big for a card: squeeze it
         small = work / "preview_small.mp4"
         _ff(["-i", out.name, "-vf", "scale=-2:360", "-c:v", "libx264", "-preset", "veryfast", "-crf", "32",
              "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "64k", "-movflags", "+faststart", small.name], cwd=work)
@@ -141,16 +157,16 @@ def reddit_video(client: httpx.Client, link: str, work: Path) -> Path:
     return out
 
 
-def _preview(src: Path, work: Path) -> Path:
-    """Any local video → a ≤PREVIEW_HEIGHT (short side), ≤PREVIEW_SECONDS H.264 MP4 for a card."""
+def _preview(src: Path, work: Path, q: Quality = PREVIEW) -> Path:
+    """Any local video → an H.264 MP4 with its short side ≤ q.side, at most q.seconds long."""
     out = work / "preview.mp4"
     p = probe(src)
-    scale = (f"scale='if(gt(iw,ih),-2,min({PREVIEW_HEIGHT},iw))':'if(gt(iw,ih),min({PREVIEW_HEIGHT},ih),-2)'")
-    args = ["-i", src.name, "-t", str(PREVIEW_SECONDS), "-map", "0:v:0", "-vf", scale,
-            "-c:v", "libx264", "-preset", "veryfast", "-crf", "28", "-pix_fmt", "yuv420p"]
-    args += ["-map", "0:a:0", "-c:a", "aac", "-b:a", "96k"] if p.has_audio else ["-an"]
+    scale = (f"scale='if(gt(iw,ih),-2,min({q.side},iw))':'if(gt(iw,ih),min({q.side},ih),-2)'")
+    args = ["-i", src.name, "-t", str(q.seconds), "-map", "0:v:0", "-vf", scale,
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", str(q.crf), "-pix_fmt", "yuv420p"]
+    args += ["-map", "0:a:0", "-c:a", "aac", "-b:a", "96k" if q.max_bytes else "160k"] if p.has_audio else ["-an"]
     _ff(args + ["-movflags", "+faststart", out.name], cwd=work)
-    if out.stat().st_size > PREVIEW_MAX_BYTES:
+    if q.max_bytes and out.stat().st_size > q.max_bytes:
         small = work / "preview_small.mp4"
         _ff(["-i", out.name, "-vf", "scale=-2:360", "-c:v", "libx264", "-preset", "veryfast", "-crf", "32",
              "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "64k", "-movflags", "+faststart", small.name], cwd=work)
@@ -158,11 +174,11 @@ def _preview(src: Path, work: Path) -> Path:
     return out
 
 
-def direct_video(client: httpx.Client, url: str, work: Path) -> Path:
-    """A post's MP4 (Mastodon, Lemmy) → a card preview."""
-    src = net.download(client, url, work / "source.mp4", max_bytes=VIDEO_PART_BYTES,
+def direct_video(client: httpx.Client, url: str, work: Path, q: Quality = PREVIEW) -> Path:
+    """A post's MP4 (Mastodon, Lemmy) → a card preview (or FULL)."""
+    src = net.download(client, url, work / "source.mp4", max_bytes=q.part_bytes,
                        accept=("video/", "application/octet-stream"))
-    return _preview(src, work)
+    return _preview(src, work, q)
 
 
 _STREAM_INF = re.compile(r"RESOLUTION=(\d+)x(\d+)")
@@ -170,8 +186,8 @@ HLS_TYPES = ("application/vnd.apple.mpegurl", "application/x-mpegurl", "audio/mp
              "text/plain", "application/octet-stream")
 
 
-def _hls_rendition(master_url: str, text: str) -> str:
-    """The rendition whose short side is the largest not above PREVIEW_HEIGHT (else the smallest)."""
+def _hls_rendition(master_url: str, text: str, max_side: int = PREVIEW_HEIGHT) -> str:
+    """The rendition whose short side is the largest not above max_side (else the smallest)."""
     lines = [ln.strip() for ln in text.splitlines()]
     options = []
     for n, ln in enumerate(lines):
@@ -182,14 +198,14 @@ def _hls_rendition(master_url: str, text: str) -> str:
                 options.append((min(int(m.group(1)), int(m.group(2))) if m else 0, urljoin(master_url, nxt)))
     if not options:
         return master_url                        # already a media playlist
-    fitting = [o for o in options if o[0] <= PREVIEW_HEIGHT]
+    fitting = [o for o in options if o[0] <= max_side]
     return (max(fitting) if fitting else min(options))[1]
 
 
-def hls_video(client: httpx.Client, playlist_url: str, work: Path) -> Path:
-    """A Bluesky (HLS) video → a card preview."""
+def hls_video(client: httpx.Client, playlist_url: str, work: Path, q: Quality = PREVIEW) -> Path:
+    """A Bluesky (HLS) video → a card preview (or FULL)."""
     master = net.get(client, playlist_url, max_bytes=200_000, accept=HLS_TYPES).content.decode("utf-8", "replace")
-    media_url = _hls_rendition(playlist_url, master)
+    media_url = _hls_rendition(playlist_url, master, q.side)
     text = master
     if media_url != playlist_url:
         text = net.get(client, media_url, max_bytes=500_000, accept=HLS_TYPES).content.decode("utf-8", "replace")
@@ -207,19 +223,19 @@ def hls_video(client: httpx.Client, playlist_url: str, work: Path) -> Path:
             if nxt:
                 parts.append(urljoin(media_url, nxt))
                 seconds += float(ln[8:].split(",")[0] or 0)
-                if seconds >= PREVIEW_SECONDS:
+                if seconds >= q.seconds:
                     break
     if not parts:
         raise MediaError("the playlist lists no segments")
     joined, total = work / "joined.ts", 0
     with joined.open("wb") as out:
         for n, url in enumerate(parts):
-            seg = net.download(client, url, work / f"seg{n}", max_bytes=VIDEO_PART_BYTES - total,
+            seg = net.download(client, url, work / f"seg{n}", max_bytes=q.part_bytes - total,
                                accept=("video/", "application/octet-stream", "binary/octet-stream"))
             total += seg.stat().st_size
             out.write(seg.read_bytes())
             seg.unlink()
-    return _preview(joined, work)
+    return _preview(joined, work, q)
 
 
 def poster(video: Path, out: Path) -> Path:

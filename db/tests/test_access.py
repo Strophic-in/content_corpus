@@ -683,3 +683,41 @@ def test_refreshing_models_is_a_job_for_the_ideas_worker(alice, owner):
     with web(alice) as c:
         c.execute("select api.ensure_settings()")
         assert c.execute("select lane, kind from api.refresh_openai_models()").fetchone() == ("ideas", "refresh_models")
+
+
+# ── footage (0016) ────────────────────────────────────────────────────────────
+
+def _post_with_asset(o, uid: str) -> tuple[uuid.UUID, uuid.UUID]:
+    pid = o.execute("insert into posts (user_id, topic, slot_date) values (%s, 'footage', '2031-02-02') returning id",
+                    (uid,)).fetchone()[0]
+    aid = o.execute("""insert into assets (user_id, post_id, n, kind, origin, credit, rights, state)
+                       values (%s, %s, 1, 'video', 'reddit', 'u/a on r/b', 'approved', 'ready') returning id""",
+                    (uid, pid)).fetchone()[0]
+    return pid, aid
+
+
+def test_the_owner_may_withdraw_footage_but_not_forge_it(alice, bob, owner):
+    pid, aid = _post_with_asset(owner, alice)
+    with web(alice) as c:
+        assert c.execute("update assets set rights = 'rejected' where id = %s returning rights",
+                         (aid,)).fetchone() == ("rejected",)
+    with web(bob) as c:                                                  # not bob's footage
+        assert c.execute("update assets set rights = 'rejected' where id = %s returning id", (aid,)).fetchone() is None
+    for stmt in ("update assets set state = 'ready', key = 'x' where id = %s",
+                 "update assets set credit = '' where id = %s",
+                 "insert into assets (user_id, post_id, n, kind, origin) select user_id, post_id, 9, 'video', 'x' "
+                 "from assets where id = %s"):
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            with web(alice) as c:
+                c.execute(stmt, (aid,))
+
+
+def test_ltx_frame_rules_bind_generated_shots_only(alice, owner):
+    pid, aid = _post_with_asset(owner, alice)
+    sid = owner.execute("insert into scripts (post_id, version, state) values (%s, 1, 'approved') returning id",
+                        (pid,)).fetchone()[0]
+    owner.execute("""insert into shots (post_id, script_id, idx, prompt, seed, width, height, num_frames, source, asset_id)
+                     values (%s, %s, 0, 'clip', 0, 1080, 1920, 66, 'clip', %s)""", (pid, sid, aid))
+    with pytest.raises(psycopg.errors.CheckViolation):
+        owner.execute("""insert into shots (post_id, script_id, idx, prompt, seed, width, height, num_frames)
+                         values (%s, %s, 1, 'generated', 1, 1080, 1920, 66)""", (pid, sid))

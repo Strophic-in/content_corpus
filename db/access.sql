@@ -102,6 +102,11 @@ grant insert (user_id, name, ciphertext, updated_at) on user_keys to corpus_web;
 grant update (ciphertext, updated_at) on user_keys to corpus_web;
 grant delete on user_keys to corpus_web;
 
+-- A post's footage: the owner may withdraw (or restore) permission to show it.
+-- Everything else about an asset is the workers'.
+grant select on assets to corpus_web;
+grant update (rights) on assets to corpus_web;
+
 grant insert, delete on caption_styles to corpus_web;
 grant update (name, font_family, font_size_px, primary_color, accent_color,
               outline_px, shadow_px, position_y, words_per_group, active_scale,

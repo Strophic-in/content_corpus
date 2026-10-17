@@ -28,7 +28,7 @@ from corpus.crypto import encrypt
 from corpus.gpu import ltx25
 from corpus.handlers import narrate, plan_shots, write_script
 from corpus.runner import Runner
-from corpus.script.llm import Review, ScriptOut, Shot, Usage
+from corpus.script.llm import Review, ScriptOut, Usage, generated_shot
 
 NARRATION = [
     "Your body is giving off tiny flashes of light right now.",
@@ -45,7 +45,7 @@ class Writer:
         return ScriptOut(
             title="Your body is glowing right now", hook="Your body glows.", description="d",
             hashtags=["#shorts"], intended_dialogue=" ".join(NARRATION), style_prompt="Stylised 3D.",
-            shots=[Shot(seconds=8, visual=f"v{i}", audio="soft hum", narration=n)
+            shots=[generated_shot(seconds=8, visual=f"v{i}", audio="soft hum", narration=n)
                    for i, n in enumerate(NARRATION)],
             review=Review(score=8, risks=[], notes="ok"),
         ), Usage(model=model, input_tokens=1, output_tokens=1)

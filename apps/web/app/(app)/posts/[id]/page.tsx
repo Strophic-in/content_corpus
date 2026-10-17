@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 
 import { workspace } from "@/lib/channels";
 import { asUser } from "@/lib/db";
-import { postDetail, type PostRow, type ScriptRow, type ShotRow } from "@/lib/posts";
+import { postDetail, type AssetRow, type PostRow, type ScriptRow, type ShotRow } from "@/lib/posts";
 import { postCosts, rupees } from "@/lib/costs";
 import { PLATFORM_NAMES, publishInfo, type PublishTarget } from "@/lib/publish";
 import { signedUrl } from "@/lib/r2";
@@ -12,7 +12,8 @@ import { IN_FLIGHT, statusBadge } from "@/lib/status";
 
 import { PostForm } from "../post-form";
 import {
-  AutoRefresh, CancelPublishButton, DeletePostButton, GenerateButton, PublishForm, RenderButton, ReviewActions,
+  AssetRightsButton, AutoRefresh, CancelPublishButton, DeletePostButton, GenerateButton, PublishForm, RenderButton,
+  ReviewActions,
 } from "./post-actions";
 
 export const metadata = { title: "Post · Content Corpus" };
@@ -31,7 +32,7 @@ export default async function PostPage({ params }: { params: Promise<{ id: strin
   if (!/^[0-9a-f-]{36}$/i.test(id)) notFound();
   const detail = await postDetail(user.id, id);
   if (!detail) notFound();
-  const { post, scripts, shots, events } = detail;
+  const { post, scripts, shots, events, assets } = detail;
   const formats = post.channel_id
     ? await asUser(user.id, async (db) => (await db.query(
         "select id, name, is_default from formats where channel_id = $1 order by is_default desc, name",
@@ -49,7 +50,8 @@ export default async function PostPage({ params }: { params: Promise<{ id: strin
     <div className="flex flex-col gap-6">
       {(IN_FLIGHT.has(post.status) || post.status === "rendered" ||
         (post.status === "approved" && (shots.length === 0 ||
-          (post.audio_source === "kokoro" && shots.some((s) => !s.voiced))))) && <AutoRefresh everyMs={4000} />}
+          (post.audio_source === "kokoro" && shots.some((s) => !s.voiced)))) ||
+        assets.some((a) => a.state === "pending")) && <AutoRefresh everyMs={4000} />}
       <div className="flex flex-wrap items-start gap-3">
         <div className="min-w-0 flex-1">
           <Link href={`/calendar?m=${post.slot_date.slice(0, 7)}`} className="text-sm text-muted hover:text-foreground">
@@ -82,6 +84,8 @@ export default async function PostPage({ params }: { params: Promise<{ id: strin
       )}
 
       {live?.state === "awaiting_approval" && <ReviewActions scriptId={live.id} />}
+
+      {assets.length > 0 && <FootagePanel assets={assets} />}
 
       {post.approved_script_id && <RenderPanel post={post} shots={shots} />}
 
@@ -132,8 +136,38 @@ export default async function PostPage({ params }: { params: Promise<{ id: strin
   );
 }
 
+function FootagePanel({ assets }: { assets: AssetRow[] }) {
+  const status = (a: AssetRow) => a.state === "pending" ? "fetching and watching it…"
+    : a.state === "failed" ? `couldn't be fetched${a.error ? ` — ${a.error}` : ""}`
+    : `${a.kind === "video" ? `${Number(a.seconds ?? 0).toFixed(0)} s, ` : ""}${a.w}×${a.h}`;
+  return (
+    <section className="flex flex-col gap-3 rounded-xl border border-border bg-surface p-5 text-sm">
+      <div>
+        <h2 className="font-medium">Footage</h2>
+        <p className="text-muted">The idea&apos;s own picture or video, which you chose to use. Each one is credited on screen and
+          in the description. The script waits until it is fetched.</p>
+      </div>
+      <ul className="flex flex-col divide-y divide-border">
+        {assets.map((a) => (
+          <li key={a.id} className="flex items-start gap-3 py-2">
+            <span className="min-w-0 flex-1">
+              <span className={`font-medium ${a.rights === "rejected" ? "text-muted line-through" : ""}`}>
+                #{a.n} · {a.kind === "video" ? "Video" : "Picture"} · {a.credit || a.origin}
+              </span>
+              <span className="block text-xs text-muted">{status(a)}</span>
+              {a.summary && <span className="block text-xs text-muted">{a.summary}</span>}
+            </span>
+            <AssetRightsButton assetId={a.id} allowed={a.rights === "approved"} />
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 async function RenderPanel({ post, shots }: { post: PostRow; shots: ShotRow[] }) {
   const narrated = post.audio_source === "kokoro";
+  const gpuShots = shots.filter((s) => s.source === "generate").length;
   const voiced = shots.filter((s) => s.voiced).length;
   const rendered = shots.filter((s) => s.rendered).length;
   const seconds = shots.reduce((t, s) => t + (s.num_frames - 1) / s.fps, 0);
@@ -163,13 +197,24 @@ async function RenderPanel({ post, shots }: { post: PostRow; shots: ShotRow[] })
   if (post.status === "rendering")
     return (
       <section className={box}>
-        <h2 className="font-medium">Rendering on the GPU · shot {Math.min(rendered + 1, shots.length)} of {shots.length}</h2>
+        <h2 className="font-medium">
+          {gpuShots === shots.length ? `Rendering on the GPU · shot ${Math.min(rendered + 1, shots.length)} of ${shots.length}`
+            : `Making the shots · ${rendered} of ${shots.length} done`}
+        </h2>
         <div className="h-2 overflow-hidden rounded-full bg-border" aria-hidden>
           <div className="h-full rounded-full bg-accent" style={{ width: `${(rendered / shots.length) * 100}%` }} />
         </div>
-        <p className="text-muted">Each shot takes about a minute; the GPU is paused the moment the last one is done.</p>
+        <p className="text-muted">
+          {gpuShots === 0 ? "Cutting the footage on the server — no GPU needed."
+            : gpuShots < shots.length ? `${gpuShots} on the GPU (about a minute each; it is paused the moment they are done), `
+              + "the footage shots on the server meanwhile."
+            : "Each shot takes about a minute; the GPU is paused the moment the last one is done."}
+        </p>
       </section>
     );
+  if (post.status === "queued_for_render" && gpuShots === 0)
+    return <section className={box}><h2 className="font-medium">Preparing the footage…</h2>
+      <p className="text-muted">Cutting the clips and pictures on the server — no GPU needed.</p></section>;
   if (post.status === "queued_for_render")
     return (
       <section className={box}>
@@ -199,7 +244,9 @@ async function RenderPanel({ post, shots }: { post: PostRow; shots: ShotRow[] })
         <h2 className="font-medium">Ready to render</h2>
         <p className="text-muted">
           {shots.length} shot{shots.length === 1 ? "" : "s"}, {seconds.toFixed(1)} s{narrated ? ", narration recorded" : ""}.
-          Usually 5–10 minutes on the GPU.
+          {gpuShots === 0 ? " All footage: a minute or two on the server, no GPU."
+            : gpuShots < shots.length ? ` ${gpuShots} generated on the GPU (a few minutes), the rest from footage.`
+            : " Usually 5–10 minutes on the GPU."}
         </p>
         <RenderButton postId={post.id} retry={post.status === "failed"} />
       </section>
@@ -324,6 +371,19 @@ async function CostPanel({ postId, userId }: { postId: string; userId: string })
   );
 }
 
+function clock(t = 0) {
+  return `${Math.floor(t / 60)}:${(t % 60).toFixed(0).padStart(2, "0")}`;
+}
+
+function sourceLabel(s: ScriptRow["shot_plan"][number]) {
+  switch (s.source) {
+    case "clip": return `🎞 clip from footage #${s.asset}, ${clock(s.start)}–${clock(s.end)}${s.keep_audio ? ", its own sound" : ""}`;
+    case "image": return `🖼 picture #${s.asset}`;
+    case "stock": return `📦 stock video: “${s.stock_query}”`;
+    default: return "✨ generated";
+  }
+}
+
 function ScriptCard({ script, narrated }: { script: ScriptRow; narrated: boolean }) {
   const total = script.shot_plan.reduce((t, s) => t + s.seconds, 0);
   return (
@@ -343,7 +403,7 @@ function ScriptCard({ script, narrated }: { script: ScriptRow; narrated: boolean
       <ol className="flex flex-col gap-3">
         {script.shot_plan.map((s, i) => (
           <li key={i} className="rounded-lg border border-border p-3 text-sm">
-            <div className="text-xs font-medium text-muted">Shot {i + 1} · {s.seconds}s</div>
+            <div className="text-xs font-medium text-muted">Shot {i + 1} · {s.seconds}s · {sourceLabel(s)}</div>
             {s.narration && <p className="mt-1 font-medium">🎙 “{s.narration}”</p>}
             <p className="mt-1">{s.visual}</p>
             <p className="mt-1 text-muted">🔊 {s.audio}</p>

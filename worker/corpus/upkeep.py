@@ -1,6 +1,6 @@
 """Housekeeping the ideas lane does between jobs, at most once an hour.
 
-  * sweep card media (ideas/sweep.py);
+  * sweep card media and published reels' footage (ideas/sweep.py);
   * today's USD→INR rate, for pricing OpenAI calls in rupees;
   * once a day, what the parked Race pods cost to keep (their monthly_cost / 30),
     charged to the owner so the month's total is the whole bill;
@@ -43,6 +43,7 @@ def ideas_lane() -> None:
     _last = time.monotonic()
     try:
         sweep.sweep(lambda m: log.info(m))
+        sweep.sweep_assets(lambda m: log.info(m))
     except Exception:  # noqa: BLE001 - each chore on its own
         log.exception("card media sweep failed")
     try:

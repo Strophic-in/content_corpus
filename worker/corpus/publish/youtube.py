@@ -54,9 +54,17 @@ def access_token(client: httpx.Client, refresh_token: str) -> str:
     return r.json()["access_token"]
 
 
+def credit_line(credits: list[str]) -> str:
+    return ("Footage: " + " · ".join(c.strip() for c in credits if c.strip())) if credits else ""
+
+
 def metadata(title: str, description: str, hashtags: list[str], category_id: str,
-             privacy: str = "private") -> dict:
-    """The video resource for the upload. YouTube refuses '<' and '>' in text."""
+             privacy: str = "private", credits: list[str] | None = None, synthetic: bool = True) -> dict:
+    """The video resource for the upload. YouTube refuses '<' and '>' in text.
+
+    `credits`: who made the footage shown (before the hashtags). `synthetic`: the reel
+    has AI-generated shots — YouTube asks for that to be disclosed; a reel made
+    only of real footage is not."""
     def clean(s: str) -> str:
         return s.replace("<", "").replace(">", "").strip()
 
@@ -66,13 +74,13 @@ def metadata(title: str, description: str, hashtags: list[str], category_id: str
         if t and used + len(t) + 1 <= 450:      # YouTube's limit is 500 characters in all
             tags.append(t)
             used += len(t) + 1
-    body = "\n\n".join(x for x in (clean(description), " ".join(clean(h) for h in hashtags)) if x)
+    body = "\n\n".join(x for x in (clean(description), clean(credit_line(credits or [])),
+                                     " ".join(clean(h) for h in hashtags)) if x)
     return {
         "snippet": {"title": clean(title)[:100] or "Untitled", "description": body[:4900],
                     "tags": tags, "categoryId": category_id or "22"},
         "status": {"privacyStatus": privacy, "selfDeclaredMadeForKids": False,
-                   # The reels are AI-generated; YouTube asks for that to be disclosed.
-                   "containsSyntheticMedia": True},
+                   "containsSyntheticMedia": synthetic},
     }
 
 

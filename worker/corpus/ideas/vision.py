@@ -34,6 +34,22 @@ class VideoAnalysis(BaseModel):
     spoken_language: str            # "none" when nobody speaks
 
 
+class Moment(BaseModel):
+    at: float                       # seconds into the video
+    what: str
+
+
+class FootageAnalysis(BaseModel):
+    """A reel's footage, logged for the script writer (analyze_asset)."""
+    summary: str
+    moments: list[Moment]           # what happens when, in order ([] for a picture)
+    on_screen_text: list[str]
+    logos_or_watermarks: bool
+    logo_names: list[str]
+    identifiable_people: bool
+    graphic: bool
+
+
 class SafetyCheck(BaseModel):
     sexual: bool
     sexual_minors: bool
@@ -92,6 +108,31 @@ class OpenAIVision:
         out = resp.output_parsed
         if out is None:
             raise Unparsed("the vision model returned no analysis", Usage.of(resp))
+        return out, Usage.of(resp)
+
+
+    def analyze(self, model: str, sheet: Path, title: str, times: list[float] | None = None,
+                transcript: str = "") -> tuple[FootageAnalysis, Usage]:
+        """Footage for a reel: a video's contact sheet (frame k at times[k]), or one picture."""
+        if times:
+            what = (f"The image is a contact sheet of {len(times)} frames from one video, in reading order "
+                    f"(left to right, top to bottom). The frames are at these seconds: "
+                    + ", ".join(f"{t:.1f}" for t in times) + ". Give `moments` with the time each one starts.")
+        else:
+            what = "The image is one picture; `moments` is []."
+        content: list[dict] = [{"type": "input_text", "text": f"The story: {title[:300]}\n{what}"}]
+        if transcript:
+            content.append({"type": "input_text", "text": f"What is said in the video:\n{transcript[:3000]}"})
+        content.append({"type": "input_image", "image_url": data_url(sheet), "detail": "high" if times else "low"})
+        resp = self.client.responses.parse(
+            model=model,
+            instructions=("You log footage for a news video editor, factually: what happens and when, any text on "
+                          "screen, a broadcaster's logo or a watermark, whether identifiable people are shown, "
+                          "and anything graphic (injury, blood, a dead body). Never guess names of people."),
+            input=[{"role": "user", "content": content}], text_format=FootageAnalysis)
+        out = resp.output_parsed
+        if out is None:
+            raise Unparsed("the vision model returned no footage log", Usage.of(resp))
         return out, Usage.of(resp)
 
 

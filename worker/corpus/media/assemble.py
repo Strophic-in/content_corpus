@@ -66,6 +66,17 @@ def whisper_words(audio: Path, hint: str) -> Words:
     return [(w.start, w.end, w.word.strip()) for s in segs for w in s.words if w.word.strip()]
 
 
+def transcribe(media: Path, max_seconds: int = 180) -> list[dict]:
+    """What is said in a video or recording, as timed lines (the language is detected)."""
+    with tempfile.TemporaryDirectory() as tmp:
+        wav = Path(tmp) / "speech.wav"
+        _run(["ffmpeg", "-y", "-v", "error", "-i", str(media), "-t", str(max_seconds), "-vn", "-ac", "1",
+              "-ar", "16000", str(wav)])
+        segs, _ = _whisper().transcribe(str(wav), beam_size=5, vad_filter=True)
+        return [{"start": round(s.start, 2), "end": round(s.end, 2), "text": s.text.strip()}
+                for s in segs if s.text.strip()]
+
+
 def _norm(w: str) -> str:
     return re.sub(r"[^a-z0-9']", "", w.lower())
 
@@ -227,7 +238,7 @@ FPS = 24
 RATE = 48000
 BREAK_AFTER = (".", "!", "?", "—", "–")   # a caption group never runs past these
 # Bump when a segment's content changes, so cached segments are not reused.
-SEGMENT_VERSION = 2
+SEGMENT_VERSION = 3
 
 
 def narration_words(wav: Path, line: str,
@@ -258,7 +269,7 @@ def _run(cmd: list[str], cwd: Path | None = None) -> None:
         raise FfmpegError(f"{cmd[0]} failed: {tail or f'exit {r.returncode}'}")
 
 
-def _has_audio(p: Path) -> bool:
+def has_audio(p: Path) -> bool:
     r = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "a", "-show_entries", "stream=index",
                         "-of", "csv=p=0", str(p)], capture_output=True, text=True, check=True)
     return bool(r.stdout.strip())
@@ -294,7 +305,7 @@ def build_segment(clip: Path, out_video: Path, out_audio: Path, *, narration: Pa
     samples = frames * RATE // FPS                 # the picture's exact length, in samples
 
     stereo = f"aresample={RATE},aformat=sample_fmts=fltp:channel_layouts=stereo"
-    inputs = (["-i", str(clip)] if _has_audio(clip)
+    inputs = (["-i", str(clip)] if has_audio(clip)
               else ["-f", "lavfi", "-i", f"anullsrc=r={RATE}:cl=stereo"])
     graph = f"[0:a]{stereo},volume={SFX_GAIN if narration else 1.0}[bed];"
     if narration:

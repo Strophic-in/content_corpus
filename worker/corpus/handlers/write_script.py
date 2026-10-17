@@ -1,5 +1,9 @@
 """cpu/write_script — topic → a script version awaiting approval.
 
+A post whose accepted idea brought footage waits (Defer) until that footage is
+fetched and analysed, so the writer can cut clips from what actually happens in
+it; script/footage.py tells the writer what it may show.
+
 Safe to retry: the version number comes from the job (fixed at enqueue), and a
 retry that finds that version already written returns it instead of paying for
 another LLM call. Everything the call produces lands in one transaction. A draft
@@ -15,7 +19,8 @@ from psycopg.types.json import Jsonb
 
 from .. import channels, costs, db, prompts, vault
 from ..config import settings
-from ..runner import Handler, JobContext, Permanent, Retryable
+from ..runner import Defer, Handler, JobContext, Permanent, Retryable
+from ..script import footage as footage_
 from ..script.llm import (NARRATOR_WORDS_PER_SECOND, OpenAIScriptWriter, ScriptWriter, Usage,
                           narration_word_cap, validate)
 from ..script.review import OpenAIReviewer
@@ -108,7 +113,12 @@ def run(ctx: JobContext) -> dict:
                     f"with this note — address it:\n{rejected['rejection_note']}")
     narrated = post["audio_source"] == "kokoro"
     speed = float(st.get("narrator_speed") or 1.1)
-    system = _system_prompt(st, target, revision, post["audio_source"], speed, fmt)
+    with db.conn() as c:
+        footage, waiting = footage_.load(c, post_id, stock=bool(vault.secret(post["user_id"], "pexels_api_key")))
+    if waiting and footage_.still_worth_waiting(waiting):
+        raise Defer(f"waiting for {len(waiting)} piece(s) of footage to be fetched and analysed", retry_in=45)
+    system = (_system_prompt(st, target, revision, post["audio_source"], speed, fmt)
+              + footage_.prompt_section(footage, narrated))
     user = f"Topic: {post['topic']}\nBrief: {post['brief'] or '(none)'}" + _category_note(category)
     input_sha = hashlib.sha256("\x1f".join([system, user, model]).encode()).hexdigest()
 
@@ -127,7 +137,8 @@ def run(ctx: JobContext) -> dict:
         return out, u
 
     out, usage = call(user)
-    problems = validate(out, target, narrated=narrated, speed=speed)
+    footage_.normalize(out, footage)
+    problems = validate(out, target, narrated=narrated, speed=speed, footage=footage)
     # A draft that breaks a rule goes back with exactly what to fix: asking again
     # from scratch tends to repeat the same mistake (seen: one line too long, 3x).
     for _ in range(REPAIR_ROUNDS):
@@ -141,7 +152,8 @@ def run(ctx: JobContext) -> dict:
                       usage.output_tokens + more.output_tokens,
                       usage.cached_input_tokens + more.cached_input_tokens,
                       usage.cache_write_tokens + more.cache_write_tokens)
-        problems = validate(out, target, narrated=narrated, speed=speed)
+        footage_.normalize(out, footage)
+        problems = validate(out, target, narrated=narrated, speed=speed, footage=footage)
     if problems:
         raise Retryable("script failed validation: " + "; ".join(problems), stage="validate",
                         detail={"problems": problems})

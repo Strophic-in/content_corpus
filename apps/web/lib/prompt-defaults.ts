@@ -21,15 +21,17 @@ const read = (file: string) =>
   fs.readFileSync(path.join(/*turbopackIgnore: true*/ promptsDir(), file), "utf8").trim();
 
 // narrated: a 3D explainer with a voice-over; dialogue: characters speak; news: a narrated
-// news explainer, with the news desk's idea prompt (crime, politics, incidents allowed under
-// editorial rules) and an illustrative look that never fakes footage of a real event.
+// news short, with the news desk's idea prompt (crime, politics, incidents allowed under
+// editorial rules), a script prompt that shows the story's real footage where there is
+// some, and an illustrative look for generated shots that never fakes a real event.
 export type Template = "narrated" | "dialogue" | "news";
 export type Source = { name: string; url: string };
 
 export function defaultPrompts(template: Template) {
   return {
     idea_prompt: read(template === "news" ? "ideas_news.md" : "ideas.md"),
-    script_prompt: read(template === "dialogue" ? "script_reel.md" : "script_narrated.md"),
+    script_prompt: read(template === "dialogue" ? "script_reel.md" : template === "news" ? "script_news.md"
+      : "script_narrated.md"),
     visual_style: read(template === "news" ? "visual_style_news.md" : "visual_style.md"),
     sources: JSON.parse(read("sources.json")) as Source[],
     audio_source: template === "dialogue" ? ("ltx_native" as const) : ("kokoro" as const),

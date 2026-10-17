@@ -99,6 +99,7 @@ export function Deck({ picker, cards, looking, channel, categories, platforms, s
   const [sheet, setSheet] = useState<IdeaCard | null>(null);
   const [slot, setSlot] = useState({ date: suggestion.date, time: suggestion.time });
   const [chosen, setChosen] = useState<string[]>(platforms.map((p) => p.id));
+  const [useMedia, setUseMedia] = useState(false);
   const [skip, setSkip] = useState<{ card: IdeaCard; timer: ReturnType<typeof setTimeout> } | null>(null);
   const [notice, setNotice] = useState<{ text: string; href?: string; error?: boolean } | null>(null);
   const [target, setTarget] = useState("all");
@@ -174,12 +175,13 @@ export function Deck({ picker, cards, looking, channel, categories, platforms, s
     if (!sheet) return;
     const card = sheet;
     start(async () => {
-      const r = await decideIdea(card.id, true, slot.date, slot.time, null, chosen);
+      const r = await decideIdea(card.id, true, slot.date, slot.time, null, chosen, useMedia);
       if (!r.ok) {
         setNotice({ text: r.error ?? "Couldn't schedule it.", error: true });
         return;
       }
       setSheet(null);
+      setUseMedia(false);
       setNotice({ text: `Scheduled · ${when(slot.date, slot.time)}`, href: r.postId ? `/posts/${r.postId}` : undefined });
       setSlot((s) => ({ ...s, date: addDay(s.date) }));
       setTimeout(() => setNotice(null), 4000);
@@ -189,6 +191,7 @@ export function Deck({ picker, cards, looking, channel, categories, platforms, s
   function cancelSheet() {
     if (sheet) putBack(sheet.id);
     setSheet(null);
+    setUseMedia(false);
   }
 
   function undoSkip() {
@@ -413,6 +416,22 @@ export function Deck({ picker, cards, looking, channel, categories, platforms, s
                   </label>
                 ))}
               </fieldset>
+            )}
+            {sheet.media.length > 0 && (
+              <label className="mt-4 flex items-start gap-3 rounded-xl border border-border bg-background p-3 text-sm">
+                <input type="checkbox" checked={useMedia} onChange={(e) => setUseMedia(e.target.checked)}
+                       className="mt-0.5 size-4 shrink-0 accent-accent" />
+                <span>
+                  <span className="font-medium">
+                    Use its {sheet.media[0].type === "video" ? "video" : "picture"} in the reel
+                  </span>
+                  <span className="block text-xs text-muted">
+                    Shown with credit{sheet.media[0].credit ? ` (${sheet.media[0].credit})` : ""}. It belongs to whoever
+                    made it — only use it if you&apos;re comfortable publishing it.
+                    {sheet.flags.length > 0 && <span className="text-warn"> {sheet.flags.join(" · ")}.</span>}
+                  </span>
+                </span>
+              </label>
             )}
             <p className="mt-2 text-xs text-muted">Times are in {channel.timezone}.</p>
             <div className="mt-5 flex gap-3">

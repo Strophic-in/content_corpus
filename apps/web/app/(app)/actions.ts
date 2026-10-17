@@ -123,6 +123,20 @@ export async function requestRender(postId: string): Promise<ActionState> {
   return { ok: true };
 }
 
+/** Allow or withdraw one piece of a post's footage. Withdrawn footage is never shown:
+ *  rendering refuses a script that uses it (write a new one). */
+export async function setAssetRights(assetId: string, allowed: boolean): Promise<ActionState> {
+  const user = await requireUser();
+  try {
+    await asUser(user.id, (db) => db.query("update assets set rights = $2 where id = $1",
+                                           [assetId, allowed ? "approved" : "rejected"]));
+  } catch (err) {
+    return { ok: false, error: friendly(err) };
+  }
+  refresh();
+  return { ok: true };
+}
+
 const PublishInput = z.object({
   platforms: z.array(z.enum(["youtube", "instagram"])).min(1, "Choose where to post it."),
   // Wall-clock time in the post's timezone (a datetime-local value); none = now.
@@ -350,27 +364,40 @@ export async function saveRedditKeys(_: ActionState, form: FormData): Promise<Ac
   return { ok: true, message: "Saved. The ideas worker uses Reddit's API from its next batch." };
 }
 
-/** A YouTube Data API key (a Google Cloud API key) for the trending-chart source. Write-only. */
-export async function saveYouTubeKey(_: ActionState, form: FormData): Promise<ActionState> {
+// Keys for other services, write-only like the OpenAI key: a YouTube Data API key
+// (a Google Cloud API key) for trending-chart sources, a Pexels key for stock video.
+const SERVICE_KEYS = {
+  youtube: { name: "youtube_api_key", shape: /^AIza[0-9A-Za-z_-]{35}$/,
+             wrong: "That isn't a Google API key (they start with AIza and are 39 characters).",
+             saved: "Saved. YouTube trending sources work from the next batch.",
+             removed: "Removed — YouTube trending sources will pause." },
+  pexels: { name: "pexels_api_key", shape: /^[A-Za-z0-9]{30,100}$/,
+            wrong: "That doesn't look like a Pexels API key (letters and digits, from pexels.com/api).",
+            saved: "Saved. New scripts may use stock video.",
+            removed: "Removed — new scripts won't use stock video." },
+} as const;
+export type ServiceKey = keyof typeof SERVICE_KEYS;
+
+export async function saveServiceKey(service: ServiceKey, _: ActionState, form: FormData): Promise<ActionState> {
   const user = await requireUser();
+  const k = SERVICE_KEYS[service];
   if (form.get("remove") === "1") {
-    await asUser(user.id, (db) => db.query("delete from user_keys where name = 'youtube_api_key'"));
+    await asUser(user.id, (db) => db.query("delete from user_keys where name = $1", [k.name]));
     refresh();
-    return { ok: true, message: "Removed — YouTube trending sources will pause." };
+    return { ok: true, message: k.removed };
   }
   const key = String(form.get("key") ?? "").trim();
-  if (!/^AIza[0-9A-Za-z_-]{35}$/.test(key))
-    return { ok: false, error: "That isn't a Google API key (they start with AIza and are 39 characters)." };
+  if (!k.shape.test(key)) return { ok: false, error: k.wrong };
   try {
     await asUser(user.id, (db) => db.query(
-      `insert into user_keys (user_id, name, ciphertext, updated_at) values ($1, 'youtube_api_key', $2, now())
-       on conflict (user_id, name) do update set ciphertext = $2, updated_at = now()`,
-      [user.id, encrypt(key)]));
+      `insert into user_keys (user_id, name, ciphertext, updated_at) values ($1, $2, $3, now())
+       on conflict (user_id, name) do update set ciphertext = $3, updated_at = now()`,
+      [user.id, k.name, encrypt(key)]));
   } catch (err) {
     return { ok: false, error: friendly(err) };
   }
   refresh();
-  return { ok: true, message: "Saved. YouTube trending sources work from the next batch." };
+  return { ok: true, message: k.saved };
 }
 
 /** Re-read which models the stored key can use (the ideas worker does it: the web

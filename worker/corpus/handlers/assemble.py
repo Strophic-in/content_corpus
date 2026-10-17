@@ -13,6 +13,8 @@ import shutil
 import tempfile
 from pathlib import Path
 
+from psycopg.types.json import Jsonb
+
 from .. import auto, db, storage
 from ..config import settings
 from ..media import assemble as media
@@ -48,10 +50,13 @@ def run(ctx: JobContext) -> dict:
         key = f"{storage.post_prefix(post['user_id'], post['id'])}/final/{script_id}.mp4"
         stored = storage.put_file(key, out, kind="final", user_id=post["user_id"], post_id=post["id"],
                                   content_type="video/mp4")
+    # Who made the footage shown, in order of appearance: for the description and caption.
+    credits = list(dict.fromkeys(s["credit"].strip() for s in shots if (s.get("credit") or "").strip()))
     with db.tx() as c:
         c.execute("""update posts set status = 'ready', final_key = %s, final_sha256 = %s, final_bytes = %s,
-                                      final_duration_s = %s, error = null
-                      where id = %s""", (key, stored["sha256"], stored["bytes"], info["seconds"], post["id"]))
+                                      final_duration_s = %s, error = null, credits = %s
+                      where id = %s""", (key, stored["sha256"], stored["bytes"], info["seconds"],
+                                         Jsonb(credits), post["id"]))
         db.log_event(c, post["id"], "post_processing", "ready", f"worker:{settings().worker_id}",
                      "reel assembled", {**info, "bytes": stored["bytes"]})
     shutil.rmtree(build_segment.cache_dir(post["id"]), ignore_errors=True)
@@ -60,8 +65,6 @@ def run(ctx: JobContext) -> dict:
 
 
 def on_give_up(ctx: JobContext, err: dict) -> None:
-    from psycopg.types.json import Jsonb
-
     with db.tx() as c:
         post = c.execute("select id, status from posts where approved_script_id = %s for update",
                          (ctx.payload["script_id"],)).fetchone()
