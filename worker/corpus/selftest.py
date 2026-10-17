@@ -60,7 +60,11 @@ def main() -> int:
             label = "AI reconstruction" if k == 2 else None          # a generated shot's label, drawn on
             frames += media.build_segment(clip, *seg, narration=narration, words=w, label=label)["frames"]
             segments.append(seg)
-        info = media.join_segments(segments, d / "reel.mp4")
+        # A short MP3 bed, looped under the reel and ducked by its sound (as Freesound tracks are).
+        track = d / "music.mp3"
+        subprocess.run(["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "sine=frequency=660:sample_rate=44100",
+                        "-t", "2", "-c:a", "libmp3lame", str(track)], check=True, capture_output=True)
+        info = media.join_segments(segments, d / "reel.mp4", music=track)
         if info["join"] != "copy":
             print(f"selftest FAILED: the fast join did not work here (fell back to {info['join']})")
             return 1

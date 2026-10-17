@@ -21,7 +21,9 @@ from . import net
 
 SEARCH = "https://freesound.org/apiv2/search/text/"
 RECENT = 20
-GAIN = 0.16                     # under the narration and the shots' own sound
+# Its level where the picture is otherwise silent; under the narration or a shot's
+# own sound it ducks itself (media/assemble.py DUCK).
+GAIN = 0.30
 TRACK_BYTES = 15_000_000
 
 MOODS: dict[str, list[str]] = {

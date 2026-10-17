@@ -360,12 +360,20 @@ def _check_reel(out: Path, frames: int) -> float:
     return frames / FPS
 
 
+# Music ducking (sidechain compression keyed by the reel's own sound): measured on
+# test tones, a narration-level voice pulls the music down ~11 dB, quiet ambience
+# ~2 dB, and silence leaves it at full level.
+DUCK = "threshold=0.03:ratio=4:attack=20:release=500"
+
+
 def join_segments(segments: list[tuple[Path, Path]], out: Path, log: Callable[[str], None] = print,
-                  music: Path | None = None, music_gain: float = 0.16) -> dict:
+                  music: Path | None = None, music_gain: float = 0.30) -> dict:
     """Finished segments -> the reel, checked before it is returned.
 
-    `music`: a track laid under the whole reel at `music_gain` (looped if short,
-    faded in and out), mixed before the one loudness pass.
+    `music`: a track laid under the whole reel (looped if short, faded in and out)
+    that ducks itself: it sits at `music_gain` where the picture has no sound of
+    its own, and drops under the narration, a clip's speech or a shot's effects —
+    the reel's sound is the sidechain. Mixed before the one loudness pass.
 
     The sound is joined as one stream (the segments' WAVs are sample-exact), made
     stereo explicitly, normalised once and encoded to AAC. The pictures are copied
@@ -384,8 +392,9 @@ def join_segments(segments: list[tuple[Path, Path]], out: Path, log: Callable[[s
         else:
             total = frames / FPS
             bed = (f"[1:a]aformat=sample_fmts=fltp:sample_rates={RATE}:channel_layouts=stereo,atrim=duration={total:.3f},"
-                   f"volume={music_gain},afade=t=in:d=1.5,afade=t=out:st={max(0.0, total - 2):.3f}:d=2[m];"
-                   f"[0:a]aformat=sample_fmts=fltp:sample_rates={RATE}:channel_layouts=stereo[v];"
+                   f"volume={music_gain},afade=t=in:d=1.5,afade=t=out:st={max(0.0, total - 2):.3f}:d=2[m0];"
+                   f"[0:a]aformat=sample_fmts=fltp:sample_rates={RATE}:channel_layouts=stereo,asplit=2[v][key];"
+                   f"[m0][key]sidechaincompress={DUCK}[m];"
                    f"[v][m]amix=inputs=2:normalize=0:duration=first,{SOUND_FILTERS}[out]")
             _run(["ffmpeg", "-y", "-v", "error", "-f", "concat", "-safe", "0", "-i", str(sounds),
                   "-stream_loop", "-1", "-i", str(music), "-filter_complex", bed, "-map", "[out]",

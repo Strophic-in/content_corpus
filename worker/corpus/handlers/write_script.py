@@ -224,7 +224,8 @@ def _music_section(available: bool) -> str:
         return "\n\n## Music\n`music_mood` is \"\" (no background music for this reel)."
     return ("\n\n## Music\n`music_mood`: the background track's mood, one of "
             + ", ".join(m for m in MUSIC_MOODS if m)
-            + " — or \"\" when music would be in poor taste (a death, a tragedy). It plays quietly under the voice.")
+            + ". Give almost every reel one: it fills the moments without narration or sound and dips under the "
+              "voice by itself. Use \"\" only when music would be in poor taste (a death, a tragedy).")
 
 
 def _category(c, post: dict) -> dict | None:
