@@ -26,20 +26,19 @@ RECENT = 20
 GAIN = 0.30
 TRACK_BYTES = 15_000_000
 
+# Precise searches first, then broader ones: CC0 is a small part of Freesound and
+# most multi-word searches find nothing (counted live, 2026-10-17 — all four of
+# TrendCaster's "playful" searches returned 0 CC0 tracks, "cheerful music" 139).
 MOODS: dict[str, list[str]] = {
-    "breaking-tension": ["tense cinematic pulse", "dark suspense underscore", "dramatic percussion loop",
-                         "newsroom tension drone"],
-    "somber": ["sad piano ambient", "melancholic strings instrumental", "somber cello pad",
-               "emotional piano underscore"],
-    "uplifting": ["uplifting piano background", "hopeful acoustic instrumental", "inspiring build underscore",
-                  "bright motivational loop"],
-    "energetic-hype": ["energetic electronic beat", "upbeat synthwave loop", "driving edm background",
-                       "hype percussion groove"],
-    "neutral-corporate": ["corporate background music", "minimal tech ambient", "clean electronic underscore",
-                          "soft synth background loop"],
-    "playful": ["quirky ukulele background", "playful pizzicato loop", "light comedy background",
-                "fun upbeat whistle tune"],
+    "breaking-tension": ["tense cinematic pulse", "dramatic percussion loop", "suspense music", "tension music"],
+    "somber": ["sad piano ambient", "melancholic strings instrumental", "sad piano", "ambient pad"],
+    "uplifting": ["uplifting piano background", "hopeful acoustic instrumental", "happy piano", "inspiring music",
+                  "positive background music"],
+    "energetic-hype": ["upbeat synthwave loop", "upbeat music", "electronic beat loop"],
+    "neutral-corporate": ["corporate background music", "soft synth background loop", "lofi", "background music"],
+    "playful": ["happy ukulele", "upbeat acoustic", "cheerful music", "fun music loop", "happy background music"],
 }
+FALLBACK = "neutral-corporate"          # when a mood finds nothing usable
 
 
 @dataclass
@@ -63,8 +62,11 @@ def is_audio(data: bytes) -> bool:
 
 
 def find(client: httpx.Client, api_key: str, mood: str, exclude: set[int], dest: Path,
-         min_seconds: int = 20) -> Track | None:
-    for query in MOODS.get(mood, []):
+         min_seconds: int = 10) -> Track | None:
+    """A CC0 track for the mood (looped under the reel if short), else one from
+    FALLBACK's searches; None only when nothing at all could be fetched."""
+    queries = MOODS.get(mood, []) + [q for q in MOODS[FALLBACK] if mood != FALLBACK]
+    for query in queries:
         r = client.get(SEARCH, headers={"Authorization": f"Token {api_key}"}, timeout=20, params={
             "query": query, "filter": f'license:"Creative Commons 0" duration:[{min_seconds} TO 300]',
             "sort": "rating_desc", "fields": "id,name,username,url,previews", "page_size": 15})

@@ -125,7 +125,7 @@ def prompt_section(footage: Footage, narrated: bool) -> str:
         lines += ["", "## Footage you may not show — recreate it",
                   "The owner chose an AI version of the original media below: it must not appear in the reel. "
                   "Recreate a video's moments as generated shots that follow its log closely — what happens, in "
-                  "order, and where — and they are labelled \"AI reconstruction\" on screen. Show people as "
+                  "order, and where — and they are labelled \"AI reconstruction\" on screen. The narration never calls them \"this clip\", \"the video\" or \"the footage\": the viewer sees a reconstruction. Show people as "
                   "figures from behind or at a distance, never a lifelike face. A picture's AI version, when "
                   "there is one, is in the list above as \"AI illustration\"."]
         lines += [_describe(a, f"Original {'video' if a['kind'] == 'video' else 'picture'}:")

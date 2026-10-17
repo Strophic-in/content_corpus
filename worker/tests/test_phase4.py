@@ -251,3 +251,22 @@ def test_other_reports_must_be_about_the_same_story():
     assert not research.same_story("Your phone is rewiring your brain.", story)
     assert research.same_story("Stress hormone cortisol strengthens emotional memories, Yale study finds", story)
     assert research.same_story("Council votes to ban cars", "City council bans cars downtown")
+
+
+def test_a_mood_with_no_cc0_tracks_falls_back_to_background_music(tmp_path):
+    """Live, 2026-10-17: every "playful" search found nothing and the reel had no music."""
+    mp3 = subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "sine=frequency=500", "-t", "1",
+                          "-c:a", "libmp3lame", "-f", "mp3", "-"], capture_output=True, check=True).stdout
+    asked = []
+
+    def search(req):
+        asked.append(req.url.params["query"])
+        hit = req.url.params["query"] == music.MOODS[music.FALLBACK][0]
+        return httpx.Response(200, json={"results": [{"id": 7, "name": "Calm", "username": "a", "url": "u",
+                                                      "previews": {"preview-hq-mp3": "https://cdn.test/7.mp3"}}]
+                                         if hit else []})
+    with _routes({"https://freesound.org/apiv2/search/text/": search,
+                  "https://cdn.test/": httpx.Response(200, content=mp3, headers={"content-type": "audio/mpeg"})}) as c:
+        t = music.find(c, "k", "playful", set(), tmp_path / "m.mp3")
+    assert t is not None and t.id == 7
+    assert asked[:len(music.MOODS["playful"])] == music.MOODS["playful"]
