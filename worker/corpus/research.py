@@ -64,6 +64,34 @@ _SENT_SPLIT = re.compile(r"(?<=[.!?])\s+")
 _MIN_PARA_CHARS = 40
 
 
+_TOKEN_RE = re.compile(r"[a-z0-9]+")
+_TOKEN_STOP = frozenset(
+    "the and for that with from this have has are was were will not says said after over into been they what "
+    "when where how why also but now new video watch your you can could may might its their about more than "
+    "who which while does did just".split())
+
+
+def _stem(t: str) -> str:
+    if len(t) > 4 and t.endswith("ies"):
+        return t[:-3] + "y"                        # memories → memory
+    if len(t) > 3 and t.endswith("s") and not t.endswith("ss"):
+        return t[:-1]                              # changes → change, bans → ban
+    return t
+
+
+def sig_tokens(text: str) -> set[str]:
+    """A headline's significant words, roughly stemmed ("memories" ~ "memory")."""
+    return {_stem(t) for t in _TOKEN_RE.findall((text or "").lower()) if len(t) > 2 and t not in _TOKEN_STOP}
+
+
+def same_story(title: str, story: str, need: int = 2) -> bool:
+    """Whether a headline is plausibly about the same story: at least `need`
+    significant words in common (one shared word — "brain" — was not enough live:
+    it let a trauma explainer and a screen-time piece into a story about a Yale
+    stress-and-memory study)."""
+    return len(sig_tokens(title) & sig_tokens(story)) >= need
+
+
 @dataclass
 class Article:
     url: str

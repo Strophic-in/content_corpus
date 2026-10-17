@@ -240,3 +240,14 @@ def test_allowed_emails_become_owners_and_a_spent_limit_stops_scripts(owner, use
     job = {"id": None, "post_id": pid, "payload": {"version": 1}}
     with pytest.raises(Permanent, match="spending limit"):
         write_script.run(JobContext(job=job))
+
+
+def test_other_reports_must_be_about_the_same_story():
+    """Live, 2026-10-17: a search for a Yale stress-and-memory study returned a trauma
+    explainer and a screen-time piece, which shared only the word "brain"."""
+    story = ("Yale scientists discover how stress changes the brain to make memories stronger "
+             "What Does Stress Do to Your Brain’s Memory Switch?")
+    assert not research.same_story("Trauma rewires the brain: what does the healing process look like?", story)
+    assert not research.same_story("Your phone is rewiring your brain.", story)
+    assert research.same_story("Stress hormone cortisol strengthens emotional memories, Yale study finds", story)
+    assert research.same_story("Council votes to ban cars", "City council bans cars downtown")

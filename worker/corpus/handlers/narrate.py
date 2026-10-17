@@ -25,7 +25,7 @@ from ..gpu import ltx25
 from ..media import assemble as media
 from ..media import tts
 from ..runner import Handler, JobContext, Permanent
-from ..script.llm import MAX_SHOT_SECONDS
+from ..script.llm import MAX_CLIP_SECONDS, MAX_SHOT_SECONDS
 from .plan_shots import footage_frames
 
 SPEAK = tts.speak                    # swapped by tests
@@ -68,10 +68,12 @@ def run(ctx: JobContext) -> dict:
                 storage.get_file(sh["narration_key"], wav)
             else:
                 seconds = SPEAK(text, voice, speed, wav)
-                if seconds + PAUSE_SECONDS > MAX_SHOT_SECONDS:
+                # A generated shot is one LTX take (≤ MAX_SHOT_SECONDS); footage can run longer.
+                cap = MAX_SHOT_SECONDS if sh["source"] == "generate" else MAX_CLIP_SECONDS
+                if seconds + PAUSE_SECONDS > cap:
                     # The shot would end mid-sentence: its picture cannot be longer.
-                    raise Permanent(f"Shot {sh['idx'] + 1}'s narration takes {seconds:.1f}s to say, but a "
-                                    f"shot holds at most {MAX_SHOT_SECONDS}s. Write the script again; "
+                    raise Permanent(f"Shot {sh['idx'] + 1}'s narration takes {seconds:.1f}s to say, but this "
+                                    f"shot holds at most {cap}s. Write the script again; "
                                     f"new scripts keep every line short enough.", stage="narration_too_long")
                 key = f"{prefix}/narration/{script_id}/{sh['idx']}.wav"
                 storage.put_file(key, wav, kind="narration", user_id=post["user_id"], post_id=post["id"],

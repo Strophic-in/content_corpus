@@ -57,21 +57,31 @@ def run(ctx: JobContext) -> dict:
         for u in urls:
             articles.append(research.read(client, u))
         sites_read = {a.site for a in articles}
+        # Search by what the source itself calls the story (the card's title is often a
+        # question), and keep only reports that share its specific words.
+        headline = next((a.title for a in articles if a.ok and a.title), "") or post["topic"]
+        story = f"{headline} {post['topic']}"
         try:
-            others = SEARCH(client, post["topic"], count=12)
+            others = SEARCH(client, headline, count=12)
         except Exception as e:  # noqa: BLE001 - the idea's own sources are enough to go on
             log(f"news search failed: {e}")
             others = []
+        skipped = 0
         for it in others:
             if sum(1 for a in articles if a.url not in urls) >= EXTRA_REPORTS:
                 break
             site = urlparse(it.url).netloc.removeprefix("www.")
             if site in sites_read or it.url in urls:
                 continue
+            if not research.same_story(it.title, story):
+                skipped += 1
+                continue
             a = research.read(client, it.url)
-            if a.ok:
+            if a.ok and research.same_story(a.title or it.title, story):
                 articles.append(a)
                 sites_read.add(site)
+        if skipped:
+            log(f"left out {skipped} search result(s) about other stories")
     good = [a for a in articles if a.ok]
     with db.conn() as c:
         c.execute("update posts set research = %s, research_state = %s where id = %s",

@@ -349,3 +349,21 @@ def test_a_published_reels_footage_is_swept_after_two_weeks(s3, owner, user, foo
     assert sweep.sweep_assets(lambda m: None) >= 2
     rows = owner.execute("select key, error from assets where post_id = %s", (pid,)).fetchall()
     assert all(r["key"] is None and "removed after publishing" in r["error"] for r in rows)
+
+
+def test_a_picture_shot_may_hold_a_line_longer_than_a_generated_shot(s3, owner, user, footage_post, monkeypatch):
+    """Live, 2026-10-17: a 13.8 s line on a picture shot failed narration against the
+    12 s limit of a generated (LTX) shot; footage shots hold up to MAX_CLIP_SECONDS."""
+    from corpus.handlers import narrate as narrate_
+    from test_render_pipeline import fake_speak
+
+    def slow(text, voice, speed, out):
+        fake_speak(text, voice, speed, out)
+        return 13.8
+    monkeypatch.setattr(narrate_, "SPEAK", slow)
+    FootageWriter.shots = [generated_shot(seconds=4, visual="v", audio="", narration=LINE, source="image", asset=2),
+                           generated_shot(seconds=4, visual="v", audio="", narration=LINE, source="image", asset=2)]
+    sid = _approve(owner, user, footage_post)
+    drain(cpu_footage())
+    rows = owner.execute("select num_frames, narration_key from shots where script_id = %s", (sid,)).fetchall()
+    assert all(r["narration_key"] for r in rows) and {r["num_frames"] for r in rows} == {round((13.8 + 0.35) * 24)}
