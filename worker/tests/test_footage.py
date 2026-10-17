@@ -66,6 +66,18 @@ def test_footage_shots_must_name_footage_the_reel_has():
     assert 'source "drone"' in problems
 
 
+def test_a_clip_may_not_repeat_footage_while_some_is_unused():
+    """Live, 2026-10-17: five shots cut 0-8, 8-16, 0-8, 8-16, 0-8 of a 25.5 s video."""
+    clip = lambda a, b: generated_shot(seconds=4, visual="v", audio="", narration=LINE, source="clip",  # noqa: E731
+                                       asset=1, start=a, end=b)
+    long = Footage(assets=[{"n": 1, "kind": "video", "seconds": 25.5}])
+    problems = validate(_script(clip(0, 8), clip(8, 16), clip(0, 8)), 12, narrated=True, footage=long)
+    assert problems == ["shot 3 shows the same part of video #1 as shot 1 (0-8s) while 16-25.5s is unused; "
+                        "cut a different window"]
+    short = Footage(assets=[{"n": 1, "kind": "video", "seconds": 9.0}])     # nothing else to show: a repeat is fine
+    assert validate(_script(clip(0, 8), clip(1, 9)), 8, narrated=True, footage=short) == []
+
+
 def test_the_writer_sees_the_footage_with_times_and_words():
     assets = [{**FOOTAGE.assets[0], "has_audio": True, "analysis": {
         "summary": "A bridge sags and falls into the river.",

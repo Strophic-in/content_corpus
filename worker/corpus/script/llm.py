@@ -176,6 +176,37 @@ def _footage_problems(i: int, s: Shot, footage: Footage | None, narrated: bool) 
     return out
 
 
+def _longest_gap(windows: list[tuple[float, float]], length: float) -> tuple[float, float]:
+    """The longest stretch of [0, length] no window covers."""
+    best, at = (0.0, 0.0), 0.0
+    for lo, hi in sorted(windows) + [(length, length)]:
+        if lo - at > best[1] - best[0]:
+            best = (at, lo)
+        at = max(at, hi)
+    return best
+
+
+def _repeated_windows(shots: list[Shot], footage: Footage | None) -> list[str]:
+    """A clip that shows mostly the same part of a video as an earlier one, while a
+    stretch at least as long is still unused (seen live: three of five shots cut the
+    same 0-8 s and the last third of the video never appeared)."""
+    out, used = [], {}
+    for i, s in enumerate(shots, 1):
+        a = footage.asset(s.asset) if footage and (s.source or "generate") == "clip" else None
+        if not a or not a.get("seconds") or s.end <= s.start:
+            continue
+        before = used.setdefault(s.asset, [])
+        for lo, hi, j in before:
+            if min(s.end, hi) - max(s.start, lo) > 0.5 * (s.end - s.start):
+                gap = _longest_gap([(x, y) for x, y, _ in before], float(a["seconds"]))
+                if gap[1] - gap[0] >= min(s.end - s.start, 2 * MIN_CLIP_SECONDS):
+                    out.append(f"shot {i} shows the same part of video #{s.asset} as shot {j} ({lo:g}-{hi:g}s) while "
+                               f"{gap[0]:g}-{gap[1]:g}s is unused; cut a different window")
+                break
+        before.append((s.start, s.end, i))
+    return out
+
+
 def shot_seconds(s: Shot, narrated: bool, speed: float = 1.1) -> float:
     """About how long a shot lasts in the reel."""
     if (s.source or "generate") == "clip" and s.keep_audio:
@@ -227,6 +258,7 @@ def validate(out: ScriptOut, target_seconds: int, narrated: bool = False, speed:
         elif quoted and len(quoted.split()) > s.seconds * MAX_WORDS_PER_SECOND:
             problems.append(f"shot {i} has {len(quoted.split())} spoken words for {s.seconds}s; "
                             f"cut the dialogue or lengthen the shot")
+    problems += _repeated_windows(out.shots, footage)
     # A narrated reel lasts as long as its narration takes to say (plus kept clips).
     total = round(sum(shot_seconds(s, narrated, speed) for s in out.shots))
     what = "the narration runs about" if narrated else "the shots total"

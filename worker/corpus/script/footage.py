@@ -90,7 +90,9 @@ def prompt_section(footage: Footage, narrated: bool) -> str:
             + ("`narration` is \"\" and " if narrated else "")
             + f"the window sets the shot's length (at most {MAX_CLIP_SECONDS} s). Otherwise "
             + ("the narration plays over the clip's lowered sound, so choose a window at least as long as the "
-               "line takes to say." if narrated else "the clip's sound plays under the scene."))
+               "line takes to say." if narrated else "the clip's sound plays under the scene.")
+            + " Give each clip shot its own part of the video, mostly in order, and use all of it before "
+              "showing any part twice.")
     if images:
         lines.append("- \"image\": one of the pictures below, shown with a slow camera move; `asset` is its "
                      "number" + ("; the narration plays over it." if narrated else "."))
