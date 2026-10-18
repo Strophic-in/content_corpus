@@ -8,6 +8,7 @@ import { KIND_LABEL, template } from "@/lib/templates";
 
 import { ChannelPicker } from "../../nav";
 import { AutoRefresh } from "../../posts/[id]/post-actions";
+import { DailyIdeasPause } from "../daily-pause";
 import { Deck, type CardMedia, type IdeaCard } from "../deck";
 
 export const metadata = { title: "Discover · Content Corpus" };
@@ -130,6 +131,8 @@ export default async function ChannelDeckPage({ params }: { params: Promise<{ ch
       <Deck
         key={channel.id}
         picker={<ChannelPicker channels={channels.map(({ id, name }) => ({ id, name }))} activeId={channel.id} />}
+        daily={<DailyIdeasPause channelId={channel.id} daily={channel.ideas_daily} at={channel.ideas_daily_at}
+                                paused={channel.ideas_paused} />}
         cards={cards}
         looking={data.looking > 0}
         channel={{ id: channel.id, name: channel.name, timezone: channel.timezone }}

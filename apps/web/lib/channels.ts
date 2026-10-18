@@ -11,6 +11,8 @@ import { templateDefaults, type ContentType } from "./templates";
 export type Channel = {
   id: string; name: string; niche: string; audience: string; voice: string; language: string;
   timezone: string; default_publish_time: string; ideas_daily: boolean; ideas_daily_at: string;
+  // When daily ideas are paused: "forever" (until resumed), or when they start again; null = not paused.
+  ideas_paused: string | null;
   is_default: boolean;
 };
 
@@ -32,7 +34,10 @@ export const CHANNEL_COOKIE = "cc_channel";
 
 export const CHANNEL_COLS = `id, name, niche, audience, voice, language, timezone,
   to_char(default_publish_time, 'HH24:MI') as default_publish_time, ideas_daily,
-  to_char(ideas_daily_at, 'HH24:MI') as ideas_daily_at, is_default`;
+  to_char(ideas_daily_at, 'HH24:MI') as ideas_daily_at, is_default,
+  case when ideas_paused_until = 'infinity' then 'forever'
+       when ideas_paused_until > now() then to_char(ideas_paused_until at time zone timezone, 'Dy DD Mon, HH24:MI')
+  end as ideas_paused`;
 export const FORMAT_COLS = `id, channel_id, name, description, is_default, audio_source, target_seconds,
   idea_prompt, script_prompt, visual_style, sources, ideas_per_batch, version, updated_at, template_id,
   content_type, params`;

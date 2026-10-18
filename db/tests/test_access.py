@@ -879,3 +879,27 @@ def test_uploads_reserve_storage_and_queue_their_check(alice, bob, owner):
         c.execute("select api.delete_upload(%s)", (a[0],))
         assert c.execute("select count(*) from assets where id = %s", (a[0],)).fetchone()[0] == 0
     owner.execute("delete from jobs where post_id = %s", (pid,))
+
+
+def test_daily_ideas_can_be_paused_and_resumed(alice, bob, owner):
+    with web_session(alice) as c:
+        ch = _new_channel(c, alice, f"pause-{uuid.uuid4().hex[:6]}")
+        c.execute("update channels set ideas_daily = true where id = %s", (ch,))
+        c.execute("insert into categories (user_id, channel_id, name) values (%s, %s, 'News')", (alice, ch))
+    owner.execute("select private.schedule_daily_ideas()")
+    queued = "select count(*) from jobs where kind = 'suggest_ideas' and state = 'queued' and payload->>'channel_id' = %s"
+    assert owner.execute(queued, (str(ch),)).fetchone()[0] == 1
+    with web_session(alice) as c:
+        c.execute("select api.pause_daily_ideas(%s, now() + interval '3 days')", (ch,))
+    assert owner.execute(queued, (str(ch),)).fetchone()[0] == 0          # today's batch is called off
+    owner.execute("delete from jobs where payload->>'channel_id' = %s", (str(ch),))
+    owner.execute("select private.schedule_daily_ideas()")
+    assert owner.execute(queued, (str(ch),)).fetchone()[0] == 0          # and none is scheduled
+    with pytest.raises(psycopg.errors.NoDataFound):
+        with web(bob) as c:
+            c.execute("select api.pause_daily_ideas(%s, 'infinity')", (ch,))
+    with web_session(alice) as c:
+        c.execute("select api.pause_daily_ideas(%s, null)", (ch,))           # resume
+    owner.execute("select private.schedule_daily_ideas()")
+    assert owner.execute(queued, (str(ch),)).fetchone()[0] == 1
+    owner.execute("delete from jobs where payload->>'channel_id' = %s", (str(ch),))

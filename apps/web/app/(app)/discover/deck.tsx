@@ -25,6 +25,7 @@ export type IdeaCard = {
 
 type Props = {
   picker?: React.ReactNode;
+  daily?: React.ReactNode;           // the morning batch: on, or paused for a while
   cards: IdeaCard[];
   looking: boolean;
   channel: { id: string; name: string; timezone: string };
@@ -79,7 +80,7 @@ function Media({ m, active, muted }: { m: CardMedia; active: boolean; muted: boo
   );
 }
 
-export function Deck({ picker, cards, looking, channel, categories, formats, platforms, suggestion }: Props) {
+export function Deck({ picker, daily, cards, looking, channel, categories, formats, platforms, suggestion }: Props) {
   const router = useRouter();
   // The deck is the server's cards minus the ones decided here; cards put back
   // (Undo, Back) go to the front. Derived, so fresh server data (a new batch,
@@ -245,6 +246,8 @@ export function Deck({ picker, cards, looking, channel, categories, formats, pla
           </button>
         </div>
       </div>
+
+      {daily}
 
       {categories.length > 1 && queue.length > 0 && (
         <div className="-mx-4 flex gap-1.5 overflow-x-auto px-4 pb-1 text-xs">

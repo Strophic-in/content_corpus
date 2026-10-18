@@ -161,6 +161,9 @@ def run(ctx: JobContext) -> dict:
             return {"skipped": "category deleted"}
         if not cat["enabled"] and not video:
             return {"skipped": "category is turned off"}
+        if ctx.payload.get("trigger") == "daily" and c.execute(
+                "select 1 from channels where id = %s and ideas_paused_until > now()", (cat["channel_id"],)).fetchone():
+            return {"skipped": "daily ideas are paused for this channel"}
         fmts = _formats(c, cat)
         if not fmts:
             return {"skipped": "channel has no format"}

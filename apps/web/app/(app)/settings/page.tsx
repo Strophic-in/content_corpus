@@ -25,6 +25,7 @@ export default async function SettingsPage() {
   const youtube = keys.some((k) => k.name === "youtube_api_key");
   const pexels = keys.some((k) => k.name === "pexels_api_key");
   const freesound = keys.some((k) => k.name === "freesound_api_key");
+  const jev = keys.some((k) => k.name === "jev_api_key");
   const byChannel = new Map<string, { kind: string; amount: number | null; unpriced: number }[]>();
   for (const r of usage.rows)
     byChannel.set(r.channel, [...(byChannel.get(r.channel) ?? []),
@@ -134,6 +135,19 @@ export default async function SettingsPage() {
           <p className="mt-2 text-sm">{freesound ? "Saved — reels get background music." : "Not set — no music."}</p>
         </div>
         <ServiceKeyForm service="freesound" saved={freesound} placeholder="Your Freesound API key" />
+      </section>
+
+      <section className="flex flex-col gap-3 rounded-xl border border-border bg-surface p-5">
+        <div>
+          <h2 className="font-medium">Jev API key (fast decisions)</h2>
+          <p className="mt-1 text-sm text-muted">
+            TypeSafe&apos;s Jev answers yes/no, pick-one and score questions about text and pictures in a fraction of a
+            second, for a fraction of a paisa. Saving it now gets it ready; the quick judgements in the pipeline (which
+            trending items are worth a look, whether a picture is usable) move to it step by step. Stored encrypted.
+          </p>
+          <p className="mt-2 text-sm">{jev ? "Saved." : "Not set."}</p>
+        </div>
+        <ServiceKeyForm service="jev" saved={jev} placeholder="Your TypeSafe API key" />
       </section>
 
       <section className="flex flex-col gap-3 rounded-xl border border-border bg-surface p-5">

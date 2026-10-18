@@ -59,3 +59,21 @@ export async function decideIdea(ideaId: string, accept: boolean, date: string |
     return { ok: false, error: friendly(err) };
   }
 }
+
+/** Pause a channel's daily ideas for `days` (or "forever": until resumed); null resumes. */
+export async function pauseDailyIdeas(channelId: string, days: number | "forever" | null): Promise<ActionState> {
+  const user = await requireUser();
+  if (days !== null && days !== "forever" && !(Number.isInteger(days) && days >= 1 && days <= 90))
+    return { ok: false, error: "Pick how long to pause." };
+  try {
+    await asUser(user.id, (db) => db.query(
+      `select api.pause_daily_ideas($1, case when $2::text is null then null
+                                          when $2::text = 'forever' then 'infinity'::timestamptz
+                                          else now() + make_interval(days => $2::text::int) end)`,
+      [channelId, days === null ? null : String(days)]));
+  } catch (err) {
+    return { ok: false, error: friendly(err) };
+  }
+  refresh();
+  return { ok: true };
+}

@@ -378,6 +378,10 @@ const SERVICE_KEYS = {
                wrong: "That doesn't look like a Freesound API key (letters and digits, from freesound.org/apiv2/apply).",
                saved: "Saved. New scripts pick a mood, and the reel gets a CC0 track.",
                removed: "Removed — no background music." },
+  jev: { name: "jev_api_key", shape: /^[A-Za-z0-9._-]{20,200}$/,
+         wrong: "That doesn't look like a TypeSafe API key (from console.typesafe.ai).",
+         saved: "Saved and checked with Jev.",
+         removed: "Removed — decisions go back to the OpenAI model." },
   pexels: { name: "pexels_api_key", shape: /^[A-Za-z0-9]{30,100}$/,
             wrong: "That doesn't look like a Pexels API key (letters and digits, from pexels.com/api).",
             saved: "Saved. New scripts may use stock video.",
@@ -395,6 +399,21 @@ export async function saveServiceKey(service: ServiceKey, _: ActionState, form: 
   }
   const key = String(form.get("key") ?? "").trim();
   if (!k.shape.test(key)) return { ok: false, error: k.wrong };
+  if (service === "jev") {
+    // One tiny decision (a fraction of a paisa) proves the key works before it is stored.
+    try {
+      const r = await fetch("https://api.typesafe.ai/v1/systemone", {
+        method: "POST", signal: AbortSignal.timeout(15_000),
+        headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ model: "jev-latest", state: "The sky is blue.",
+                               questions: { ok: { type: "noul", instructions: "Is this sentence about the sky?" } } }),
+      });
+      if (r.status === 401 || r.status === 403) return { ok: false, error: "TypeSafe rejected this key." };
+      if (!r.ok) console.warn(`jev key check: HTTP ${r.status}`);
+    } catch (err) {
+      console.warn("jev key check failed: network", (err as Error)?.name);
+    }
+  }
   try {
     await asUser(user.id, (db) => db.query(
       `insert into user_keys (user_id, name, ciphertext, updated_at) values ($1, $2, $3, now())
