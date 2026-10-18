@@ -23,6 +23,12 @@ const CategoryInput = z.object({
 // The ticked formats come as repeated "format_ids" fields.
 const fields = (form: FormData) => ({ ...Object.fromEntries(form), format_ids: form.getAll("format_ids").map(String) });
 
+// Every format ticked is stored as none ('{}'), which means "all of the channel's
+// formats" — so a format made later is open to the category too.
+const ALL_OR = (channel: string, ids: string) =>
+  `case when exists (select 1 from formats f where f.channel_id = ${channel} and f.id <> all(${ids}::uuid[]))
+        then ${ids}::uuid[] else '{}'::uuid[] end`;
+
 export async function createCategory(channelId: string, _: ActionState, form: FormData): Promise<ActionState> {
   const user = await requireUser();
   const parsed = CategoryInput.safeParse(fields(form));
@@ -31,7 +37,7 @@ export async function createCategory(channelId: string, _: ActionState, form: Fo
   try {
     await asUser(user.id, (db) => db.query(
       `insert into categories (user_id, channel_id, name, color, brief, keywords, format_ids, ideas_per_batch, enabled)
-       values ($1, $2, $3, $4, $5, $6, $7::uuid[], $8, true)`,
+       values ($1, $2, $3, $4, $5, $6, ${ALL_OR("$2", "$7")}, $8, true)`,
       [user.id, channelId, v.name, v.color, v.brief, v.keywords, v.format_ids, v.ideas_per_batch]));
   } catch (err) {
     return { ok: false, error: friendly(err) };
@@ -47,7 +53,8 @@ export async function updateCategory(categoryId: string, _: ActionState, form: F
   const v = parsed.data;
   try {
     await asUser(user.id, (db) => db.query(
-      `update categories set name = $2, color = $3, brief = $4, keywords = $5, format_ids = $6::uuid[],
+      `update categories set name = $2, color = $3, brief = $4, keywords = $5,
+                             format_ids = ${ALL_OR("categories.channel_id", "$6")},
                              ideas_per_batch = $7, enabled = $8
         where id = $1`,
       [categoryId, v.name, v.color, v.brief, v.keywords, v.format_ids, v.ideas_per_batch, v.enabled]));

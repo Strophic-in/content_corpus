@@ -73,7 +73,8 @@ export type FormatOption = { id: string; name: string; kind: string };
 
 function CategoryFields({ c, formats }: { c?: CategoryData; formats: FormatOption[] }) {
   const [color, setColor] = useState(c?.color ?? COLORS[6]);
-  const [ticked, setTicked] = useState<string[]>(c?.format_ids ?? []);
+  // None stored means all of them, so a new category starts with every format ticked.
+  const [ticked, setTicked] = useState<string[]>(c?.format_ids.length ? c.format_ids : formats.map((f) => f.id));
   return (
     <div className="grid gap-3 sm:grid-cols-2">
       <label className="flex flex-col gap-1 text-sm sm:col-span-2">Name
@@ -93,7 +94,9 @@ function CategoryFields({ c, formats }: { c?: CategoryData; formats: FormatOptio
             </label>
           ))}
         </div>
-        <span className="text-xs text-muted">{ticked.length ? `${ticked.length} ticked.` : "None ticked: any of the channel's formats."}
+        <span className="text-xs text-muted">
+          {ticked.length === formats.length || !ticked.length ? "All formats — and any you make later."
+            : `${ticked.length} of ${formats.length} ticked.`}
           {" "}Make more in Formats.</span>
       </fieldset>
       <label className="flex flex-col gap-1 text-sm sm:col-span-2">
@@ -107,8 +110,9 @@ function CategoryFields({ c, formats }: { c?: CategoryData; formats: FormatOptio
       <label className="flex flex-col gap-1 text-sm">Keywords
         <input name="keywords" maxLength={500} defaultValue={c?.keywords} placeholder="court, arrest, police" className={input} />
       </label>
-      <label className="flex flex-col gap-1 text-sm">Ideas per batch
+      <label className="flex flex-col gap-1 text-sm">Ideas a day
         <input name="ideas_per_batch" type="number" min={1} max={30} defaultValue={c?.ideas_per_batch ?? 2} className={input} />
+        <span className="text-xs text-muted">From this category alone, each morning. “More ideas” adds that many again.</span>
       </label>
       <div className="flex flex-col gap-1 text-sm">Colour
         <input type="hidden" name="color" value={color} />
