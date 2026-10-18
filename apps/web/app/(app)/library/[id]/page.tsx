@@ -43,7 +43,7 @@ export default async function FormatPage({ params }: { params: Promise<{ id: str
     <div className="mx-auto flex max-w-3xl flex-col gap-6">
       <div className="flex flex-wrap items-start gap-3">
         <div className="min-w-0 flex-1">
-          <Link href="/library" className="text-sm text-muted hover:text-foreground">← Formats</Link>
+          <Link href="/library?view=formats" className="text-sm text-muted hover:text-foreground">← Formats</Link>
           <h1 className="mt-1 text-2xl font-semibold tracking-tight">{f.name}</h1>
           <p className="text-sm text-muted">{t.display_name} · version {f.version}{f.is_default ? " · default format" : ""}</p>
         </div>

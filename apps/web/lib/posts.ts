@@ -166,3 +166,32 @@ export async function userSettings(userId: string) {
     return { settings: s, keys };
   });
 }
+
+/** A post as the Library grid shows it: what it is, how far it got, where it went. */
+export type LibraryPost = {
+  id: string; title: string; status: string; format: PostRow["format"]; slot_date: string;
+  has_video: boolean; has_slides: boolean; seconds: number | null;
+  live: { platform: "youtube" | "instagram"; url: string | null }[]; scheduled: boolean;
+};
+
+/** Every post of a channel, newest first. */
+export async function libraryPosts(userId: string, channelId: string, limit = 300): Promise<LibraryPost[]> {
+  return asUser(userId, async (db) => {
+    const r = await db.query(
+      `select p.id, p.status, p.format, to_char(p.slot_date, 'YYYY-MM-DD') as slot_date,
+              coalesce((select s.title from scripts s where s.id = p.approved_script_id),
+                       (select s.title from scripts s where s.post_id = p.id order by s.version desc limit 1),
+                       p.topic) as title,
+              p.final_key is not null as has_video, coalesce(jsonb_array_length(p.slides), 0) > 0 as has_slides,
+              round(p.final_duration_s)::int as seconds,
+              coalesce((select jsonb_agg(jsonb_build_object('platform', a.platform, 'url', a.remote_url)
+                                         order by a.platform)
+                          from publish_attempts a where a.post_id = p.id and a.state = 'live'), '[]') as live,
+              exists (select 1 from publish_attempts a where a.post_id = p.id and a.state = 'scheduled') as scheduled
+         from posts p where p.channel_id = $1
+        order by p.slot_date desc, p.created_at desc limit $2`,
+      [channelId, limit],
+    );
+    return r.rows;
+  });
+}

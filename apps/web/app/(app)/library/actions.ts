@@ -131,5 +131,5 @@ export async function deleteFormat(formatId: string): Promise<ActionState> {
   } catch (err) {
     return { ok: false, error: friendly(err) };
   }
-  redirect("/library");
+  redirect("/library?view=formats");
 }
