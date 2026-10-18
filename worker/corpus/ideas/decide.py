@@ -88,7 +88,7 @@ def pick_format(jev: Jev, ideas: list[dict], items_of: list[list[Item]], fmts: l
     criteria = {}
     for n, f in enumerate(fmts):
         t = templates.get(f["template_id"])
-        criteria[f"f{n}"] = (f"{f['name']}: {t.format}. Best for {', '.join(t.best_for)}. Needs "
+        criteria[f"f{n}"] = (f"{f['name']}: {f.get('description') or t.format}. Best for {', '.join(t.best_for)}. Needs "
                              f"{', '.join(t.required_assets).replace('_', ' ')}. Cost: {t.estimated_render_cost}. "
                              + (performance.get(f["id"]) or ""))
     q = {"format": {"type": "choice", "criteria": criteria,

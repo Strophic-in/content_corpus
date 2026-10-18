@@ -88,7 +88,8 @@ def run(ctx: JobContext) -> dict:
         found = 0
         if judge is not None and post.get("media_choice") != "ai":
             try:
-                picked, real = finder.find(judge, client, story, articles, title=headline)
+                picked, real = finder.find(judge, client, story, articles, title=headline,
+                                           want_before=_before_after(post))
                 found = finder.add_to_post(post, picked)
                 log(f"asset finder: real event {real:.0%}; added {found} picture(s)")
             except Exception as e:  # noqa: BLE001 - the script goes ahead with what there is
@@ -115,3 +116,11 @@ def on_give_up(ctx: JobContext, err: dict) -> None:
 
 
 HANDLER = Handler(run=run, on_give_up=on_give_up)
+
+
+def _before_after(post: dict) -> bool:
+    """A post made with the Before vs. After template: its finder looks for the place as it was."""
+    if not post.get("format_id"):
+        return False
+    row = db.one("select template_id from formats where id = %s", (post["format_id"],))
+    return bool(row) and row["template_id"] == "before_after_comparison"

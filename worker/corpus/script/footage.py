@@ -27,7 +27,7 @@ def load(c, post_id, stock: bool) -> tuple[Footage, list[dict]]:
     An original the owner has not approved (they chose an AI version) is a
     reference: described to the writer, never shown."""
     rows = c.execute("""select id, n, kind, origin, credit, rights, state, w, h, seconds, has_audio,
-                               analysis, created_at, made_from
+                               analysis, created_at, made_from, fetch_from->'found'->>'before' as before
                           from assets where post_id = %s order by n""", (post_id,)).fetchall()
     usable = [dict(r) for r in rows if r["state"] == "ready" and r["rights"] == "approved"]
     references = [dict(r) for r in rows if r["state"] == "ready" and r["rights"] == "needs_review"]
@@ -58,6 +58,8 @@ def _describe(a: dict, label: str | None = None) -> str:
     summary = an.get("summary") or (an.get("card") or {}).get("summary") or an.get("description")
     if summary:
         lines.append(f"   Shows: {summary}")
+    if float(a.get("before") or 0) >= 0.6:
+        lines.append("   BEFORE: shows the place as it was before the event - use it as the before picture")
     for m in (an.get("moments") or [])[:12]:
         if isinstance(m, dict):
             lines.append(f"   {_clock(m.get('at', 0))} {m.get('what', '')}")

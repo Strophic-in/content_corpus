@@ -17,9 +17,9 @@
   "rights_requirements": ["Comparisons are fair and clearly labelled; an illustrative simulation is never shown as a measurement."],
   "render_notes": ["BEFORE / AFTER chips; the after shot wipes in over the before.", "A split shot can show both at once (the before picture in the bottom panel)."],
   "platform_notes": [],
-  "format": "a labelled before, a wipe to the after, and what changed",
-  "best_for": ["tutorials", "design", "restoration", "simulations", "learning demonstrations"],
-  "topics": ["tutorial", "design", "comparison", "science"],
+  "format": "a labelled before (the place as it was), a wipe to the after (as it is now), and what changed",
+  "best_for": ["news about a place, building or landscape that changed: a monument damaged or destroyed, a disaster's aftermath, a flood or fire, a demolition or restoration, climate change", "tutorials", "design", "restoration", "simulations", "learning demonstrations"],
+  "topics": ["news", "disaster", "heritage", "climate", "tutorial", "design", "comparison", "science"],
   "goals": ["shares", "saves"],
   "render": {
     "captions": "karaoke",

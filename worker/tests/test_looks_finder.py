@@ -181,3 +181,49 @@ def test_picked_photos_become_approved_credited_assets(owner, user):
                          (post["id"],)).fetchone()["n"] == 1
     owner.execute("delete from jobs where post_id = %s", (post["id"],))
 
+
+
+class BeforeJev(PhotoJev):
+    """Red: the event itself. Grey: the place as it was (a library photo of the building)."""
+
+    def ask(self, state, questions, images=None):
+        if "real_event" in questions:
+            return {"real_event": {"noul": 0.95}}
+        r, g, b = Image.open(io.BytesIO(next(iter(images.values())))).getpixel((10, 10))
+        grey = abs(r - g) < 10 and abs(g - b) < 10
+        out = {"shows": {"score": 2.2 if grey else 3.0}, "usable": {"noul": 0.9}, "watermark": {"noul": 0.02},
+               "graphic": {"noul": 0.01}}
+        if "before" in questions:
+            out["before"] = {"noul": 0.9 if grey else 0.05}
+        return out
+
+
+def test_a_before_after_post_gets_the_place_as_it_was_first(public_dns):
+    routes = _routes({
+        "https://news.test/event.jpg": httpx.Response(200, content=_jpeg((250, 10, 10)),
+                                                      headers={"content-type": "image/jpeg"}),
+        "https://upload.wikimedia.test/hall.jpg": httpx.Response(200, content=_jpeg((200, 200, 200)),
+                                                                 headers={"content-type": "image/jpeg"}),
+        finder.COMMONS: httpx.Response(200, json={"query": {"pages": {"1": {"imageinfo": [{
+            "thumburl": "https://upload.wikimedia.test/hall.jpg", "descriptionurl": "https://commons.test/hall",
+            "extmetadata": {"Artist": {"value": "Jane"}, "LicenseShortName": {"value": "CC BY-SA 4.0"}}}]}}}}),
+        finder.OPENVERSE: httpx.Response(200, json={"results": []}),
+    })
+    arts = [Article("https://news.test/a", "news.test", "Town hall spire falls", "text",
+                    images=[{"url": "https://news.test/event.jpg"}])]
+    picked, _ = finder.find(BeforeJev(), routes, "Limoges town hall spire falls in a fire", arts,
+                            title="Limoges town hall spire falls", want_before=True)
+    assert [p["url"] for p in picked] == ["https://upload.wikimedia.test/hall.jpg", "https://news.test/event.jpg"]
+    assert picked[0]["before"] == 0.9 and picked[1]["before"] == 0.05
+    # Any other post: the event's own photo first, no "before" asked.
+    picked, _ = finder.find(BeforeJev(), routes, "Limoges town hall spire falls in a fire", arts,
+                            title="Limoges town hall spire falls")
+    assert picked[0]["url"] == "https://news.test/event.jpg" and picked[0]["before"] == 0.0
+
+
+def test_the_writer_is_told_which_picture_is_the_before():
+    from corpus.script import footage
+    a = {"n": 1, "kind": "image", "w": 1200, "h": 800, "credit": "Jane / Wikimedia Commons", "origin": "commons",
+         "analysis": {"summary": "The town hall with its spire, intact"}, "before": "0.9"}
+    assert "BEFORE: shows the place as it was" in footage._describe(a)
+    assert "BEFORE" not in footage._describe({**a, "before": None})

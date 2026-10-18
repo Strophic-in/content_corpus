@@ -16,8 +16,13 @@ a Jev key:
      events), credited on screen and in the caption, then fetched and analysed like
      any footage. write_script waits for them.
 
+A before/after post (the Before vs. After template) also wants the place as it was:
+Jev says of each picture whether it shows the story's place or thing before the event
+(intact, undamaged, earlier), and up to BEFORE_KEEP of those are kept besides the
+event's own pictures, marked so the script writer opens on one as BEFORE.
+
 Never: a post whose owner asked for an AI version of its media, graphic pictures,
-watermarked ones, or more than KEEP. Videos come from the idea itself (Reddit and
+watermarked ones, or more than KEEP (+ BEFORE_KEEP). Videos come from the idea itself (Reddit and
 the social feeds); article pages rarely offer a usable video file.
 """
 
@@ -38,6 +43,7 @@ from .research import Article, sig_tokens
 log = logging.getLogger("corpus.finder")
 
 KEEP = 4
+BEFORE_KEEP = 2
 MAX_CANDIDATES = 14
 IMAGE_BYTES = 8_000_000
 COMMONS = "https://commons.wikimedia.org/w/api.php"
@@ -58,6 +64,11 @@ PHOTO_QUESTIONS = {
     "watermark": {"type": "noul", "instructions": "Does `photo` carry a visible watermark or a TV channel's logo?"},
     "graphic": {"type": "noul", "instructions": "Does `photo` show gore, blood, injured or dead people, or other "
                                                "graphic content?"},
+}
+BEFORE_QUESTION = {
+    "before": {"type": "noul", "instructions": "Does `photo` show the place, building or thing at the centre of `story` "
+                                              "as it was BEFORE the event - intact, undamaged, or at an earlier time - "
+                                              "rather than during or after it?"},
 }
 
 
@@ -139,9 +150,10 @@ def _download(client: httpx.Client, url: str) -> bytes | None:
 
 
 def find(judge: Jev, client: httpx.Client, story: str, articles: list[Article],
-         title: str = "") -> tuple[list[dict], float]:
+         title: str = "", want_before: bool = False) -> tuple[list[dict], float]:
     """(the pictures worth adding to the post, best first, with their Jev scores;
-    how sure Jev is that the story is a real, filmed event)."""
+    how sure Jev is that the story is a real, filmed event). want_before: a
+    before/after post — pictures of the place before the event are kept too."""
     real = yes((judge.ask({"story": story[:1500]}, REAL_EVENT)).get("real_event"))
     cands = article_photos(articles) if real >= 0.5 else []
     q = _query(title or story.split(".")[0])
@@ -162,7 +174,7 @@ def find(judge: Jev, client: httpx.Client, story: str, articles: list[Article],
     with ThreadPoolExecutor(max_workers=6) as pool:
         pictures = list(pool.map(lambda c: _download(client, c["url"]), unique))
     jobs = [(c, data) for c, data in zip(unique, pictures) if data]
-    answers = _ask_images(judge, story, jobs)
+    answers = _ask_images(judge, story, jobs, want_before)
     picked = []
     for (c, _), a in zip(jobs, answers):
         if a is None:
@@ -176,15 +188,23 @@ def find(judge: Jev, client: httpx.Client, story: str, articles: list[Article],
         # or things.
         if shows < (1.1 if c["origin"] == "article" else 1.8):
             continue
-        picked.append({**c, "shows": round(shows, 2), "usable": round(usable, 2)})
+        before = yes(a.get("before")) if want_before else 0.0
+        picked.append({**c, "shows": round(shows, 2), "usable": round(usable, 2), "before": round(before, 2)})
     picked.sort(key=lambda c: (c["origin"] == "article", c["shows"] + c["usable"]), reverse=True)
-    return picked[:KEEP], real
+    if not want_before:
+        return picked[:KEEP], real
+    # The place as it was, first (best-shown first), then the event's own pictures.
+    befores = sorted((c for c in picked if c["before"] >= 0.6), key=lambda c: c["shows"], reverse=True)[:BEFORE_KEEP]
+    rest = [c for c in picked if c not in befores][:KEEP]
+    return befores + rest, real
 
 
-def _ask_images(judge: Jev, story: str, jobs: list[tuple[dict, bytes]]) -> list[dict | None]:
+def _ask_images(judge: Jev, story: str, jobs: list[tuple[dict, bytes]], want_before: bool = False) -> list[dict | None]:
+    questions = {**PHOTO_QUESTIONS, **BEFORE_QUESTION} if want_before else PHOTO_QUESTIONS
+
     def one(job):
         try:
-            return judge.ask({"story": story[:1200], "photo": "photo-1"}, PHOTO_QUESTIONS, images={"photo-1": job[1]})
+            return judge.ask({"story": story[:1200], "photo": "photo-1"}, questions, images={"photo-1": job[1]})
         except Exception as e:  # noqa: BLE001 - that picture is skipped
             log.warning("finder: jev: %s", e)
             return None
@@ -208,7 +228,8 @@ def add_to_post(post: dict, picked: list[dict]) -> int:
                    values (%s, %s, %s, 'image', %s, %s, %s, %s, 'approved', %s) returning id""",
                 (post["user_id"], post["id"], n, p["origin"], p.get("page"), p["credit"], p["license"],
                  Jsonb({"item": {"image_url": p["url"], "media_hint": "image", "link": p.get("page")},
-                        "found": {"shows": p["shows"], "usable": p["usable"]}}))).fetchone()["id"]
+                        "found": {"shows": p["shows"], "usable": p["usable"],
+                                  "before": p.get("before", 0.0)}}))).fetchone()["id"]
             db.enqueue(c, user_id=post["user_id"], lane="ideas", kind="fetch_asset", dedupe_key=f"fetch_asset:{aid}",
                        payload={"asset_id": str(aid)}, post_id=post["id"], priority=30, max_attempts=2,
                        lease_seconds=900)
