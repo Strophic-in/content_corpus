@@ -28,6 +28,15 @@ UA = "ContentCorpus/1.0 (+https://content-corpus.strophic.in)"
 BROWSER_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
               "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
 MAX_REDIRECTS = 5
+# Wikimedia refuses a browser's user agent from a server (403) and asks for one that
+# says who is asking (its User-Agent policy); everyone else gets the browser's.
+_HONEST_HOSTS = ("wikimedia.org", "wikipedia.org", "wikidata.org")
+
+
+def user_agent(url: str) -> str:
+    host = (urlsplit(url).hostname or "").lower()
+    return UA if any(host == h or host.endswith("." + h) for h in _HONEST_HOSTS) else BROWSER_UA
+
 
 # Swapped by tests (fake hosts resolve to a public test address).
 RESOLVE = socket.getaddrinfo

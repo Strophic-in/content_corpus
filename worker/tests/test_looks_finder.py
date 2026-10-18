@@ -234,3 +234,11 @@ def test_a_headlines_place_becomes_short_searches():
         == "Limoges Town Hall"
     assert finder._place_queries("Joshimath sinking: cracks widen in 600 homes") == ["Joshimath"]
     assert finder._place_queries("Fire guts historic Crawford Market in Mumbai") == ["Crawford Market", "Mumbai"]
+
+
+def test_wikimedia_is_asked_with_an_honest_user_agent():
+    from corpus import net
+    assert net.user_agent("https://upload.wikimedia.org/x.jpg") == net.UA
+    assert net.user_agent("https://thumb.wikimedia.org/x.jpg") == net.UA
+    assert net.user_agent("https://ichef.bbci.co.uk/x.jpg") == net.BROWSER_UA
+    assert net.user_agent("https://evilwikimedia.org/x.jpg") == net.BROWSER_UA

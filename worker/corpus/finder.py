@@ -195,7 +195,7 @@ def _download(client: httpx.Client, url: str) -> bytes | None:
 
     try:
         raw = net.get(client, url, max_bytes=IMAGE_BYTES, accept=("image/",),
-                      headers={"User-Agent": net.BROWSER_UA}).content
+                      headers={"User-Agent": net.user_agent(url)}).content
         img = Image.open(io.BytesIO(raw))
         img.load()
     except Exception:  # noqa: BLE001 - an unreadable picture is skipped

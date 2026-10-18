@@ -50,6 +50,8 @@ class FakeJev(jev.Jev):
             pick = next((v for w, v in self.format_for.items() if w in text), None)
             if pick:
                 out["format"] = {"choice": pick[0], "confidence": pick[1]}
+        if "place_changed" in questions:
+            out["place_changed"] = {"noul": 0.9 if "spire" in text else 0.1}
         if "same" in questions:
             out["same"] = {"noul": 0.9 if "budget" in text and "budget" in state["report"].lower() else 0.1}
         return out
@@ -188,3 +190,16 @@ def test_a_batch_uses_jev_for_items_and_formats_and_records_its_cost(owner, user
 
 def test_without_a_key_there_is_no_jev(owner, user):
     assert jev.for_user(user) is None
+
+
+def test_a_place_that_changed_goes_to_before_and_now_when_jev_is_sure():
+    fmts = [{"id": "a", "name": "News explainer", "template_id": "mini_news_explainer"},
+            {"id": "b", "name": "Before vs Now", "template_id": "before_after_comparison"}]
+    FakeJev.format_for = {"spire": ("f0", 0.8), "budget": ("f0", 0.9)}
+    try:
+        picks = decide.pick_format(FakeJev(), [{"title": "Town hall spire falls in a fire", "hook": "", "brief": ""},
+                                               {"title": "Budget", "hook": "", "brief": ""}], [[], []], fmts, {})
+    finally:
+        FakeJev.format_for = {}
+    assert picks == [(1, 0.9), (0, 0.9)]
+

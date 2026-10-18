@@ -79,6 +79,13 @@ def _media(its: list[Item]) -> str:
     return "no pictures or video"
 
 
+PLACE_SURE = 0.75
+PLACE_CHANGED = {"type": "noul", "instructions":
+                 "Is the most striking picture of `idea` a specific, named place, landmark, building or landscape "
+                 "that was damaged, destroyed, flooded or transformed - so that showing it before, then now, tells "
+                 "the story at a glance?"}
+
+
 def pick_format(jev: Jev, ideas: list[dict], items_of: list[list[Item]], fmts: list[dict],
                 performance: dict) -> list[tuple[int | None, float]]:
     """For each idea, (the index of the format Jev picked, its confidence) — or
@@ -94,10 +101,20 @@ def pick_format(jev: Jev, ideas: list[dict], items_of: list[list[Item]], fmts: l
     q = {"format": {"type": "choice", "criteria": criteria,
                     "instructions": "Which format makes the best short post of `idea`, given `media` and each "
                                     "format's cost and record on this channel?"}}
+    # A choice among many formats leans on "it's news" (live: a town hall spire burning
+    # went to the news explainer); a yes/no on the one thing a before/after needs is
+    # sharper, and wins when Jev is sure.
+    before_after = next((n for n, f in enumerate(fmts) if f["template_id"] == "before_after_comparison"), None)
+    if before_after is not None:
+        q["place_changed"] = PLACE_CHANGED
     answers = jev.many([({"idea": f"{i['title']}. {i['hook']} {i['brief']}", "media": _media(its)}, q)
                         for i, its in zip(ideas, items_of)])
     out = []
     for a in answers:
+        changed = yes((a or {}).get("place_changed"), 0.0) if before_after is not None else 0.0
+        if changed >= PLACE_SURE:
+            out.append((before_after, changed))
+            continue
         pick = (a or {}).get("format") or {}
         choice, conf = pick.get("choice"), float(pick.get("confidence") or 0)
         if choice and choice.startswith("f") and choice[1:].isdigit() and int(choice[1:]) < len(fmts):

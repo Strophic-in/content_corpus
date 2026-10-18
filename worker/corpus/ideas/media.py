@@ -263,7 +263,7 @@ def image_preview(src: Path, out: Path, max_side: int = 1080) -> Path:
 
 def download_image(client: httpx.Client, url: str, dest: Path) -> Path:
     return net.download(client, url, dest, max_bytes=IMAGE_BYTES, accept=("image/",),
-                        headers={"User-Agent": net.BROWSER_UA})
+                        headers={"User-Agent": net.user_agent(url)})
 
 
 def page_image(client: httpx.Client, url: str) -> str | None:
