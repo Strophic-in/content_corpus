@@ -17,7 +17,6 @@ const CategoryInput = z.object({
   keywords: z.string().trim().max(500),
   format_ids: z.array(z.string().uuid()).max(40),
   ideas_per_batch: z.coerce.number().int().min(1, "At least 1 idea.").max(30, "At most 30 ideas."),
-  enabled: z.string().optional().transform((v) => v === "on"),
 });
 
 // The ticked formats come as repeated "format_ids" fields.
@@ -55,9 +54,9 @@ export async function updateCategory(categoryId: string, _: ActionState, form: F
     await asUser(user.id, (db) => db.query(
       `update categories set name = $2, color = $3, brief = $4, keywords = $5,
                              format_ids = ${ALL_OR("categories.channel_id", "$6")},
-                             ideas_per_batch = $7, enabled = $8
+                             ideas_per_batch = $7
         where id = $1`,
-      [categoryId, v.name, v.color, v.brief, v.keywords, v.format_ids, v.ideas_per_batch, v.enabled]));
+      [categoryId, v.name, v.color, v.brief, v.keywords, v.format_ids, v.ideas_per_batch]));
   } catch (err) {
     return { ok: false, error: friendly(err) };
   }
@@ -185,6 +184,19 @@ export async function removeSource(sourceId: string): Promise<ActionState> {
   const user = await requireUser();
   try {
     await asUser(user.id, (db) => db.query("delete from category_sources where id = $1", [sourceId]));
+  } catch (err) {
+    return { ok: false, error: friendly(err) };
+  }
+  refresh();
+  return { ok: true };
+}
+
+/** The switch on a category: off, it finds no ideas (daily or by hand) until it is on again. */
+export async function toggleCategory(categoryId: string, enabled: boolean): Promise<ActionState> {
+  const user = await requireUser();
+  try {
+    await asUser(user.id, (db) => db.query("update categories set enabled = $2, updated_at = now() where id = $1",
+                                           [categoryId, enabled]));
   } catch (err) {
     return { ok: false, error: friendly(err) };
   }

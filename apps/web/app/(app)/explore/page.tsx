@@ -7,6 +7,7 @@ import {
   CATEGORIES, REGIONS, search, SUBCATEGORIES, subcategory, trending, WORLDWIDE, youtubeKey, YouTubeError, type Video,
 } from "@/lib/youtube";
 
+import { ExploreFilters } from "./filters";
 import { MakeIdea } from "./make-idea";
 
 export const metadata = { title: "Explore YouTube · Content Corpus" };
@@ -17,7 +18,6 @@ type Sort = keyof typeof SORTS;
 const compact = (n: number) => new Intl.NumberFormat("en-IN", { notation: "compact", maximumFractionDigits: 1 }).format(n);
 const age = (h: number) => (h < 48 ? `${h} h ago` : h < 24 * 60 ? `${Math.round(h / 24)} d ago` : `${Math.round(h / 720)} mo ago`);
 const length = (s: number) => (s ? `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}` : "");
-const input = "rounded-xl border border-border bg-background px-3 py-2 text-sm outline-none focus:border-accent";
 
 // What's doing well on YouTube right now — a country's trending chart, or a topic's
 // most-viewed videos lately — with how fast each is rising (views an hour since it
@@ -94,40 +94,9 @@ export default async function ExplorePage({ searchParams }: {
         </nav>
       </div>
 
-      <form action="/explore" className="flex flex-wrap items-end gap-2 rounded-2xl border border-border bg-surface p-3">
-        <input type="hidden" name="tab" value={tab} />
-        {sub && <input type="hidden" name="sub" value={sub.id} />}
-        {tab === "search" && (
-          <input name="q" defaultValue={q} placeholder="A topic, like “monsoon floods”" required
-                 className={`${input} min-w-0 flex-1 basis-56`} />
-        )}
-        <select name="region" defaultValue={region} aria-label="Country" className={input}>
-          {REGIONS.map(([c, n]) => <option key={c} value={c}>{n}</option>)}
-        </select>
-        <select name="cat" defaultValue={category} aria-label="Category" className={input}>
-          {CATEGORIES.map(([c, n]) => <option key={c} value={c}>{c ? n : tab === "search" ? "Any category" : n}</option>)}
-        </select>
-        {(tab === "search" || sub) && (
-          <select name="days" defaultValue={String(days)} aria-label="Uploaded within" className={input}>
-            <option value="1">Last 24 hours</option><option value="7">Last 7 days</option><option value="30">Last 30 days</option>
-          </select>
-        )}
-        <select name="sort" defaultValue={sort} aria-label="Sort" className={input}>
-          {Object.entries(SORTS).filter(([k]) => k !== "reach" || reachable)
-            .map(([k, n]) => <option key={k} value={k}>{n}</option>)}
-        </select>
-        <label className="flex items-center gap-2 px-1 text-sm">
-          <input type="checkbox" name="shorts" value="1" defaultChecked={shorts} className="size-4 accent-accent" /> Shorts only
-        </label>
-        {destinations.length > 0 && (
-          <select name="to" defaultValue={to?.id} aria-label="Ideas go to" className={input}>
-            {destinations.map((d) => <option key={d.id} value={d.id}>Ideas → {d.channel} · {d.category}</option>)}
-          </select>
-        )}
-        <button className="rounded-xl bg-accent px-4 py-2 text-sm font-semibold text-accent-foreground">
-          {tab === "search" ? "Search" : "Show"}
-        </button>
-      </form>
+      <ExploreFilters key={`${tab}:${region}:${category}:${sub?.id ?? ""}`} tab={tab} region={region}
+                      category={category} sub={sub?.id ?? ""} q={q} days={days} shorts={shorts} sort={sort} sorts={SORTS}
+                      destinations={destinations} to={to?.id ?? ""} />
       {subs.length > 0 && (
         <nav aria-label="Sub-categories" className="-mt-2 flex gap-1.5 overflow-x-auto pb-1 text-sm">
           <Link href={href({ sub: "", sort: "" })}

@@ -274,8 +274,16 @@ class FfmpegError(RuntimeError):
     """ffmpeg/ffprobe failed; the message carries the tool's own last error lines."""
 
 
-def _run(cmd: list[str], cwd: Path | None = None) -> None:
-    r = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, errors="replace")
+# No ffmpeg step of a reel takes anywhere near this; one that does is stuck (live
+# 2026-10-18: an audio join spun at 100% CPU for 18 hours) and is stopped.
+FFMPEG_TIMEOUT = 1200
+
+
+def _run(cmd: list[str], cwd: Path | None = None, timeout: int = FFMPEG_TIMEOUT) -> None:
+    try:
+        r = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, errors="replace", timeout=timeout)
+    except subprocess.TimeoutExpired:
+        raise FfmpegError(f"{cmd[0]} was stopped after {timeout // 60} minutes without finishing") from None
     if r.returncode != 0:
         tail = " | ".join(ln.strip() for ln in r.stderr.strip().splitlines()[-4:])
         raise FfmpegError(f"{cmd[0]} failed: {tail or f'exit {r.returncode}'}")
@@ -527,35 +535,37 @@ def _join_blended(segments: list[tuple[Path, Path]], out: Path, log: Callable[[s
     per = RATE // FPS                                  # samples per frame
     with tempfile.TemporaryDirectory() as tmp:
         work = Path(tmp)
-        inputs, vgraph, agraph = [], [], []
-        for v, a in segments:
+        # The picture and the sound are separate passes, each given only the inputs it
+        # uses: an unused looping still in the sound pass made ffmpeg 5.1 spin forever.
+        inputs, ainputs, vgraph, agraph = [], [], [], []
+        for v, _ in segments:
             inputs += ["-i", str(v)]
         n = len(segments)
         for _, a in segments:
-            inputs += ["-i", str(a)]
+            ainputs += ["-i", str(a)]
         # One frame rate, time base and pixel format for every input: xfade insists.
         norm = "fps=24,settb=1/24,format=yuv420p,setsar=1"
         vgraph += [f"[{k}:v]{norm}[s{k}]" for k in range(n)]
-        vlast, alast, length = "s0", f"{n}:a", frames[0]
+        vlast, alast, length = "s0", "0:a", frames[0]
         for k, (name, ov) in enumerate(joins, 1):
             vgraph.append(f"[{vlast}][s{k}]xfade=transition={name}:duration={ov / FPS:.6f}:"
                           f"offset={(length - ov) / FPS:.6f}[x{k}]")
-            agraph.append(f"[{alast}][{n + k}:a]acrossfade=ns={ov * per}:c1=tri:c2=tri[y{k}]")
+            agraph.append(f"[{alast}][{k}:a]acrossfade=ns={ov * per}:c1=tri:c2=tri[y{k}]")
             vlast, alast, length = f"x{k}", f"y{k}", length + frames[k] - ov
         if loop:
             first = work / "first.png"
             _run(["ffmpeg", "-y", "-v", "error", "-i", str(segments[0][0]), "-frames:v", "1", str(first)])
             lf = max(1, min(LOOP_FRAMES, length // 4))
-            inputs += ["-loop", "1", "-framerate", str(FPS), "-t", f"{lf / FPS:.6f}", "-i", str(first),
-                       "-i", str(segments[0][1])]
-            still, head = 2 * n, 2 * n + 1
+            inputs += ["-loop", "1", "-framerate", str(FPS), "-t", f"{lf / FPS:.6f}", "-i", str(first)]
+            ainputs += ["-i", str(segments[0][1])]
+            still, head = n, n
             vgraph.append(f"[{still}:v]{norm}[still];[{vlast}][still]xfade=transition=fade:"
                           f"duration={lf / FPS:.6f}:offset={(length - lf) / FPS:.6f}[xl]")
             agraph.append(f"[{head}:a]atrim=end_sample={lf * per}[head];"
                           f"[{alast}][head]acrossfade=ns={lf * per}:c1=tri:c2=tri[yl]")
             vlast, alast = "xl", "yl"
         joined = work / "joined.wav"
-        _run(["ffmpeg", "-y", "-v", "error", *inputs, "-filter_complex", ";".join(agraph), "-map", f"[{alast}]",
+        _run(["ffmpeg", "-y", "-v", "error", *ainputs, "-filter_complex", ";".join(agraph), "-map", f"[{alast}]",
               "-c:a", "pcm_s16le", "-ar", str(RATE), str(joined)])
         sound = work / "sound.m4a"
         _sound(["-i", str(joined)], sound, length / FPS, music, music_gain, fades=not loop)

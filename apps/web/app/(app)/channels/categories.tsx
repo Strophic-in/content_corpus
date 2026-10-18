@@ -4,7 +4,7 @@ import { useActionState, useState, useTransition } from "react";
 
 import type { ActionState } from "../actions";
 import {
-  addSource, categoryJob, createCategory, deleteCategory, removeSource, toggleSource, updateCategory,
+  addSource, categoryJob, createCategory, deleteCategory, removeSource, toggleCategory, toggleSource, updateCategory,
   type SourceKind,
 } from "./category-actions";
 
@@ -124,12 +124,6 @@ function CategoryFields({ c, formats }: { c?: CategoryData; formats: FormatOptio
           ))}
         </div>
       </div>
-      {c && (
-        <label className="flex items-center gap-2 self-end text-sm">
-          <input type="checkbox" name="enabled" defaultChecked={c.enabled} className="size-4 accent-accent" />
-          Find ideas for this category
-        </label>
-      )}
     </div>
   );
 }
@@ -239,17 +233,37 @@ function CategoryCard({ c, formats }: { c: CategoryData; formats: FormatOption[]
   const [delState, setDel] = useState<ActionState>(null);
   const [deleting, start] = useTransition();
   const ok = c.sources.filter((s) => s.status === "ok").length;
+  // The switch answers at once; the server confirms (or the error shows and it flips back).
+  const [on, setOn] = useState(c.enabled);
+  const [switchState, setSwitchState] = useState<ActionState>(null);
+  const [switching, startSwitch] = useTransition();
+  const flip = (e: React.MouseEvent) => {
+    e.preventDefault();                 // inside <summary>: don't open or close the card
+    const next = !on;
+    setOn(next);
+    startSwitch(async () => {
+      const r = await toggleCategory(c.id, next);
+      if (!r?.ok) setOn(!next);
+      setSwitchState(r?.ok ? null : r);
+    });
+  };
   return (
-    <details className="group rounded-2xl border border-border bg-surface">
+    <details className={`group rounded-2xl border border-border bg-surface ${on ? "" : "opacity-70"}`}>
       <summary className="flex cursor-pointer list-none items-center gap-3 p-4">
-        <span className="size-3 shrink-0 rounded-full" style={{ background: c.color }} />
+        <span className="size-3 shrink-0 rounded-full" style={{ background: on ? c.color : "transparent", boxShadow: `inset 0 0 0 2px ${c.color}` }} />
         <span className="min-w-0 flex-1">
           <span className="block truncate font-medium">{c.name}</span>
           <span className="block truncate text-xs text-muted">
-            {c.sources.length} source{c.sources.length === 1 ? "" : "s"}{c.sources.length ? ` · ${ok} working` : ""}
-            {c.enabled ? "" : " · off"}
+            {on ? `${c.ideas_per_batch} idea${c.ideas_per_batch === 1 ? "" : "s"} a day` : "Off — finds no ideas"}
+            {" · "}{c.sources.length} source{c.sources.length === 1 ? "" : "s"}{c.sources.length ? ` · ${ok} working` : ""}
           </span>
+          {switchState && <span className="block text-xs text-danger">{switchState.error}</span>}
         </span>
+        <button type="button" role="switch" aria-checked={on} aria-label={`${c.name}: ${on ? "on" : "off"}`}
+                onClick={flip} disabled={switching}
+                className={`relative h-6 w-11 shrink-0 rounded-full transition ${on ? "bg-accent" : "bg-border"}`}>
+          <span className={`absolute top-0.5 size-5 rounded-full bg-white shadow transition-all ${on ? "left-[1.375rem]" : "left-0.5"}`} />
+        </button>
         <span className="text-muted transition group-open:rotate-90">›</span>
       </summary>
       <div className="flex flex-col gap-5 border-t border-border p-4">
