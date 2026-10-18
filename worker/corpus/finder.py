@@ -47,6 +47,7 @@ BEFORE_KEEP = 2
 MAX_CANDIDATES = 14
 IMAGE_BYTES = 8_000_000
 COMMONS = "https://commons.wikimedia.org/w/api.php"
+WIKIPEDIA = "https://en.wikipedia.org/w/api.php"
 OPENVERSE = "https://api.openverse.org/v1/images/"
 UA = "ContentCorpus/1.0 (asset finder; https://content-corpus.strophic.in)"
 
@@ -93,18 +94,79 @@ def commons(client: httpx.Client, query: str, n: int = 5) -> list[dict]:
                                     "gsrnamespace": 6, "gsrlimit": n, "prop": "imageinfo",
                                     "iiprop": "url|extmetadata|size", "iiurlwidth": 1280, "format": "json"},
                    headers={"User-Agent": UA}, timeout=20)
+    return _commons_files(r.json())
+
+
+def _commons_files(body: dict, origin: str = "commons") -> list[dict]:
     out = []
-    for page in ((r.json().get("query") or {}).get("pages") or {}).values():
+    for page in ((body.get("query") or {}).get("pages") or {}).values():
         info = (page.get("imageinfo") or [{}])[0]
         meta = info.get("extmetadata") or {}
         artist = re.sub(r"<[^>]+>", "", (meta.get("Artist") or {}).get("value", "")).strip()[:60]
         lic = (meta.get("LicenseShortName") or {}).get("value", "")
         if not info.get("thumburl") or not lic:
             continue
-        out.append({"url": info["thumburl"], "page": info.get("descriptionurl"), "origin": "commons",
+        out.append({"url": info["thumburl"], "page": info.get("descriptionurl"), "origin": origin,
                     "credit": f"{artist or 'Unknown'} / Wikimedia Commons, {lic}"[:120],
                     "license": "cc0" if re.search(r"public domain|cc0", lic, re.I) else "third_party"})
     return out
+
+
+# Words that name what happened rather than where: dropped from a "before" search.
+NEWS_WORDS = {"protest", "protests", "protesters", "arrested", "arrests", "arrest", "falls", "fall", "fell", "collapses",
+              "collapse", "collapsed", "burns", "burned", "burning", "fire", "fires", "blaze", "killed", "dead", "dies",
+              "says", "after", "amid", "during", "over", "as", "in", "the", "a", "an", "of", "and", "to", "at", "on",
+              "for", "with", "by", "from", "is", "are", "was", "were", "hit", "hits", "destroyed", "damaged", "flood",
+              "floods", "flooded", "storm", "quake", "earthquake", "breaking", "live", "update", "updates", "video"}
+
+
+def _place_queries(title: str, most: int = 5) -> list[str]:
+    """Short searches for the place in a headline. Sentence case names it in capitals
+    ("Joshimath sinking: cracks widen" → "Joshimath"); in Title Case every word is
+    capitalised, so short runs of the words left after dropping what happened are
+    tried ("Protests in France: 1,000 Arrested as Limoges Town Hall Spire Falls" →
+    "Limoges Town Hall", "Town Hall Spire", …)."""
+    raw = re.findall(r"[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ'-]+", title)
+    words = [w for w in raw if w.lower() not in NEWS_WORDS]
+    caps = [w for w in raw if w[0].isupper()]
+    out: list[str] = []
+    if raw and len(caps) / len(raw) < 0.6:             # sentence case: the names are the place
+        run: list[str] = []
+        for w in raw + ["."]:
+            if w[0].isupper() and w.lower() not in NEWS_WORDS:
+                run.append(w)
+            elif run:
+                out.append(" ".join(run))
+                run = []
+        return list(dict.fromkeys(out))[:most]
+    for size in (3, 2, 4):
+        for i in range(len(words) - size + 1):
+            q = " ".join(words[i:i + size])
+            if q not in out:
+                out.append(q)
+    # Middle windows first: a headline's place is rarely its first or last word.
+    out.sort(key=lambda q: (len(q.split()) != 3, abs(len(words) / 2 - words.index(q.split()[0]) - 1)))
+    return out[:most]
+
+
+def wikipedia(client: httpx.Client, title: str, per_query: int = 2) -> list[dict]:
+    """The lead pictures of the Wikipedia articles a headline's place searches find: a
+    landmark's article leads with a free photo of it as it is normally — the "before"."""
+    names: list[str] = []
+    for q in _place_queries(title):
+        r = client.get(WIKIPEDIA, params={"action": "query", "generator": "search", "gsrsearch": q,
+                                          "gsrlimit": per_query, "prop": "pageimages", "piprop": "name",
+                                          "format": "json"}, headers={"User-Agent": UA}, timeout=20)
+        pages = sorted(((r.json().get("query") or {}).get("pages") or {}).values(), key=lambda p: p.get("index", 99))
+        for pg in pages:
+            if pg.get("pageimage") and pg["pageimage"] not in names:
+                names.append(pg["pageimage"])
+    if not names:
+        return []
+    r = client.get(COMMONS, params={"action": "query", "titles": "|".join(f"File:{n}" for n in names[:8]),
+                                    "prop": "imageinfo", "iiprop": "url|extmetadata|size", "iiurlwidth": 1280,
+                                    "format": "json"}, headers={"User-Agent": UA}, timeout=20)
+    return _commons_files(r.json(), origin="wikipedia")
 
 
 def openverse(client: httpx.Client, query: str, n: int = 5) -> list[dict]:
@@ -162,6 +224,11 @@ def find(judge: Jev, client: httpx.Client, story: str, articles: list[Article],
             cands += src(client, q)
         except Exception as e:  # noqa: BLE001 - one library down is fine
             log.warning("finder: %s: %s", src.__name__, e)
+    if want_before:
+        try:
+            cands = wikipedia(client, title or story.split(".")[0]) + cands
+        except Exception as e:  # noqa: BLE001
+            log.warning("finder: wikipedia: %s", e)
     # One copy of each picture; a news site's "branded" copy (its logo burned in) last.
     cands.sort(key=lambda c: "brand" in c["url"].lower())
     seen, unique = set(), []

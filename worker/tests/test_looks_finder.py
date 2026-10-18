@@ -227,3 +227,10 @@ def test_the_writer_is_told_which_picture_is_the_before():
          "analysis": {"summary": "The town hall with its spire, intact"}, "before": "0.9"}
     assert "BEFORE: shows the place as it was" in footage._describe(a)
     assert "BEFORE" not in footage._describe({**a, "before": None})
+
+
+def test_a_headlines_place_becomes_short_searches():
+    assert finder._place_queries("Protests in France: 1,000 Arrested as Limoges Town Hall Spire Falls")[0] \
+        == "Limoges Town Hall"
+    assert finder._place_queries("Joshimath sinking: cracks widen in 600 homes") == ["Joshimath"]
+    assert finder._place_queries("Fire guts historic Crawford Market in Mumbai") == ["Crawford Market", "Mumbai"]
