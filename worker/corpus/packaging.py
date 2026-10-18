@@ -27,7 +27,7 @@ from urllib.parse import urlparse
 from psycopg.types.json import Jsonb
 from pydantic import BaseModel
 
-from . import costs, db, storage, vault
+from . import costs, db, jev, storage, vault
 from .media import thumbnail
 
 log = logging.getLogger("corpus.packaging")
@@ -203,6 +203,37 @@ def _frame(final_key: str, work: Path, at: float = 1.2) -> Path | None:
         return None
 
 
+SAME_PLACE = {"same": {"type": "noul", "instructions": "Do `before` and `now` show the same building, landmark or "
+                                                       "place (at different times)?"}}
+
+
+def _jpeg(path: Path) -> bytes:
+    from io import BytesIO
+
+    from PIL import Image, ImageOps
+    img = ImageOps.exif_transpose(Image.open(path)).convert("RGB")
+    img.thumbnail((1024, 1024))
+    buf = BytesIO()
+    img.save(buf, "JPEG", quality=85)
+    return buf.getvalue()
+
+
+def _same_place(user_id: str, before: Path, now: Path) -> bool:
+    """A BEFORE / NOW cover only when both halves show the same place (live: the
+    "now" photo was riot police by a fire elsewhere, under "spire collapsed"). Jev
+    looks at both; without Jev, no split."""
+    judge = jev.for_user(user_id)
+    if judge is None:
+        return False
+    try:
+        a = judge.ask({"before": "photo-1", "now": "photo-2"}, SAME_PLACE,
+                      images={"photo-1": _jpeg(before), "photo-2": _jpeg(now)})
+        return jev.yes(a.get("same"), 0.0) >= 0.6
+    except Exception as e:  # noqa: BLE001
+        log.warning("same place? %s", e)
+        return False
+
+
 def _cover(post: dict, pkg: dict, work: Path) -> Path:
     images = [a for a in _assets(post["id"]) if a["kind"] == "image"]
     befores = sorted((a for a in images if a["before"] >= 0.6), key=lambda a: a["shows"], reverse=True)
@@ -213,11 +244,17 @@ def _cover(post: dict, pkg: dict, work: Path) -> Path:
 
     before = get(befores[0]) if befores and post.get("template_id") == "before_after_comparison" else None
     picture = get(nows[0]) if nows else (_frame(post["final_key"], work) if post.get("final_key") else None)
-    if before is not None and picture is None:
-        picture, before = before, None
+    kicker = pkg.get("kicker") or ""
+    if before is not None and (picture is None or not _same_place(post["user_id"], before, picture)):
+        # No true "now" of the same place: the place as it was, full screen, marked so.
+        picture, before, kicker = before, None, "Before the fire" if "fire" in story_words(post) else "Before"
     out = work / "cover.jpg"
-    return thumbnail.render(out, line=pkg["thumbnail_text"], kicker=pkg.get("kicker") or "", picture=picture,
+    return thumbnail.render(out, line=pkg["thumbnail_text"], kicker=kicker, picture=picture,
                             before=before, brand=post.get("channel") or "")
+
+
+def story_words(post: dict) -> str:
+    return f"{post.get('title') or ''} {post.get('topic') or ''} {post.get('description') or ''}".lower()
 
 
 # ── make it ───────────────────────────────────────────────────────────────────
