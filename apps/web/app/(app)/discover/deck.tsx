@@ -83,6 +83,77 @@ function Media({ m, active, muted }: { m: CardMedia; active: boolean; muted: boo
   );
 }
 
+/** What a card shows: the deck's top card, the ones behind it, and a card flying off.
+ *  stamp: the MAKE IT / SKIP stamp, -1…1 (how far the card is dragged). */
+function CardBody({ card, active, muted, stamp }: { card: IdeaCard; active: boolean; muted: boolean; stamp: number }) {
+  return (
+    <>
+      {stamp !== 0 && (
+        <>
+          <span aria-hidden style={{ opacity: Math.max(0, Math.min(1, stamp)) }}
+                className="absolute top-5 left-5 z-10 -rotate-12 rounded-lg border-2 border-ok bg-surface/80 px-2 py-0.5 text-sm font-bold tracking-wider text-ok">MAKE IT</span>
+          <span aria-hidden style={{ opacity: Math.max(0, Math.min(1, -stamp)) }}
+                className="absolute top-5 right-5 z-10 rotate-12 rounded-lg border-2 border-danger bg-surface/80 px-2 py-0.5 text-sm font-bold tracking-wider text-danger">SKIP</span>
+        </>
+      )}
+      <div className="flex flex-wrap gap-1.5 text-xs">
+        {card.category && (
+          <span className="rounded-full px-2 py-0.5 font-medium text-white" style={{ background: card.category.color }}>
+            {card.category.name}
+          </span>
+        )}
+        {card.whyNow && <span className="rounded-full bg-accent/15 px-2 py-0.5 text-accent">{card.whyNow}</span>}
+      </div>
+      {card.media[0] && (
+        <div data-media>
+          <Media m={card.media[0]} active={active} muted={muted} />
+        </div>
+      )}
+      {!card.media.length && card.mediaPending && (
+        <div className="flex aspect-video w-full animate-pulse items-center justify-center rounded-2xl bg-background text-xs text-muted">
+          Fetching the picture…
+        </div>
+      )}
+      {card.format && (
+        <div className="flex items-center gap-2 rounded-xl border border-accent/40 bg-accent/10 px-3 py-2 text-sm">
+          <span aria-hidden className="text-base">{KIND_ICON[card.format.kind] ?? "🎬"}</span>
+          <span className="min-w-0">
+            <span className="block font-semibold text-foreground">
+              Will be made as: {card.format.name} <span className="font-normal text-muted">· {card.format.kind}</span>
+            </span>
+            {card.formatWhy && <span className="block truncate text-xs text-muted">{card.formatWhy}</span>}
+          </span>
+        </div>
+      )}
+      <h2 className="text-2xl leading-tight font-semibold">{card.title}</h2>
+      {card.hook && <p className="text-base text-muted italic">“{card.hook}”</p>}
+      <p className="text-sm leading-relaxed">{card.brief}</p>
+      {card.summary && (
+        <p className="rounded-xl bg-background px-3 py-2 text-xs leading-relaxed text-muted">
+          <span className="font-medium text-foreground">In the video: </span>{card.summary}
+        </p>
+      )}
+      {card.flags.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 text-xs">
+          {card.flags.map((f) => <span key={f} className="rounded-full bg-warn/15 px-2 py-0.5 text-warn">⚠ {f}</span>)}
+        </div>
+      )}
+      {card.sources.length > 0 && (
+        <div className="mt-auto flex flex-col gap-1.5 border-t border-border pt-3 text-xs">
+          {card.sources.map((s) => (
+            <a key={s.url} href={s.url} target="_blank" rel="noreferrer" onPointerDown={(e) => e.stopPropagation()}
+               className="flex min-w-0 items-center gap-2 text-muted hover:text-foreground">
+              <span className="shrink-0 font-medium text-foreground">{s.label}</span>
+              {s.detail && <span className="truncate">{s.detail}</span>}
+              <span className="ml-auto shrink-0">↗</span>
+            </a>
+          ))}
+        </div>
+      )}
+    </>
+  );
+}
+
 export function Deck({ picker, daily, cards, looking, channel, categories, formats, platforms, suggestion }: Props) {
   const router = useRouter();
   // The deck is the server's cards minus the ones decided here; cards put back
@@ -102,13 +173,17 @@ export function Deck({ picker, daily, cards, looking, channel, categories, forma
   };
   const [filter, setFilter] = useState<string | null>(null);
   const [drag, setDrag] = useState({ x: 0, y: 0, active: false });
-  const [leaving, setLeaving] = useState<{ id: string; dir: 1 | -1 } | null>(null);
+  // Cards on their way off screen: copies, already out of the deck, so the next card is
+  // live at once and nothing waits on the animation (a frozen fly-out, live 2026-10-18).
+  const [flying, setFlying] = useState<{ key: number; card: IdeaCard; dir: 1 | -1; x: number; y: number }[]>([]);
+  const flyKey = useRef(0);
   const [sheet, setSheet] = useState<IdeaCard | null>(null);
   const [slot, setSlot] = useState({ date: suggestion.date, time: suggestion.time });
   const [chosen, setChosen] = useState<string[]>(platforms.map((p) => p.id));
   const [media, setMedia] = useState<"none" | "original" | "ai">("none");
   const [formatId, setFormatId] = useState<string>("");
   const [skip, setSkip] = useState<{ card: IdeaCard; timer: ReturnType<typeof setTimeout> } | null>(null);
+  const skipRef = useRef<typeof skip>(null);       // the same, for handlers (no side effects in updaters)
   const [notice, setNotice] = useState<{ text: string; href?: string; error?: boolean } | null>(null);
   const [target, setTarget] = useState("all");
   const [muted, setMuted] = useState(true);
@@ -125,38 +200,45 @@ export function Deck({ picker, daily, cards, looking, channel, categories, forma
     });
   }, []);
 
-  const decide = useCallback((card: IdeaCard, dir: 1 | -1) => {
+  const setSkipBoth = useCallback((next: typeof skip) => {
+    skipRef.current = next;
+    setSkip(next);
+  }, []);
+
+  const decide = useCallback((card: IdeaCard, dir: 1 | -1, from = { x: 0, y: 0 }) => {
     navigator.vibrate?.(12);
-    setLeaving({ id: card.id, dir });
-    setTimeout(() => {
-      setLeaving(null);
-      setDrag({ x: 0, y: 0, active: false });
-      remove(card.id);
-      if (dir === 1) {
-        setSheet(card);
-        setFormatId(card.format?.id ?? formats[0]?.id ?? "");
-      } else {
-        setSkip((prev) => {
-          if (prev) { clearTimeout(prev.timer); commitSkip(prev.card, null); }
-          return { card, timer: setTimeout(() => { setSkip(null); commitSkip(card, null); }, 5000) };
-        });
-      }
-    }, 240);
-  }, [commitSkip, formats]);
+    const key = ++flyKey.current;
+    setFlying((f) => [...f, { key, card, dir, x: from.x, y: from.y * 0.25 }]);
+    setTimeout(() => setFlying((f) => f.filter((c) => c.key !== key)), 700);   // in case the animation never ends
+    setDrag({ x: 0, y: 0, active: false });
+    remove(card.id);
+    if (dir === 1) {
+      setSheet(card);
+      setFormatId(card.format?.id ?? formats[0]?.id ?? "");
+      return;
+    }
+    // One skip waits for its reason at a time: a second skip sends the first as it is.
+    const prev = skipRef.current;
+    if (prev) { clearTimeout(prev.timer); commitSkip(prev.card, null); }
+    const timer = setTimeout(() => {
+      if (skipRef.current?.card.id === card.id) setSkipBoth(null);
+      commitSkip(card, null);
+    }, 5000);
+    setSkipBoth({ card, timer });
+  }, [commitSkip, formats, setSkipBoth]);
 
   // ← / → on a keyboard.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (!top || sheet || leaving || (e.target as HTMLElement)?.closest("input,select,textarea")) return;
+      if (!top || sheet || (e.target as HTMLElement)?.closest("input,select,textarea")) return;
       if (e.key === "ArrowRight") decide(top, 1);
       if (e.key === "ArrowLeft") decide(top, -1);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [top, sheet, leaving, decide]);
+  }, [top, sheet, decide]);
 
   function onPointerDown(e: React.PointerEvent) {
-    if (leaving) return;
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     startRef.current = { x: e.clientX, y: e.clientY, t: performance.now(),
                          onMedia: !!(e.target as HTMLElement).closest("[data-media]") };
@@ -176,7 +258,7 @@ export function Deck({ picker, daily, cards, looking, channel, categories, forma
       return;
     }
     const speed = Math.abs(drag.x) / Math.max(1, dt);   // px/ms
-    if (Math.abs(drag.x) > THRESHOLD || (speed > 0.6 && Math.abs(drag.x) > 40)) decide(top, drag.x > 0 ? 1 : -1);
+    if (Math.abs(drag.x) > THRESHOLD || (speed > 0.6 && Math.abs(drag.x) > 40)) decide(top, drag.x > 0 ? 1 : -1, drag);
     else setDrag({ x: 0, y: 0, active: false });                                         // spring back
   }
 
@@ -207,7 +289,7 @@ export function Deck({ picker, daily, cards, looking, channel, categories, forma
     if (!skip) return;
     clearTimeout(skip.timer);
     putBack(skip.card.id);
-    setSkip(null);
+    setSkipBoth(null);
   }
 
   function findIdeas() {
@@ -218,8 +300,8 @@ export function Deck({ picker, daily, cards, looking, channel, categories, forma
     });
   }
 
-  const x = leaving ? leaving.dir * 700 : drag.x;
-  const y = leaving ? drag.y : drag.y * 0.25;
+  const x = drag.x;
+  const y = drag.y * 0.25;
   const counts = useMemo(() => {
     const n = new Map<string, number>();
     for (const c of queue) if (c.category) n.set(c.category.id, (n.get(c.category.id) ?? 0) + 1);
@@ -277,7 +359,7 @@ export function Deck({ picker, daily, cards, looking, channel, categories, forma
           const isTop = depth === 0;
           const style: React.CSSProperties = isTop
             ? { transform: `translate(${x}px, ${y}px) rotate(${x / 18}deg)`,
-                transition: drag.active && !leaving ? "none" : "transform 260ms cubic-bezier(.2,.9,.3,1.25)",
+                transition: drag.active ? "none" : "transform 260ms cubic-bezier(.2,.9,.3,1.25)",
                 touchAction: "pan-y" }
             : { transform: `translateY(${depth * 12}px) scale(${1 - depth * 0.05})`, transition: "transform 300ms ease" };
           return (
@@ -285,71 +367,27 @@ export function Deck({ picker, daily, cards, looking, channel, categories, forma
                      onPointerDown={isTop ? onPointerDown : undefined} onPointerMove={isTop ? onPointerMove : undefined}
                      onPointerUp={isTop ? onPointerUp : undefined} onPointerCancel={isTop ? onPointerUp : undefined}
                      className={`flex flex-col gap-3 overflow-hidden rounded-3xl border border-border bg-surface p-5 shadow-xl ${isTop ? "relative min-h-[min(58vh,520px)] cursor-grab active:cursor-grabbing" : "pointer-events-none absolute inset-0"}`}>
-              {isTop && (
-                <>
-                  <span aria-hidden style={{ opacity: Math.max(0, Math.min(1, x / THRESHOLD)) }}
-                        className="absolute top-5 left-5 z-10 -rotate-12 rounded-lg border-2 border-ok bg-surface/80 px-2 py-0.5 text-sm font-bold tracking-wider text-ok">MAKE IT</span>
-                  <span aria-hidden style={{ opacity: Math.max(0, Math.min(1, -x / THRESHOLD)) }}
-                        className="absolute top-5 right-5 z-10 rotate-12 rounded-lg border-2 border-danger bg-surface/80 px-2 py-0.5 text-sm font-bold tracking-wider text-danger">SKIP</span>
-                </>
-              )}
-              <div className="flex flex-wrap gap-1.5 text-xs">
-                {card.category && (
-                  <span className="rounded-full px-2 py-0.5 font-medium text-white" style={{ background: card.category.color }}>
-                    {card.category.name}
-                  </span>
-                )}
-                {card.whyNow && <span className="rounded-full bg-accent/15 px-2 py-0.5 text-accent">{card.whyNow}</span>}
-              </div>
-              {card.media[0] && (
-                <div data-media>
-                  <Media m={card.media[0]} active={isTop} muted={muted} />
-                </div>
-              )}
-              {!card.media.length && card.mediaPending && (
-                <div className="flex aspect-video w-full animate-pulse items-center justify-center rounded-2xl bg-background text-xs text-muted">
-                  Fetching the picture…
-                </div>
-              )}
-              {card.format && (
-                <div className="flex items-center gap-2 rounded-xl border border-accent/40 bg-accent/10 px-3 py-2 text-sm">
-                  <span aria-hidden className="text-base">{KIND_ICON[card.format.kind] ?? "🎬"}</span>
-                  <span className="min-w-0">
-                    <span className="block font-semibold text-foreground">
-                      Will be made as: {card.format.name} <span className="font-normal text-muted">· {card.format.kind}</span>
-                    </span>
-                    {card.formatWhy && <span className="block truncate text-xs text-muted">{card.formatWhy}</span>}
-                  </span>
-                </div>
-              )}
-              <h2 className="text-2xl leading-tight font-semibold">{card.title}</h2>
-              {card.hook && <p className="text-base text-muted italic">“{card.hook}”</p>}
-              <p className="text-sm leading-relaxed">{card.brief}</p>
-              {card.summary && (
-                <p className="rounded-xl bg-background px-3 py-2 text-xs leading-relaxed text-muted">
-                  <span className="font-medium text-foreground">In the video: </span>{card.summary}
-                </p>
-              )}
-              {card.flags.length > 0 && (
-                <div className="flex flex-wrap gap-1.5 text-xs">
-                  {card.flags.map((f) => <span key={f} className="rounded-full bg-warn/15 px-2 py-0.5 text-warn">⚠ {f}</span>)}
-                </div>
-              )}
-              {card.sources.length > 0 && (
-                <div className="mt-auto flex flex-col gap-1.5 border-t border-border pt-3 text-xs">
-                  {card.sources.map((s) => (
-                    <a key={s.url} href={s.url} target="_blank" rel="noreferrer" onPointerDown={(e) => e.stopPropagation()}
-                       className="flex min-w-0 items-center gap-2 text-muted hover:text-foreground">
-                      <span className="shrink-0 font-medium text-foreground">{s.label}</span>
-                      {s.detail && <span className="truncate">{s.detail}</span>}
-                      <span className="ml-auto shrink-0">↗</span>
-                    </a>
-                  ))}
-                </div>
-              )}
+              <CardBody card={card} active={isTop} muted={muted} stamp={isTop ? x / THRESHOLD : 0} />
             </article>
           );
         })}
+
+        {flying.map((f) => (
+          <article key={f.key} aria-hidden
+                   ref={(el) => {
+                     if (!el || el.dataset.flown) return;
+                     el.dataset.flown = "1";
+                     const to = f.dir * 700;
+                     el.animate(
+                       [{ transform: `translate(${f.x}px, ${f.y}px) rotate(${f.x / 18}deg)`, opacity: 1 },
+                        { transform: `translate(${to}px, ${f.y}px) rotate(${to / 18}deg)`, opacity: 0 }],
+                       { duration: 260, easing: "cubic-bezier(.4,0,1,1)", fill: "forwards" },
+                     ).onfinish = () => setFlying((all) => all.filter((c) => c.key !== f.key));
+                   }}
+                   className="pointer-events-none absolute inset-x-0 top-0 z-30 flex min-h-[min(58vh,520px)] flex-col gap-3 overflow-hidden rounded-3xl border border-border bg-surface p-5 shadow-xl">
+            <CardBody card={f.card} active={false} muted stamp={f.dir} />
+          </article>
+        ))}
 
         {!shown.length && (
           <div className="flex min-h-[min(58vh,520px)] flex-col items-center justify-center gap-4 rounded-3xl border border-dashed border-border p-8 text-center">
@@ -378,9 +416,9 @@ export function Deck({ picker, daily, cards, looking, channel, categories, forma
       {/* Pinned just above the tab bar, so they stay in reach while a long card scrolls. */}
       {top && (
         <div className="sticky bottom-[calc(env(safe-area-inset-bottom)+5rem)] z-20 flex items-center justify-center gap-8 md:bottom-4">
-          <button aria-label="Skip" onClick={() => decide(top, -1)} disabled={!!leaving}
+          <button aria-label="Skip" onClick={() => decide(top, -1)}
                   className="grid size-16 place-items-center rounded-full border border-border bg-surface text-2xl text-danger shadow-md transition active:scale-90">✕</button>
-          <button aria-label="Make it" onClick={() => decide(top, 1)} disabled={!!leaving}
+          <button aria-label="Make it" onClick={() => decide(top, 1)}
                   className="grid size-16 place-items-center rounded-full border border-border bg-surface text-2xl text-ok shadow-md transition active:scale-90">✓</button>
         </div>
       )}
@@ -393,7 +431,7 @@ export function Deck({ picker, daily, cards, looking, channel, categories, forma
           </div>
           <div className="mt-2 flex flex-wrap gap-1.5">
             {REASONS.map((r) => (
-              <button key={r} onClick={() => { clearTimeout(skip.timer); commitSkip(skip.card, r); setSkip(null); }}
+              <button key={r} onClick={() => { clearTimeout(skip.timer); commitSkip(skip.card, r); setSkipBoth(null); }}
                       className="rounded-full border border-border px-2.5 py-1 text-xs hover:border-accent">{r}</button>
             ))}
           </div>
