@@ -66,8 +66,7 @@ export default async function ExplorePage({ searchParams }: {
     <div className="mx-auto flex w-full max-w-5xl flex-col gap-5">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <Link href="/discover" className="text-sm text-muted hover:text-foreground">← Discover</Link>
-          <h1 className="mt-1 text-2xl font-semibold tracking-tight">Explore YouTube</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">Explore YouTube</h1>
           <p className="text-sm text-muted">What&apos;s doing well right now — and how fast it&apos;s rising.</p>
         </div>
         <nav className="flex rounded-full border border-border p-1 text-sm">

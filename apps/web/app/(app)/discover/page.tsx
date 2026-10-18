@@ -49,9 +49,6 @@ export default async function DiscoverHome() {
           <p className="text-sm text-muted">Pick a channel to swipe through its ideas.</p>
         </div>
         <span className="flex gap-2">
-          <Link href="/explore" className="rounded-full border border-border px-3 py-1.5 text-sm font-medium hover:border-accent">
-            Explore YouTube
-          </Link>
           <Link href="/channels" className="rounded-full border border-border px-3 py-1.5 text-sm font-medium hover:border-accent">
             + Channel
           </Link>

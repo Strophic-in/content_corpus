@@ -16,6 +16,8 @@ const I = (d: string) => (
 export const TABS: Tab[] = [
   { href: "/discover", label: "Discover",
     icon: I("M12 3c.5 3.5 4 5.5 4 9.5a4 4 0 0 1-8 0c0-1.6.7-2.8 1.5-3.7.2 1.4 1 2.4 2 2.7C11 9 11.4 5.6 12 3Z") },
+  // What's trending on YouTube right now, by country and topic (Explore YouTube).
+  { href: "/explore", label: "Explore", icon: I("M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18ZM15.5 8.5l-2 5-5 2 2-5 5-2Z") },
   { href: "/calendar", label: "Calendar", icon: I("M4 6h16v14H4zM4 10h16M9 3v4M15 3v4") },
   { href: "/library", label: "Library", icon: I("M5 4h5v16H5zM10 4h4v16h-4zM14.5 4.5l4.5 1.2-3.8 14.3-4.5-1.2") },
   { href: "/channels", label: "Channels", icon: I("M5 12a7 7 0 0 1 14 0M8.5 12a3.5 3.5 0 0 1 7 0M12 12v8") },
@@ -24,8 +26,7 @@ export const TABS: Tab[] = [
 ];
 
 function isActive(path: string, href: string) {
-  return path === href || path.startsWith(href + "/") || (href === "/calendar" && path.startsWith("/posts"))
-    || (href === "/discover" && path.startsWith("/explore"));
+  return path === href || path.startsWith(href + "/") || (href === "/calendar" && path.startsWith("/posts"));
 }
 
 export function DesktopNav() {
@@ -47,7 +48,7 @@ export function BottomTabs() {
   const path = usePathname();
   return (
     <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-surface/95 pb-[env(safe-area-inset-bottom)] backdrop-blur md:hidden">
-      <div className="mx-auto grid max-w-lg grid-cols-5">
+      <div className="mx-auto grid max-w-lg grid-cols-6">
         {TABS.map((t) => {
           const on = isActive(path, t.href);
           return (
