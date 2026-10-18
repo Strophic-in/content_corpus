@@ -557,9 +557,12 @@ def _join_blended(segments: list[tuple[Path, Path]], out: Path, log: Callable[[s
         sound = work / "sound.m4a"
         _sound(["-i", str(joined)], sound, length / FPS, music, music_gain, fades=not loop)
         picture = work / "picture.mp4"
-        _run(["ffmpeg", "-y", "-v", "error", *inputs, "-filter_complex", ";".join(vgraph), "-map", f"[{vlast}]",
-              "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p", "-r", str(FPS),
-              str(picture)])
+        # Exactly `length` frames: ffmpeg 5.1's xfade (the worker image's) emits one
+        # frame more than newer versions, so the end is padded and then cut to length.
+        vgraph.append(f"[{vlast}]tpad=stop_mode=clone:stop=2[vend]")
+        _run(["ffmpeg", "-y", "-v", "error", *inputs, "-filter_complex", ";".join(vgraph), "-map", "[vend]",
+              "-frames:v", str(length), "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p",
+              "-r", str(FPS), str(picture)])
         _run(["ffmpeg", "-y", "-v", "error", "-i", str(picture), "-i", str(sound), "-map", "0:v", "-map", "1:a",
               "-c", "copy", "-movflags", "+faststart", str(out)])
         seconds = _check_reel(out, length)

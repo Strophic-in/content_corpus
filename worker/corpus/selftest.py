@@ -4,9 +4,12 @@ deploy/deploy.sh runs this in the freshly built worker image, before switching
 over. It builds short segments the way production does (a narrated shot with
 burned-in captions, a shot whose clip has no sound, a plain one, and footage
 shots: a landscape clip blur-padded with its credit drawn on, a picture with a
-Ken Burns move), joins them and checks the result. A tool difference that breaks reels — like ffmpeg 5.1
-failing the loudness step on 2026-10-11, after an 8-shot render had been paid
-for — then stops the deploy instead of a render.
+Ken Burns move), joins them and checks the result — with hard cuts, and again
+blended (transitions and a loop seam, as templates use) — and draws a slide. A
+tool difference that breaks reels — like ffmpeg 5.1 failing the loudness step on
+2026-10-11, after an 8-shot render had been paid for, or its xfade making one
+frame more than newer versions (2026-10-17) — then stops the deploy instead of a
+render.
 """
 
 from __future__ import annotations
@@ -68,6 +71,19 @@ def main() -> int:
         if info["join"] != "copy":
             print(f"selftest FAILED: the fast join did not work here (fell back to {info['join']})")
             return 1
+        # Templates: on-screen text and a split screen, blended joins, a loop seam, a slide.
+        from . import templates
+        from .media import slides
+
+        look = templates.look("ranked_countdown")
+        tseg = (d / "t.mp4", d / "t.wav")
+        media.build_segment(shots[0][0], *tseg, words=media.shifted(words, media.LEAD_IN), look=look,
+                            extras={"label": "#2", "text": "A headline here", "layout": "split"})
+        blended = media.join_segments([tseg, *segments[1:3]], d / "blend.mp4", transitions=["", "whip", "fade"])
+        looped = media.join_segments(segments[:2], d / "loop.mp4", transitions=["", "crossfade"], loop=True)
+        slides.render({"heading": "Five things", "body": "A body line.", "visual": {"source": "none"}}, 1, 5,
+                      layout="educational", look=templates.look("educational_carousel"), out=d / "slide.jpg")
+        print(f"selftest ok: blended joins of {blended['seconds']}s and {looped['seconds']}s (loop), a slide")
         print(f"selftest ok: {len(segments)} segments, {frames} frames joined into a "
               f"{info['seconds']}s reel in {time.monotonic() - t0:.1f}s")
     return 0
