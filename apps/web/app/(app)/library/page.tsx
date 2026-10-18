@@ -64,7 +64,7 @@ export default async function LibraryPage({ searchParams }: { searchParams: Prom
       };
     });
     return (
-      <div className="flex flex-col gap-5">
+      <div className="full-bleed flex flex-col gap-5">
         <div className="flex flex-wrap items-start gap-3">
           <div className="min-w-0 flex-1">
             <h1 className="text-2xl font-semibold tracking-tight">Overview</h1>

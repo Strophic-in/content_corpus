@@ -173,8 +173,8 @@ export function OverviewTable({ rows }: { rows: TableRow[] }) {
         </div>
       )}
 
-      <div className="max-h-[calc(100dvh-15rem)] min-h-64 overflow-auto rounded-2xl border border-border bg-surface">
-        <table className="w-full min-w-[1320px] border-separate border-spacing-0 text-left text-sm">
+      <div className="max-h-[calc(100dvh-13rem)] min-h-64 overflow-auto rounded-2xl border border-border bg-surface">
+        <table className="w-full min-w-[1320px] table-auto border-separate border-spacing-0 text-left text-sm">
           <thead className="text-xs text-muted">
             <tr>
               {COLS.map((c) => {
@@ -201,7 +201,7 @@ export function OverviewTable({ rows }: { rows: TableRow[] }) {
           <tbody>
             {shown.map((r) => (
               <tr key={r.id} className="group align-top [&>td]:border-b [&>td]:border-border/60 [&>td]:group-hover:bg-background">
-                <td className="sticky left-0 z-[5] max-w-[19rem] bg-surface px-3 py-2">
+                <td className="sticky left-0 z-[5] max-w-[19rem] bg-surface px-3 py-2 xl:max-w-[26rem] 2xl:max-w-[34rem]">
                   <div className="flex gap-2">
                     <input type="checkbox" aria-label={`Select ${r.title}`} checked={picked.has(r.id)}
                            onChange={() => toggle(r.id)} className="mt-1 shrink-0" />

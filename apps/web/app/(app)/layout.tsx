@@ -25,7 +25,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           </div>
         </div>
       </header>
-      <main className="mx-auto w-full max-w-6xl flex-1 px-4 pt-[calc(env(safe-area-inset-top)+1.25rem)] pb-28 md:py-8">{children}</main>
+      <main className="mx-auto w-full max-w-6xl flex-1 px-4 pt-[calc(env(safe-area-inset-top)+1.25rem)] pb-28 md:py-8 has-[.full-bleed]:max-w-none lg:has-[.full-bleed]:px-8">{children}</main>
       <BottomTabs />
     </div>
   );
