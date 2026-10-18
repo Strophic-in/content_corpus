@@ -6,6 +6,7 @@ import { requireUser } from "@/lib/session";
 import { statusBadge } from "@/lib/status";
 
 import { ChannelPicker } from "../nav";
+import { PostChip } from "./post-chip";
 
 export const metadata = { title: "Calendar · Content Corpus" };
 
@@ -77,15 +78,8 @@ export default async function CalendarPage({ searchParams }: { searchParams: Pro
                 {Number(day.slice(8))}
               </span>
               {dayPosts.map((post) => (
-                <Link key={post.id} href={`/posts/${post.id}`} className="flex flex-col gap-1 rounded-md p-1 hover:bg-background">
-                  <span className="line-clamp-2 text-xs font-medium sm:text-sm">
-                    {post.publish_time && <span className="mr-1 text-muted tabular-nums">{post.publish_time}</span>}
-                    {post.topic}
-                  </span>
-                  <span className={`w-fit rounded px-1.5 py-0.5 text-[10px] font-medium sm:text-xs ${statusBadge(post.status).className}`}>
-                    {statusBadge(post.status).label}
-                  </span>
-                </Link>
+                <PostChip key={post.id} id={post.id} topic={post.topic} time={post.publish_time} status={post.status}
+                          badge={statusBadge(post.status)} />
               ))}
               {!isPast && (
                 <Link
