@@ -78,6 +78,34 @@ def _describe(a: dict, label: str | None = None) -> str:
     return "\n".join(lines)
 
 
+# The video model sees only a shot's `visual` (plus the look): a one-line visual gives a
+# flat, generic take (live: "a symbolic spire tilts and drops", ~20 words). Written like a
+# cinematographer's shot note it gets the details, the depth and a deliberate camera.
+GENERATE_GUIDE = """
+
+## Generated shots: write each one like a cinematographer's shot note
+For every shot whose `source` is "generate", `visual` is the video model's whole brief: 50-110 words,
+one continuous take, present tense, in this order:
+1. Shot size and lens: extreme close-up, close-up, medium, wide or aerial; "macro", "85mm", "24mm wide".
+2. The subject and its one action, with the small physical details that make it feel real: textures
+   (cracked plaster, wet cobblestones, frayed rope), particles (embers, dust in a light beam, rain,
+   steam), reflections, wind in fabric or leaves, tiny movements.
+3. Depth: what is in the foreground, the middle and the background.
+4. The camera move, with its speed and direction and what it reveals: slow push-in, lateral dolly
+   left, low-angle tilt up, slow 30-degree orbit, gentle handheld drift, crane down, rack focus.
+5. Light and colour: time of day, where the light comes from, contrast, one colour accent.
+6. The beat the take settles on at the end, so the next shot can cut from it.
+Use generated shots as B-roll: cutaways that show what the narration describes but footage cannot -
+a detail, the scale, the consequence. Vary shot sizes across the reel (wide, then close, then a
+detail) and never use the same camera move twice in a row.
+Example of the length and detail wanted: "Close-up, 85mm: raindrops gather on a rusted iron railing
+above a flooded street at dusk; each drop swells, trembles and falls into the brown water below,
+sending out slow rings. The camera racks focus from the drops to the water, then cranes down toward
+a plastic chair drifting past a half-submerged shop shutter. Cool blue dusk light, warm streetlamp
+reflections streaking across the ripples; the take settles on the chair turning slowly in the current."
+The rules above still hold: no lifelike real people, no words, numbers or logos in the picture."""
+
+
 def prompt_section(footage: Footage, narrated: bool) -> str:
     """Appended to the format's script prompt: the shot sources this reel has."""
     unused = ("Fields a source does not use take these values: asset 0, start 0, end 0, keep_audio false, "
@@ -89,7 +117,7 @@ def prompt_section(footage: Footage, narrated: bool) -> str:
              "\"deaths\", or \"\"). Only numbers stated in the sources; never estimates.")
     if not footage.any:
         return ("\n\n## Shot sources\nEach shot has a `source`:\n- \"generate\": the AI video model renders its "
-                f"`visual`.\n{chart}\n{unused}")
+                f"`visual`.\n{chart}\n{unused}" + GENERATE_GUIDE)
     videos = any(a["kind"] == "video" for a in footage.assets)
     images = any(a["kind"] == "image" for a in footage.assets)
     lines = ["", "", "## Shot sources",
@@ -135,7 +163,7 @@ def prompt_section(footage: Footage, narrated: bool) -> str:
                   "there is one, is in the list above as \"AI illustration\"."]
         lines += [_describe(a, f"Original {'video' if a['kind'] == 'video' else 'picture'}:")
                   for a in footage.references]
-    return "\n".join(lines)
+    return "\n".join(lines) + GENERATE_GUIDE
 
 
 def normalize(out: ScriptOut, footage: Footage, music: bool = False) -> None:

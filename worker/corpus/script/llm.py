@@ -82,7 +82,7 @@ class Shot(BaseModel):
     keep_audio: bool    # clip: play the video's own sound (no narration over it); false otherwise
     stock_query: str    # stock: 2-5 plain words to search stock video; "" otherwise
     chart: Chart        # chart: a bar chart of numbers from the sources; empty otherwise
-    visual: str     # what we see, in order: subject, action, setting, camera, light
+    visual: str     # generated: a 50-110 word shot note (size, subject + details, depth, camera, light, end beat)
     audio: str      # sounds in the shot; on-screen dialogue in double quotes (native mode only)
     narration: str  # voice-over spoken over this shot (narrated mode); "" otherwise
     # On screen, drawn by us (templates/): the shot's step in the template's structure,

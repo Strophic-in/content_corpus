@@ -367,3 +367,11 @@ def test_a_picture_shot_may_hold_a_line_longer_than_a_generated_shot(s3, owner, 
     drain(cpu_footage())
     rows = owner.execute("select num_frames, narration_key from shots where script_id = %s", (sid,)).fetchall()
     assert all(r["narration_key"] for r in rows) and {r["num_frames"] for r in rows} == {round((13.8 + 0.35) * 24)}
+
+
+def test_every_script_prompt_asks_for_detailed_camera_aware_generated_shots():
+    for fp in (Footage(assets=[], stock=False), Footage(assets=[{"n": 1, "kind": "image", "w": 1200, "h": 800,
+                                                                  "credit": "x", "origin": "commons",
+                                                                  "analysis": {}}], stock=True)):
+        text = footage_.prompt_section(fp, narrated=True)
+        assert "cinematographer's shot note" in text and "50-110 words" in text and "B-roll" in text
