@@ -35,6 +35,9 @@ type Props = {
   suggestion: { date: string; time: string; min: string };
 };
 
+// What each kind of format makes, at a glance on the card.
+const KIND_ICON: Record<string, string> = { "Reel / Short": "🎬", Carousel: "🖼️", "Picture post": "📰" };
+
 const THRESHOLD = 110;          // px of drag that counts as a decision
 const REASONS = ["Done before", "Boring", "Not our topic", "Weak source", "Not accurate", "Too sensitive"];
 
@@ -296,11 +299,6 @@ export function Deck({ picker, daily, cards, looking, channel, categories, forma
                     {card.category.name}
                   </span>
                 )}
-                {card.format && (
-                  <span className="rounded-full border border-border px-2 py-0.5 text-muted" title={card.formatWhy || undefined}>
-                    {card.format.name}
-                  </span>
-                )}
                 {card.whyNow && <span className="rounded-full bg-accent/15 px-2 py-0.5 text-accent">{card.whyNow}</span>}
               </div>
               {card.media[0] && (
@@ -311,6 +309,17 @@ export function Deck({ picker, daily, cards, looking, channel, categories, forma
               {!card.media.length && card.mediaPending && (
                 <div className="flex aspect-video w-full animate-pulse items-center justify-center rounded-2xl bg-background text-xs text-muted">
                   Fetching the picture…
+                </div>
+              )}
+              {card.format && (
+                <div className="flex items-center gap-2 rounded-xl border border-accent/40 bg-accent/10 px-3 py-2 text-sm">
+                  <span aria-hidden className="text-base">{KIND_ICON[card.format.kind] ?? "🎬"}</span>
+                  <span className="min-w-0">
+                    <span className="block font-semibold text-foreground">
+                      Will be made as: {card.format.name} <span className="font-normal text-muted">· {card.format.kind}</span>
+                    </span>
+                    {card.formatWhy && <span className="block truncate text-xs text-muted">{card.formatWhy}</span>}
+                  </span>
                 </div>
               )}
               <h2 className="text-2xl leading-tight font-semibold">{card.title}</h2>
