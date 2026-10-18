@@ -253,9 +253,13 @@ def find(judge: Jev, client: httpx.Client, story: str, articles: list[Article],
         # it needs only to show its subject (Jev scored the BBC's own photos of an event
         # 1.2-1.7 of 3, live). A library picture has to earn it: the story's place, people
         # or things.
-        if shows < (1.1 if c["origin"] == "article" else 1.8):
-            continue
         before = yes(a.get("before")) if want_before else 0.0
+        # A picture of the place as it was cannot show the event itself: Jev scored the
+        # intact Hôtel de Ville of Limoges 1.71 for a story about its spire burning (and
+        # other cities' town halls under 1), so a sure "before" needs only 1.5.
+        need = 1.1 if c["origin"] == "article" else 1.5 if before >= 0.8 else 1.8
+        if shows < need:
+            continue
         picked.append({**c, "shows": round(shows, 2), "usable": round(usable, 2), "before": round(before, 2)})
     picked.sort(key=lambda c: (c["origin"] == "article", c["shows"] + c["usable"]), reverse=True)
     if not want_before:

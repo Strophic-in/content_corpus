@@ -191,7 +191,7 @@ class BeforeJev(PhotoJev):
             return {"real_event": {"noul": 0.95}}
         r, g, b = Image.open(io.BytesIO(next(iter(images.values())))).getpixel((10, 10))
         grey = abs(r - g) < 10 and abs(g - b) < 10
-        out = {"shows": {"score": 2.2 if grey else 3.0}, "usable": {"noul": 0.9}, "watermark": {"noul": 0.02},
+        out = {"shows": {"score": 1.7 if grey else 3.0}, "usable": {"noul": 0.9}, "watermark": {"noul": 0.02},
                "graphic": {"noul": 0.01}}
         if "before" in questions:
             out["before"] = {"noul": 0.9 if grey else 0.05}
@@ -215,10 +215,11 @@ def test_a_before_after_post_gets_the_place_as_it_was_first(public_dns):
                             title="Limoges town hall spire falls", want_before=True)
     assert [p["url"] for p in picked] == ["https://upload.wikimedia.test/hall.jpg", "https://news.test/event.jpg"]
     assert picked[0]["before"] == 0.9 and picked[1]["before"] == 0.05
-    # Any other post: the event's own photo first, no "before" asked.
+    # Any other post: no "before" asked, and a library picture that only shows the place
+    # (1.7) is not enough.
     picked, _ = finder.find(BeforeJev(), routes, "Limoges town hall spire falls in a fire", arts,
                             title="Limoges town hall spire falls")
-    assert picked[0]["url"] == "https://news.test/event.jpg" and picked[0]["before"] == 0.0
+    assert [p["url"] for p in picked] == ["https://news.test/event.jpg"] and picked[0]["before"] == 0.0
 
 
 def test_the_writer_is_told_which_picture_is_the_before():
