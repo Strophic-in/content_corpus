@@ -52,6 +52,7 @@ export default async function LibraryPage({ searchParams }: { searchParams: Prom
         id: r.id, title: r.title, topic: r.topic, date: r.slot_date, time: r.publish_time,
         kind: KIND[r.format as keyof typeof KIND] ?? r.format, template: r.template_id ? template(r.template_id).display_name : "",
         stage: chip(r, g), dot: DOT[GROUP[g].tone], stageOrder: STAGE_ORDER.indexOf(r.status), error: r.error,
+        status: r.status, goAhead: r.go_ahead,
         script: r.script_version != null ? `v${r.script_version} · ${SCRIPT_STATE[r.script_state ?? ""] ?? r.script_state}` : null,
         scriptScore: r.script_score != null ? Number(r.script_score) : null, versions: r.versions,
         shots: r.shots, shotsDone: r.shots_done, slides: r.slides, seconds: r.seconds != null ? Number(r.seconds) : null,
@@ -67,7 +68,7 @@ export default async function LibraryPage({ searchParams }: { searchParams: Prom
         <div className="flex flex-wrap items-start gap-3">
           <div className="min-w-0 flex-1">
             <h1 className="text-2xl font-semibold tracking-tight">Overview</h1>
-            <p className="mt-1 text-sm text-muted">Every post {picker} has made, one row each. Click a column to sort.</p>
+            <p className="mt-1 text-sm text-muted">Every post {picker} has made, one row each. Click a column to sort; tick rows to act on them.</p>
           </div>
           {tabs}
         </div>

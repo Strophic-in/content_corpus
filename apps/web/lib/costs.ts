@@ -103,7 +103,7 @@ export async function priceTable(userId: string) {
 export type OverviewRow = {
   id: string; title: string; topic: string; slot_date: string; publish_time: string | null; status: string;
   format: string; template_id: string | null; look_id: string | null; created_at: Date; updated_at: Date;
-  error: string | null;
+  error: string | null; go_ahead: boolean;
   script_version: number | null; script_state: string | null; script_score: string | null; versions: number;
   shots: number; shots_done: number; gpu_seconds: string | null; seconds: string | null; slides: number;
   writing: number; pictures: number; voice: number; gpu: number; idea: number; total: number; unpriced: number;
@@ -131,7 +131,7 @@ export async function overview(userId: string, channelId: string, limit = 500): 
                      sum(${inr})::float8 / nullif((select count(*) from ideas x where x.batch_job_id = i.batch_job_id), 0) as idea
                 from ideas i join costs c on c.job_id = i.batch_job_id
                where i.post_id in (select id from ps) group by i.post_id, i.batch_job_id)
-       select p.id, p.topic, p.status, p.format, p.look_id, p.created_at, p.updated_at,
+       select p.id, p.topic, p.status, p.format, p.look_id, p.created_at, p.updated_at, p.go_ahead,
               to_char(p.slot_date, 'YYYY-MM-DD') as slot_date,
               to_char(p.publish_at at time zone p.publish_tz, 'HH24:MI') as publish_time,
               p.error->>'message' as error,

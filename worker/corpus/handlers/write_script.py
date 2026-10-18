@@ -234,7 +234,7 @@ def run(ctx: JobContext) -> dict:
         held = _desk_review(key, model, out, post, billed)
 
     with db.tx() as c:
-        locked = c.execute("select status, auto_approve from posts where id = %s for update",
+        locked = c.execute("select status, auto_approve, go_ahead from posts where id = %s for update",
                            (post_id,)).fetchone()
         if locked is None or locked["status"] != "scripting":
             return {"skipped": "post changed while the script was being written"}
@@ -259,12 +259,16 @@ def run(ctx: JobContext) -> dict:
         db.log_event(c, post_id, "scripting", "awaiting_approval",
                      f"worker:{settings().worker_id}", "script written",
                      {"script_id": str(script_id), "version": version, "model": usage.model})
-        if locked["auto_approve"] and not held:
+        if locked["go_ahead"]:
+            # The owner said "make it" (Library): approved as written, then rendered.
+            c.execute("select private.approve_script(%s, 'system:go_ahead')", (script_id,))
+        elif locked["auto_approve"] and not held:
             c.execute("select private.approve_script(%s, 'system:auto_approve')", (script_id,))
         elif held:
             db.log_event(c, post_id, "awaiting_approval", "awaiting_approval", "system:auto",
                          "held for your review: " + "; ".join(held)[:500], {"issues": held})
-    return {"script_id": str(script_id), "auto_approved": bool(locked["auto_approve"]) and not held,
+    return {"script_id": str(script_id),
+            "auto_approved": bool(locked["go_ahead"]) or (bool(locked["auto_approve"]) and not held),
             "held": held, "template": t.template_id, "slides": len(slides) if slides is not None else None,
             "shots": len(shot_plan), "tokens": usage.input_tokens + usage.output_tokens}
 
