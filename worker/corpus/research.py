@@ -92,6 +92,25 @@ def same_story(title: str, story: str, need: int = 2) -> bool:
     return len(sig_tokens(title) & sig_tokens(story)) >= need
 
 
+SAME_EVENT = {"same": {"type": "noul", "instructions": "Is `report` about the same news event as `story` (not "
+                                                         "just the same topic or the same people)?"}}
+
+
+def same_event(judge, title: str, story: str, text: str = "") -> bool:
+    """same_story, judged by Jev when there is a key: a report needs one significant
+    word in common to be asked about at all, then Jev decides (0.6 or more). Jev
+    failing falls back to the word rule."""
+    if judge is None:
+        return same_story(title, story)
+    if not sig_tokens(title) & sig_tokens(story):
+        return False
+    try:
+        a = judge.ask({"report": f"{title}. {text[:500]}".strip(), "story": story}, SAME_EVENT)
+    except Exception:  # noqa: BLE001 - the word rule decides instead
+        return same_story(title, story)
+    return float((a.get("same") or {}).get("noul", 0)) >= 0.6
+
+
 @dataclass
 class Article:
     url: str

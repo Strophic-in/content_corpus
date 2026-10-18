@@ -25,6 +25,11 @@ and by how each format has done here — and says why. Formats that need the
 owner's own footage are the owner's to pick. The idea prompt is the first allowed
 format's (the channel's default when it is allowed).
 
+With a Jev key (corpus/jev.py, ideas/decide.py) two of those judgements are made by
+Jev, fast and for almost nothing: which items reach the writer (fit, trending,
+credible — the best dozen), and each idea's format (where Jev is sure enough; the
+writer's pick otherwise).
+
 As idea_from_video (Explore YouTube → "Make an idea"), the payload carries one
 YouTube video: it is the only item, one idea is asked for (or none, if it doesn't
 suit the channel), the category's sources aren't read, and a category whose
@@ -37,9 +42,9 @@ import httpx
 import numpy as np
 from psycopg.types.json import Jsonb
 
-from .. import channels, costs, db, prompts, stats, templates, vault
+from .. import channels, costs, db, jev, prompts, stats, templates, vault
 from ..config import settings
-from ..ideas import feeds, memory, reddit, select, sources
+from ..ideas import decide, feeds, memory, reddit, select, sources
 from ..ideas.agent import OpenAIIdeaWriter
 from ..ideas.embed import embed
 from ..runner import Handler, JobContext, Permanent
@@ -193,6 +198,7 @@ def run(ctx: JobContext) -> dict:
     if not key:
         raise Permanent("Add your OpenAI API key in Settings.", stage="config")
 
+    judge = jev.for_user(cat["user_id"])         # Jev, when the owner has a key
     if video:
         items = cands = [video_item(video)]
         cuts: dict = {}
@@ -205,6 +211,12 @@ def run(ctx: JobContext) -> dict:
                                     youtube_key=vault.secret(cat["user_id"], "youtube_api_key"))
         _record_outcomes(outcomes)
         cands, cuts = select.prefilter(items, keep=CANDIDATES)
+        if judge is not None:
+            try:
+                cands, ranked = decide.rank(judge, cands, cat)
+                log(f"Jev ranked the items: {ranked}")
+            except Exception as e:  # noqa: BLE001 - the heuristic order stands
+                log(f"Jev ranking skipped: {e}")
         if cuts:
             log("cut before the model: " + ", ".join(f"{n} {why}" for why, n in sorted(cuts.items())))
 
@@ -239,6 +251,8 @@ def run(ctx: JobContext) -> dict:
                      **billed)
     cands_ideas = [i.model_dump() for i in out.ideas]
     if not cands_ideas:
+        if judge is not None:
+            judge.record(f"Jev decisions: {cat['name']}", **billed)
         log(f"{cat['name']}: nothing worth making today ({len(items)} items read)")
         return {"ideas": 0, "trend_items": len(items), "nothing_worth_making": True}
 
@@ -261,12 +275,22 @@ def run(ctx: JobContext) -> dict:
     for t, why in repeats:
         log(f"dropped as a repeat: {t} — {why}")
 
+    # Each kept idea's items, and Jev's pick of its format.
+    items_of = [[cands[n - 1] for n in dict.fromkeys(i["items"]) if 1 <= n <= len(cands)][:5] for i in kept]
+    picks = [(None, 0.0)] * len(kept)
+    if judge is not None:
+        try:
+            picks = decide.pick_format(judge, kept, items_of, fmts, per_format)
+        except Exception as e:  # noqa: BLE001 - the writer's own picks stand
+            log(f"Jev format pick skipped: {e}")
+        judge.record(f"Jev decisions: {cat['name']}", **billed)
     rows_out = []
     with db.tx() as c:
-        for i in kept:
-            its = [cands[n - 1] for n in dict.fromkeys(i["items"]) if 1 <= n <= len(cands)][:5]
+        for i, its, (pick, sure) in zip(kept, items_of, picks):
             media = any(_has_media(it) for it in its)
             chosen = fmts[i["format"] - 1] if 1 <= i.get("format", 0) <= len(fmts) else fmt
+            if pick is not None and sure >= decide.SURE and fmts[pick]["id"] != chosen["id"]:
+                chosen, i["format_why"] = fmts[pick], f"Jev's pick ({sure:.0%} sure)"
             rid = c.execute(
                 """insert into ideas (user_id, channel_id, format_id, category_id, title, hook, brief, why_now,
                                       sources, items, media_state, batch_job_id, format_why)

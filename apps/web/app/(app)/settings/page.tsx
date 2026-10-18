@@ -142,10 +142,11 @@ export default async function SettingsPage() {
           <h2 className="font-medium">Jev API key (fast decisions)</h2>
           <p className="mt-1 text-sm text-muted">
             TypeSafe&apos;s Jev answers yes/no, pick-one and score questions about text and pictures in a fraction of a
-            second, for a fraction of a paisa. Saving it now gets it ready; the quick judgements in the pipeline (which
-            trending items are worth a look, whether a picture is usable) move to it step by step. Stored encrypted.
+            second, for a fraction of a paisa. With it, Jev picks which trending items the idea writer sees (in the
+            category, trending today, a genuine report), chooses each idea&apos;s format, and decides whether another
+            outlet&apos;s report is the same story. Without it, those steps work as before. Stored encrypted.
           </p>
-          <p className="mt-2 text-sm">{jev ? "Saved." : "Not set."}</p>
+          <p className="mt-2 text-sm">{jev ? "Saved — Jev is making those decisions." : "Not set."}</p>
         </div>
         <ServiceKeyForm service="jev" saved={jev} placeholder="Your TypeSafe API key" />
       </section>

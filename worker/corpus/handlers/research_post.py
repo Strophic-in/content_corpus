@@ -16,7 +16,7 @@ from urllib.parse import urlparse
 import httpx
 from psycopg.types.json import Jsonb
 
-from .. import db, research
+from .. import db, jev, research
 from ..ideas import sites
 from ..runner import Handler, JobContext
 
@@ -46,13 +46,14 @@ def _article_urls(items: list[dict]) -> list[str]:
 def run(ctx: JobContext) -> dict:
     log = lambda m: print(f"[research_post] {m}", flush=True)  # noqa: E731
     with db.conn() as c:
-        post = c.execute("select id, topic, research_state from posts where id = %s",
+        post = c.execute("select id, user_id, channel_id, category_id, topic, research_state from posts where id = %s",
                          (ctx.payload["post_id"],)).fetchone()
         idea = c.execute("select items, title from ideas where id = %s", (ctx.payload.get("idea_id"),)).fetchone()
     if not post or post["research_state"] != "pending":
         return {"skipped": "no research waiting"}
     urls = _article_urls((idea or {}).get("items") or [])
     articles: list[research.Article] = []
+    judge = jev.for_user(post["user_id"])         # decides "same story?" when the owner has a Jev key
     with httpx.Client(timeout=30) as client:
         for u in urls:
             articles.append(research.read(client, u))
@@ -73,15 +74,18 @@ def run(ctx: JobContext) -> dict:
             site = urlparse(it.url).netloc.removeprefix("www.")
             if site in sites_read or it.url in urls:
                 continue
-            if not research.same_story(it.title, story):
+            if not research.same_event(judge, it.title, story):
                 skipped += 1
                 continue
             a = research.read(client, it.url)
-            if a.ok and research.same_story(a.title or it.title, story):
+            if a.ok and research.same_event(judge, a.title or it.title, story, a.text):
                 articles.append(a)
                 sites_read.add(site)
         if skipped:
             log(f"left out {skipped} search result(s) about other stories")
+    if judge is not None:
+        judge.record("Jev: same story?", user_id=post["user_id"], post_id=post["id"],
+                     channel_id=post["channel_id"], category_id=post["category_id"], job_id=ctx.job.get("id"))
     good = [a for a in articles if a.ok]
     with db.conn() as c:
         c.execute("update posts set research = %s, research_state = %s where id = %s",

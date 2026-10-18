@@ -44,6 +44,8 @@ DEFAULT_PRICES: dict[str, tuple[float, ...]] = {
     "gpt-5-mini": (0.25, 0.025, 2.00),
     "gpt-5": (1.25, 0.125, 10.00),
     "omni-moderation": (0.0, 0.0, 0.0),
+    # TypeSafe's Jev (decisions, not text): $0.042 per 1M input tokens, output free.
+    "jev": (0.042, 0.042, 0.0),
 }
 
 FX_URL = "https://api.frankfurter.dev/v1/latest?base=USD&symbols=INR"
@@ -58,6 +60,8 @@ def _price(c, user_id: str, model: str | None) -> dict | None:
         return {k: float(v) if v is not None else None for k, v in row.items()}
     # A list price applies to that model and its dated snapshots ("gpt-4o-mini-2024-07-18"),
     # never to another model that merely shares a prefix ("gpt-5.6-luna" is not "gpt-5").
+    if re.fullmatch(r"jev(-[\w.]+)?", model):            # jev-latest, jev-1.14.0 …
+        model = "jev"
     for name in DEFAULT_PRICES:
         if model == name or re.fullmatch(re.escape(name) + r"-\d{4}-\d{2}-\d{2}", model):
             i, ci, o, *cw = DEFAULT_PRICES[name]
