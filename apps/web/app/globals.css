@@ -68,3 +68,37 @@ body {
 
 /* Installed app / phone: no rubber-band bounce or tap flash around the deck. */
 html { -webkit-tap-highlight-color: transparent; overscroll-behavior-y: none; }
+
+/* Loading placeholders: a soft shimmer sweeping across (skeletons.tsx). */
+.skeleton {
+  background: linear-gradient(90deg, color-mix(in oklab, var(--border) 70%, transparent) 25%,
+                                     color-mix(in oklab, var(--border) 35%, transparent) 50%,
+                                     color-mix(in oklab, var(--border) 70%, transparent) 75%);
+  background-size: 300% 100%;
+  animation: shimmer 1.4s ease-in-out infinite;
+}
+@keyframes shimmer {
+  from { background-position: 100% 0; }
+  to { background-position: 0 0; }
+}
+
+/* Each page (and the skeleton before it) rises in as it arrives (template.tsx). Fill
+   mode "backwards" only: no transform stays behind, so fixed sheets and toasts
+   inside a page keep their place. */
+@keyframes page-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: none; }
+}
+.page-in > * { animation: page-in 260ms cubic-bezier(.2, .8, .2, 1) backwards; }
+
+/* Things you tap give a little under the finger. */
+.pressable { transition: transform 120ms ease, background-color 150ms ease, border-color 150ms ease; }
+.pressable:active { transform: scale(.97); }
+
+/* No double-tap zoom delay on controls. */
+a, button, input, select, label, summary { touch-action: manipulation; }
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton, .page-in > * { animation: none; }
+  .pressable:active { transform: none; }
+}

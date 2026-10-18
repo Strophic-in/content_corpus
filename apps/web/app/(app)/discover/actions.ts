@@ -54,6 +54,9 @@ export async function decideIdea(ideaId: string, accept: boolean, date: string |
       );
       return r.rows[0]?.post_id as string | undefined;
     });
+    // The browser keeps visited pages for 30 s (next.config staleTimes): without this a
+    // decided card could come back on the next visit to the deck.
+    refresh();
     return { ok: true, postId };
   } catch (err) {
     return { ok: false, error: friendly(err) };

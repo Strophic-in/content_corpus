@@ -1,8 +1,8 @@
 "use client";
 
-import Link from "next/link";
+import Link, { useLinkStatus } from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useTransition } from "react";
+import { useState, useTransition } from "react";
 
 import { switchChannel } from "./channel-actions";
 
@@ -29,32 +29,55 @@ function isActive(path: string, href: string) {
   return path === href || path.startsWith(href + "/") || (href === "/calendar" && path.startsWith("/posts"));
 }
 
-export function DesktopNav() {
+/** The tab just tapped, lit at once (before its page arrives); cleared once the
+ *  address changes, when the real active tab takes over. */
+function useTapped() {
   const path = usePathname();
+  // Remembered with the page it was tapped on: once the address moves on, it lapses.
+  const [tapped, setTapped] = useState<{ href: string; from: string } | null>(null);
+  const live = tapped?.from === path ? tapped.href : null;
+  const on = (href: string) => (live ? live === href : isActive(path, href));
+  return [on, (href: string) => setTapped({ href, from: path })] as const;
+}
+
+/** A tab's label or icon, pulsing while its page is on the way. */
+function Pending({ children }: { children: React.ReactNode }) {
+  const { pending } = useLinkStatus();
+  return <span className={`transition-opacity ${pending ? "animate-pulse" : ""}`}>{children}</span>;
+}
+
+export function DesktopNav() {
+  const [on, tap] = useTapped();
   return (
-    <nav className="hidden gap-4 text-sm md:flex">
+    <nav className="hidden gap-1 text-sm md:flex">
       {TABS.map((t) => (
-        <Link key={t.href} href={t.href}
-              className={isActive(path, t.href) ? "font-medium text-foreground" : "text-muted hover:text-foreground"}>
-          {t.label}
+        <Link key={t.href} href={t.href} onClick={() => tap(t.href)}
+              className={`rounded-full px-3 py-1.5 transition-colors ${on(t.href)
+                ? "bg-accent/10 font-medium text-foreground" : "text-muted hover:bg-border/40 hover:text-foreground"}`}>
+          <Pending>{t.label}</Pending>
         </Link>
       ))}
     </nav>
   );
 }
 
-/** The phone's tab bar: fixed at the bottom, above the home indicator. */
+/** The phone's tab bar: fixed at the bottom, above the home indicator. The active
+ *  tab's icon sits on a soft pill; a tap lights the tab at once and gives a tick. */
 export function BottomTabs() {
-  const path = usePathname();
+  const [on, tap] = useTapped();
   return (
-    <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-surface/95 pb-[env(safe-area-inset-bottom)] backdrop-blur md:hidden">
-      <div className="mx-auto grid max-w-lg grid-cols-6">
+    <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-surface/90 pb-[env(safe-area-inset-bottom)] backdrop-blur-xl md:hidden">
+      <div className="mx-auto grid max-w-lg grid-cols-6 px-1">
         {TABS.map((t) => {
-          const on = isActive(path, t.href);
+          const active = on(t.href);
           return (
-            <Link key={t.href} href={t.href}
-                  className={`flex flex-col items-center gap-0.5 py-2 text-[11px] transition-colors ${on ? "text-accent" : "text-muted"}`}>
-              <span className={`transition-transform duration-200 ${on ? "scale-110" : ""}`}>{t.icon}</span>
+            <Link key={t.href} href={t.href} aria-current={active ? "page" : undefined}
+                  onClick={() => { tap(t.href); navigator.vibrate?.(8); }}
+                  className={`group flex flex-col items-center gap-0.5 pt-1.5 pb-1.5 text-[10.5px] font-medium transition-colors active:scale-95 ${active ? "text-accent" : "text-muted"}`}>
+              <span className={`grid h-8 w-14 place-items-center rounded-full transition-all duration-300 ease-out [&_svg]:transition-transform ${active
+                ? "bg-accent/15 [&>span>svg]:scale-110" : "bg-transparent group-active:bg-border/50"}`}>
+                <Pending>{t.icon}</Pending>
+              </span>
               {t.label}
             </Link>
           );
