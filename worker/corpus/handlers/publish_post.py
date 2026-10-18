@@ -12,13 +12,14 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import tempfile
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import httpx
 
-from .. import db, stats, storage
+from .. import db, packaging, stats, storage
 from ..config import settings
 from ..crypto import decrypt, encrypt
 from ..publish import attempts, instagram, youtube
@@ -65,16 +66,27 @@ def run(ctx: JobContext) -> dict:
         return {"skipped": "already posted", "url": att["remote_url"]}
     att = att or attempts.start(post["id"], platform)
 
+    # Its title, caption, hashtags, first comment and cover (made when the reel was
+    # finished; made now if not). Without them it goes out with the script's words.
+    pkg = None
+    try:
+        pkg = packaging.ensure(post["id"], job_id=ctx.job.get("id"))
+    except Exception as e:  # noqa: BLE001
+        log.warning("no caption package for %s: %s", post["id"], e)
+    credits = post["credits"] or []
+
     try:
         with httpx.Client(timeout=TIMEOUT) as client:
             if platform == "youtube":
                 video = _download(post)
                 out = youtube.publish(
                     client, refresh_token=decrypt(acc["token_ciphertext"]), path=video,
-                    meta=youtube.metadata(post["title"], post["description"] or "", post["hashtags"] or [],
+                    meta=youtube.metadata((pkg or {}).get("title") or post["title"], post["description"] or "",
+                                          (pkg or {}).get("hashtags") or post["hashtags"] or [],
                                           post["category_id"],
                                           ctx.payload.get("privacy") or post["youtube_privacy"],
-                                          credits=post["credits"] or [], synthetic=post["synthetic"]),
+                                          credits=credits, synthetic=post["synthetic"],
+                                          body=packaging.youtube_description(pkg, credits) if pkg else None),
                     attempt=att, save=lambda **f: attempts.update(att, **f))
             else:
                 video = None
@@ -85,8 +97,11 @@ def run(ctx: JobContext) -> dict:
                     # Instagram downloads the file itself; the link lapses well after it has.
                     video_url=None if slides else storage.signed_url(post["final_key"], INSTAGRAM_LINK_SECONDS),
                     image_urls=[storage.signed_url(k, INSTAGRAM_LINK_SECONDS) for k in slides] or None,
-                    caption=instagram.caption(post["title"], post["description"] or "", post["hashtags"] or [],
-                                              post["credits"] or []),
+                    caption=(packaging.instagram_caption(pkg, credits) if pkg else
+                             instagram.caption(post["title"], post["description"] or "", post["hashtags"] or [],
+                                               credits)),
+                    cover_url=(storage.signed_url(pkg["thumbnail_key"], INSTAGRAM_LINK_SECONDS)
+                               if pkg and pkg.get("thumbnail_key") and not slides else None),
                     attempt=att, save=lambda **f: attempts.update(att, **f))
     except (youtube.AuthExpired, instagram.AuthExpired) as e:
         _set_account_status(acc, "expired")
@@ -106,12 +121,40 @@ def run(ctx: JobContext) -> dict:
 
     attempts.update(att, state="live", remote_id=out["remote_id"], remote_url=out.get("remote_url"),
                     privacy=out.get("privacy"), response=out.get("response") or {}, error=None)
+    # Live first; then the cover as YouTube's thumbnail and the first comment. These
+    # never undo the post — what happened is recorded on the attempt and the activity.
+    extras = _extras(platform, acc["id"], out, pkg)
+    if extras:
+        attempts.update(att, response={**(out.get("response") or {}), "extras": extras})
     with db.conn() as c:
         db.log_event(c, post["id"], post["status"], post["status"], f"worker:{settings().worker_id}",
-                     f"posted to {name}", {"url": out.get("remote_url"), "privacy": out.get("privacy")})
+                     f"posted to {name}", {"url": out.get("remote_url"), "privacy": out.get("privacy"),
+                                           **({"extras": extras} if extras else {})})
     if video:
         video.unlink(missing_ok=True)
     return {"platform": platform, "url": out.get("remote_url"), "privacy": out.get("privacy")}
+
+
+def _extras(platform: str, account_id, out: dict, pkg: dict | None) -> dict:
+    if not pkg or not out.get("remote_id"):
+        return {}
+    # The account row again: its token may have been renewed during the upload.
+    acc = db.one("select token_ciphertext from channel_accounts where id = %s", (account_id,))
+    try:
+        with httpx.Client(timeout=TIMEOUT) as client:
+            if platform == "youtube":
+                with tempfile.TemporaryDirectory() as tmp:
+                    cover = (storage.get_file(pkg["thumbnail_key"], Path(tmp) / "cover.jpg")
+                             if pkg.get("thumbnail_key") else None)
+                    return youtube.finish(client, refresh_token=decrypt(acc["token_ciphertext"]),
+                                          video_id=out["remote_id"], cover=cover,
+                                          comment=packaging.first_comment(pkg, "youtube"))
+            return {"comment": instagram.comment(client, token=decrypt(acc["token_ciphertext"]),
+                                                 media_id=out["remote_id"],
+                                                 text=packaging.first_comment(pkg, "instagram"))}
+    except Exception as e:  # noqa: BLE001 - the post is live either way
+        log.warning("after posting to %s: %s", platform, e)
+        return {"error": f"{type(e).__name__}: {e}"[:300]}
 
 
 def _download(post: dict) -> Path:

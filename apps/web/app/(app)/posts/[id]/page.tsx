@@ -17,6 +17,7 @@ import { template } from "@/lib/templates";
 import { PostForm } from "../post-form";
 import {
   AssetRightsButton, AutoRefresh, CancelPublishButton, DeletePostButton, GenerateButton, PublishForm, RenderButton,
+  RepackageButton,
   ReviewActions,
 } from "./post-actions";
 import { DeleteUploadButton, UploadFootage } from "./upload";
@@ -60,7 +61,10 @@ export default async function PostPage({ params }: { params: Promise<{ id: strin
       {(IN_FLIGHT.has(post.status) || post.status === "rendered" ||
         (post.status === "approved" && !slides && (shots.length === 0 ||
           (post.audio_source === "kokoro" && shots.some((s) => !s.voiced)))) ||
-        assets.some((a) => a.state === "pending")) && <AutoRefresh everyMs={4000} />}
+        assets.some((a) => a.state === "pending") ||
+        // just finished: its caption and cover are on the way
+        post.packaging)
+        && <AutoRefresh everyMs={4000} />}
       <div className="flex flex-wrap items-start gap-3">
         <div className="min-w-0 flex-1">
           <Link href={`/calendar?m=${post.slot_date.slice(0, 7)}`} className="text-sm text-muted hover:text-foreground">
@@ -107,6 +111,8 @@ export default async function PostPage({ params }: { params: Promise<{ id: strin
         <FootagePanel postId={post.id} assets={assets} uploads={UPLOADABLE.has(post.status)} />}
 
       {post.approved_script_id && (slides ? <SlidesPanel post={post} /> : <RenderPanel post={post} shots={shots} />)}
+
+      {post.final_key && FINISHED.has(post.status) && <PackagePanel post={post} />}
 
       {post.final_key && FINISHED.has(post.status) && <PublishPanel post={post} userId={user.id} />}
 
@@ -330,6 +336,49 @@ async function RenderPanel({ post, shots }: { post: PostRow; shots: ShotRow[] })
     );
   }
   return null;
+}
+
+/** What it goes out with: the cover, title, caption (with its sources), hashtags and
+ *  first comment — written by the worker once the reel is finished. */
+function PackagePanel({ post }: { post: PostRow }) {
+  const p = post.package;
+  return (
+    <section className="flex flex-col gap-4 rounded-xl border border-border bg-surface p-5">
+      <div className="flex flex-wrap items-center gap-3">
+        <h2 className="font-medium">Caption &amp; cover</h2>
+        <span className="text-xs text-muted">{p ? "used when it's posted" : "being written…"}</span>
+        <span className="ml-auto"><RepackageButton postId={post.id} /></span>
+      </div>
+      {p && (
+        <div className="grid gap-5 sm:grid-cols-[11rem_minmax(0,1fr)]">
+          {/* eslint-disable-next-line @next/next/no-img-element -- a signed, redirecting media URL */}
+          <img src={`/media/post/${post.id}?cover=1&v=${encodeURIComponent(p.made_at)}`} alt="The cover"
+               className="aspect-[9/16] w-44 rounded-lg border border-border object-cover" />
+          <div className="flex min-w-0 flex-col gap-3 text-sm">
+            <div><p className="text-xs text-muted">Title</p><p className="font-semibold">{p.title}</p></div>
+            <div>
+              <p className="text-xs text-muted">Caption</p>
+              <p className="font-medium">{p.hook_line}</p>
+              <p className="whitespace-pre-line text-muted">{p.caption}</p>
+            </div>
+            {p.sources.length > 0 && (
+              <div>
+                <p className="text-xs text-muted">Sources (in the caption; links in YouTube&apos;s, and Instagram&apos;s first comment)</p>
+                <ul className="flex flex-col gap-0.5">
+                  {p.sources.map((s) => (
+                    <li key={s.url} className="truncate"><a href={s.url} target="_blank" rel="noreferrer"
+                      className="text-accent hover:underline">{s.site}</a> <span className="text-muted">— {s.title}</span></li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            <p className="text-accent">{p.hashtags.join(" ")}</p>
+            <div><p className="text-xs text-muted">First comment</p><p>{p.first_comment}</p></div>
+          </div>
+        </div>
+      )}
+    </section>
+  );
 }
 
 async function PublishPanel({ post, userId }: { post: PostRow; userId: string }) {

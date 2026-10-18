@@ -46,7 +46,9 @@ export function readState(token: string | null, nonce: string | undefined, p: Pl
 }
 
 // ── providers ─────────────────────────────────────────────────────────────────
-const YT_SCOPES = ["https://www.googleapis.com/auth/youtube.upload", "https://www.googleapis.com/auth/youtube.readonly"];
+// force-ssl: the first comment under each Short (commentThreads.insert needs it).
+const YT_SCOPES = ["https://www.googleapis.com/auth/youtube.upload", "https://www.googleapis.com/auth/youtube.readonly",
+  "https://www.googleapis.com/auth/youtube.force-ssl"];
 const IG_SCOPES = ["instagram_business_basic", "instagram_business_content_publish"];
 
 export function authorizeUrl(p: Platform, state: string): string {

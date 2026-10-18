@@ -62,7 +62,8 @@ def caption(title: str, description: str, hashtags: list[str], credits: list[str
 
 def publish(client: httpx.Client, *, token: str, ig_user_id: str, video_url: str | None = None, caption: str,
             attempt: dict, save: Callable[..., object], sleep: Callable[[float], None] = time.sleep,
-            clock: Callable[[], float] = time.monotonic, image_urls: list[str] | None = None) -> dict:
+            clock: Callable[[], float] = time.monotonic, image_urls: list[str] | None = None,
+            cover_url: str | None = None) -> dict:
     """Post the video at `video_url` as a Reel — or `image_urls` as a carousel (or,
     one of them, a picture) — and return what to record on the attempt."""
     container = _container_of(attempt)
@@ -74,7 +75,7 @@ def publish(client: httpx.Client, *, token: str, ig_user_id: str, video_url: str
             container = None        # never published; Instagram drops it within a day
     if not container:
         container = (_create_images(client, token, ig_user_id, image_urls, caption, sleep, clock) if image_urls
-                     else _create(client, token, ig_user_id, video_url or "", caption))
+                     else _create(client, token, ig_user_id, video_url or "", caption, cover_url))
         save(upload_session_uri=CONTAINER + container, state="uploading")
         _wait_until_processed(client, token, container, sleep, clock)
 
@@ -90,10 +91,24 @@ def _container_of(attempt: dict) -> str | None:
     return uri[len(CONTAINER):] if uri.startswith(CONTAINER) else None
 
 
-def _create(client: httpx.Client, token: str, ig_user_id: str, video_url: str, text: str) -> str:
-    return _ok(client.post(f"{GRAPH}/{ig_user_id}/media", data={
-        "media_type": "REELS", "video_url": video_url, "caption": text,
-        "share_to_feed": "true", "access_token": token}), "creating the reel")["id"]
+def comment(client: httpx.Client, *, token: str, media_id: str, text: str) -> str:
+    """The first comment under a published post (instagram_business_manage_comments)."""
+    if not text:
+        return "none"
+    r = client.post(f"{GRAPH}/{media_id}/comments", data={"message": text, "access_token": token})
+    if r.status_code == 200:
+        return "posted " + str((r.json() or {}).get("id", ""))
+    err = (r.json() if r.headers.get("content-type", "").startswith("application/json") else {}).get("error") or {}
+    return f"not posted: {(err.get('message') or f'HTTP {r.status_code}')[:200]}"
+
+
+def _create(client: httpx.Client, token: str, ig_user_id: str, video_url: str, text: str,
+            cover_url: str | None = None) -> str:
+    data = {"media_type": "REELS", "video_url": video_url, "caption": text, "share_to_feed": "true",
+            "access_token": token}
+    if cover_url:
+        data["cover_url"] = cover_url           # the reel's cover in the grid and feed
+    return _ok(client.post(f"{GRAPH}/{ig_user_id}/media", data=data), "creating the reel")["id"]
 
 
 def _create_images(client: httpx.Client, token: str, ig_user_id: str, urls: list[str], text: str,

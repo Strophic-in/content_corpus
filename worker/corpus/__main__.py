@@ -7,7 +7,8 @@ import logging
 from .config import settings
 from . import upkeep
 from .handlers import (analyze_asset, assemble, attach_media, build_segment, check_sources, fetch_asset,
-                       make_ai_image, narrate, plan_shots, prepare_shot, publish_post, refresh_models, render_post,
+                       make_ai_image, narrate, package_post, plan_shots, prepare_shot, publish_post, refresh_models,
+                       render_post,
                        render_slides, research_post, suggest_ideas, write_script)
 from .runner import Runner
 
@@ -24,6 +25,8 @@ HANDLERS = {
         "make_ai_image": make_ai_image.HANDLER,
         # Carousels and cards: slides for Instagram, a slideshow for YouTube.
         "render_slides": render_slides.HANDLER,
+        # A finished reel's title, caption, hashtags, first comment and cover.
+        "package_post": package_post.HANDLER,
     },
     # The only process that contacts Reddit and arbitrary URLs: its rate-limit waits
     # and downloads never hold up scripts, segments or assembly.

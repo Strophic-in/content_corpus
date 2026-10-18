@@ -134,6 +134,9 @@ def run(ctx: JobContext) -> dict:
         db.log_event(c, post["id"], "rendering", "ready", f"worker:{settings().worker_id}",
                      f"{len(stored)} slide{'s' if len(stored) != 1 else ''} and the slideshow made",
                      {"slides": len(stored), "seconds": info["seconds"], "template": t.template_id})
+        db.enqueue(c, user_id=post["user_id"], lane="cpu", kind="package_post",
+                   dedupe_key=f"package_post:{script_id}", post_id=post["id"], max_attempts=2,
+                   lease_seconds=300)                      # its caption and cover, for the post page
     auto.request_publish(post["id"])             # Automatic mode: post it at the picked time
     return {"slides": len(stored), "slideshow_s": info["seconds"], "final_key": key}
 

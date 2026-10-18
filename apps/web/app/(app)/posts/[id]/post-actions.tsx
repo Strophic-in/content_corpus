@@ -4,7 +4,8 @@ import { useRouter } from "next/navigation";
 import { useActionState, useEffect, useState, useTransition } from "react";
 
 import {
-  approveScript, cancelPublish, deletePost, generateScript, rejectScript, requestPublish, requestRender, setAssetRights,
+  approveScript, cancelPublish, deletePost, generateScript, rejectScript, requestPackage, requestPublish, requestRender,
+  setAssetRights,
   type ActionState,
 } from "../../actions";
 
@@ -53,6 +54,22 @@ export function GenerateButton({ postId, regenerate }: { postId: string; regener
       </button>
       <ErrorNote state={state} />
     </div>
+  );
+}
+
+/** "Write again": a fresh title, caption, first comment and cover. */
+export function RepackageButton({ postId }: { postId: string }) {
+  const [state, setState] = useState<ActionState>(null);
+  const [pending, start] = useTransition();
+  return (
+    <span className="flex flex-col gap-1">
+      <button disabled={pending} onClick={() => start(async () => setState(await requestPackage(postId)))}
+              className="w-fit rounded-md border border-border px-3 py-1.5 text-sm hover:border-accent disabled:opacity-60">
+        {pending ? "Asking…" : "Write again"}
+      </button>
+      {state?.message && <span className="text-xs text-muted">{state.message}</span>}
+      <ErrorNote state={state} />
+    </span>
   );
 }
 

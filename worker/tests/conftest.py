@@ -13,3 +13,19 @@ os.environ["DATABASE_URL"] = os.environ.get(
     "TEST_DATABASE_URL_OWNER", "postgres://app_owner:localdev@127.0.0.1:55442/corpus_test")
 os.environ.setdefault("CORPUS_WORKER_ID", "cpu-test")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+
+import pytest  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _no_real_copywriter(monkeypatch):
+    """No test reaches OpenAI for a reel's caption: posting goes on without one unless a
+    test supplies its own copywriter (test_packaging)."""
+    from corpus import packaging
+
+    class Offline:
+        def __init__(self, key):
+            raise RuntimeError("no copywriter in tests")
+
+    monkeypatch.setattr(packaging, "COPYWRITER", Offline)

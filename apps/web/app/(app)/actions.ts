@@ -123,6 +123,19 @@ export async function requestRender(postId: string): Promise<ActionState> {
   return { ok: true };
 }
 
+/** Write a finished reel's title, caption, first comment and cover again. */
+export async function requestPackage(postId: string): Promise<ActionState> {
+  const user = await requireUser();
+  try {
+    await asUser(user.id, (db) => db.query("select api.request_package($1)", [postId]));
+  } catch (err) {
+    return { ok: false, error: friendly(err) };
+  }
+  await wakeWorker();
+  refresh();
+  return { ok: true, message: "Writing it again — it'll be here in a minute." };
+}
+
 /** Allow or withdraw one piece of a post's footage. Withdrawn footage is never shown:
  *  rendering refuses a script that uses it (write a new one). */
 export async function setAssetRights(assetId: string, allowed: boolean): Promise<ActionState> {

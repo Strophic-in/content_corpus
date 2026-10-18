@@ -59,7 +59,8 @@ def credit_line(credits: list[str]) -> str:
 
 
 def metadata(title: str, description: str, hashtags: list[str], category_id: str,
-             privacy: str = "private", credits: list[str] | None = None, synthetic: bool = True) -> dict:
+             privacy: str = "private", credits: list[str] | None = None, synthetic: bool = True,
+             body: str | None = None) -> dict:
     """The video resource for the upload. YouTube refuses '<' and '>' in text.
 
     `credits`: who made the footage shown (before the hashtags). `synthetic`: the reel
@@ -74,14 +75,50 @@ def metadata(title: str, description: str, hashtags: list[str], category_id: str
         if t and used + len(t) + 1 <= 450:      # YouTube's limit is 500 characters in all
             tags.append(t)
             used += len(t) + 1
-    body = "\n\n".join(x for x in (clean(description), clean(credit_line(credits or [])),
-                                     " ".join(clean(h) for h in hashtags)) if x)
+    # `body`: the description already written whole (packaging: hook, caption, sources,
+    # credits, hashtags); otherwise it is put together here.
+    body = clean(body) if body else "\n\n".join(x for x in (clean(description), clean(credit_line(credits or [])),
+                                                          " ".join(clean(h) for h in hashtags)) if x)
     return {
         "snippet": {"title": clean(title)[:100] or "Untitled", "description": body[:4900],
                     "tags": tags, "categoryId": category_id or "22"},
         "status": {"privacyStatus": privacy, "selfDeclaredMadeForKids": False,
                    "containsSyntheticMedia": synthetic},
     }
+
+
+THUMBNAILS = "https://www.googleapis.com/upload/youtube/v3/thumbnails/set"
+COMMENTS = "https://www.googleapis.com/youtube/v3/commentThreads"
+
+
+def finish(client: httpx.Client, *, refresh_token: str, video_id: str, cover: Path | None, comment: str) -> dict:
+    """After the upload: the cover as its thumbnail, and the first comment. Neither
+    stops the post — each says what happened (a channel YouTube hasn't verified can't
+    set thumbnails; comments need the account reconnected with the comment permission)."""
+    token = access_token(client, refresh_token)
+    auth = {"Authorization": f"Bearer {token}"}
+    out: dict = {}
+    if cover is not None:
+        r = client.post(THUMBNAILS, params={"videoId": video_id, "uploadType": "media"},
+                        headers={**auth, "Content-Type": "image/jpeg"}, content=cover.read_bytes())
+        out["thumbnail"] = "set" if r.status_code == 200 else _why(r, "thumbnail")
+    if comment:
+        r = client.post(COMMENTS, params={"part": "snippet"}, headers=auth,
+                        json={"snippet": {"videoId": video_id,
+                                          "topLevelComment": {"snippet": {"textOriginal": comment}}}})
+        out["comment"] = ("posted " + _json(r).get("id", "")) if r.status_code == 200 else _why(r, "comment")
+    return out
+
+
+def _why(r: httpx.Response, what: str) -> str:
+    err = _json(r).get("error") or {}
+    reason = ((err.get("errors") or [{}])[0]).get("reason") or err.get("status") or f"HTTP {r.status_code}"
+    if reason in ("insufficientPermissions", "ACCESS_TOKEN_SCOPE_INSUFFICIENT", "PERMISSION_DENIED") \
+            and what == "comment":
+        return "not posted: reconnect YouTube on the channel page to allow comments"
+    if reason == "forbidden" and what == "thumbnail":
+        return "not set: YouTube allows custom thumbnails once the channel is verified (youtube.com/verify)"
+    return f"not done: {reason}: {(err.get('message') or '')[:160]}"
 
 
 def publish(client: httpx.Client, *, refresh_token: str, path: Path, meta: dict, attempt: dict,
