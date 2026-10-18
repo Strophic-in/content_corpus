@@ -5,10 +5,11 @@ import { useState, useTransition } from "react";
 
 import { bulkPostAction } from "../library/table-actions";
 
-// A post on a calendar day: tap it to open, or delete it there (until it is rendered —
-// the database refuses after). The × asks once more before it deletes.
+// A post on a calendar day: tap it to open, or delete it there — anything not being
+// rendered, scheduled or posted (the database refuses those). The × asks once more.
 
-const DELETABLE = new Set(["draft", "scripting", "awaiting_approval", "approved", "failed", "cancelled"]);
+const DELETABLE = new Set(["draft", "scripting", "awaiting_approval", "approved", "failed", "cancelled", "ready",
+  "needs_review"]);
 
 export function PostChip({ id, topic, time, status, badge }: {
   id: string; topic: string; time: string | null; status: string; badge: { label: string; className: string };
@@ -44,7 +45,7 @@ export function PostChip({ id, topic, time, status, badge }: {
         </span>
       ) : (
         <button onClick={() => { setArmed(true); setError(null); }} aria-label={`Delete ${topic}`} title="Delete"
-                className="absolute top-1 right-1 grid size-5 place-items-center rounded-full text-muted opacity-70 transition hover:bg-danger/10 hover:text-danger sm:opacity-0 sm:group-hover:opacity-100 sm:focus:opacity-100">
+                className="absolute top-1 right-1 grid size-5 place-items-center rounded-full border border-border bg-surface text-muted transition hover:border-danger/50 hover:bg-danger/10 hover:text-danger">
           <svg viewBox="0 0 24 24" aria-hidden className="size-3.5" fill="none" stroke="currentColor" strokeWidth={2.2}
                strokeLinecap="round"><path d="M6 6l12 12M18 6 6 18" /></svg>
         </button>

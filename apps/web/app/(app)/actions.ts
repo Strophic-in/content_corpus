@@ -79,7 +79,7 @@ export async function deletePost(postId: string): Promise<ActionState> {
   const user = await requireUser();
   try {
     const r = await asUser(user.id, (db) => db.query("delete from posts where id = $1", [postId]));
-    if (r.rowCount === 0) return { ok: false, error: "This post can't be deleted in its current state." };
+    if (r.rowCount === 0) return { ok: false, error: "A post being rendered, scheduled or posted can't be deleted." };
   } catch (err) {
     return { ok: false, error: friendly(err) };
   }

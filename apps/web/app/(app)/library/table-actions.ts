@@ -43,7 +43,7 @@ export async function bulkPostAction(input: z.input<typeof Input>): Promise<Bulk
           await db.query("select api.approve_script($1)", [s.id]);
         } else {
           const r = await db.query("delete from posts where id = $1", [id]);
-          if (!r.rowCount) throw new Error("only a post that is not rendered yet can be deleted");
+          if (!r.rowCount) throw new Error("a post being rendered, scheduled or posted can't be deleted");
         }
       });
       done++;

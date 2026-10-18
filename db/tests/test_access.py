@@ -903,3 +903,16 @@ def test_daily_ideas_can_be_paused_and_resumed(alice, bob, owner):
     owner.execute("select private.schedule_daily_ideas()")
     assert owner.execute(queued, (str(ch),)).fetchone()[0] == 1
     owner.execute("delete from jobs where payload->>'channel_id' = %s", (str(ch),))
+
+
+def test_a_finished_reel_can_be_deleted_but_not_one_rendering_scheduled_or_posted(owner, alice):
+    """Migration 0025: drafts and finished-but-unposted reels go from the calendar."""
+    for status, allowed in [("draft", True), ("ready", True), ("needs_review", True), ("rendering", False),
+                            ("scheduled", False), ("published", False)]:
+        pid = owner.execute("insert into posts (user_id, topic, slot_date) values (%s, 't', %s) returning id",
+                            (alice, _slot())).fetchone()[0]
+        owner.execute("update posts set status = %s where id = %s", (status, pid))
+        with web(alice) as c:
+            n = c.execute("delete from posts where id = %s", (pid,)).rowcount
+        assert (n == 1) is allowed, status
+        owner.execute("delete from posts where id = %s", (pid,))

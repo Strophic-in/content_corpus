@@ -47,7 +47,8 @@ const CAN: Record<Action, (r: TableRow) => boolean> = {
     || (r.status === "scripting" && !r.goAhead),
   approve: (r) => r.status === "awaiting_approval",
   write: (r) => ["draft", "awaiting_approval", "failed"].includes(r.status),
-  delete: (r) => ["draft", "scripting", "awaiting_approval", "approved", "failed", "cancelled"].includes(r.status),
+  delete: (r) => ["draft", "scripting", "awaiting_approval", "approved", "failed", "cancelled", "ready", "needs_review"]
+    .includes(r.status),
 };
 const ACTION_LABEL: Record<Action, string> = {
   go_ahead: "Approve & render", approve: "Approve script", write: "Write script", delete: "Delete",
@@ -313,7 +314,7 @@ export function OverviewTable({ rows }: { rows: TableRow[] }) {
       <p className="text-xs text-muted">
         <b className="font-medium text-foreground">Approve &amp; render</b> takes a post the rest of the way: it writes the
         script if there isn&apos;t one, approves it, and renders once its shots are ready — no stops for review.
-        A post can be deleted until it is rendered. Cost is what each post spent plus its share of the idea search that
+        A post can be deleted unless it is rendering, scheduled or posted. Cost is what each post spent plus its share of the idea search that
         found it; hover a cost for the breakdown.
       </p>
     </div>
