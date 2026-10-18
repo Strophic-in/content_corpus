@@ -20,7 +20,7 @@ const GROUP: Record<Group, { label: string; tone: keyof typeof TONE_CLASS }> = {
   scheduled: { label: "Scheduled", tone: "good" },
   ready: { label: "Ready to post", tone: "busy" },
   review: { label: "Needs review", tone: "attention" },
-  making: { label: "Being made", tone: "neutral" },
+  making: { label: "In progress", tone: "neutral" },
   failed: { label: "Failed", tone: "bad" },
   cancelled: { label: "Cancelled", tone: "neutral" },
 };
@@ -35,13 +35,37 @@ function group(p: LibraryPost): Group {
   return "making";
 }
 
+// The step a post is at, named exactly: a draft has not even a script yet, and
+// "being made" for it would be wrong. (hint: what the card's empty frame says.)
+const STEP: Record<string, { label: string; hint: string }> = {
+  draft: { label: "Not started", hint: "Script not written yet" },
+  scripting: { label: "Writing script", hint: "Writing the script…" },
+  awaiting_approval: { label: "Script to review", hint: "Script written — waiting for your OK" },
+  needs_review: { label: "Needs attention", hint: "Stopped — open it to see why" },
+  approved: { label: "Not rendered yet", hint: "Script approved — not rendered yet" },
+  queued_for_render: { label: "Queued to render", hint: "Waiting for a GPU" },
+  rendering: { label: "Rendering", hint: "Rendering…" },
+  post_processing: { label: "Assembling", hint: "Putting it together…" },
+  failed: { label: "Failed", hint: "Failed — open it to see why" },
+  cancelled: { label: "Cancelled", hint: "Cancelled" },
+};
+
+function chip(p: LibraryPost, g: Group) {
+  return g === "making" || g === "review" || g === "failed" ? STEP[p.status]?.label ?? GROUP[g].label : GROUP[g].label;
+}
+
 // The filter chips: "Not posted yet" is everything still on its way out.
-const FILTERS = [
+const FILTERS: { id: string; label: string; has: (g: Group, status: string) => boolean }[] = [
   { id: "all", label: "All", has: () => true },
   { id: "posted", label: "Posted", has: (g: Group) => g === "posted" },
   { id: "waiting", label: "Not posted yet", has: (g: Group) => ["scheduled", "ready", "review", "making"].includes(g) },
+  { id: "notstarted", label: "Not started", has: (_g, s) => s === "draft" },
   { id: "stopped", label: "Failed or cancelled", has: (g: Group) => g === "failed" || g === "cancelled" },
-] as const;
+];
+
+const DOT: Record<keyof typeof TONE_CLASS, string> = {
+  neutral: "bg-white/60", busy: "bg-accent", attention: "bg-warn", good: "bg-ok", bad: "bg-danger",
+};
 
 const KIND = { reel: "Reel", longform: "Video", carousel: "Carousel", image: "Picture" } as const;
 const PLATFORM = { youtube: "YouTube", instagram: "Instagram" } as const;
@@ -108,7 +132,7 @@ export default async function LibraryPage({ searchParams }: { searchParams: Prom
 
   const posts = (await libraryPosts(user.id, active.id)).map((p) => ({ ...p, group: group(p) }));
   const filter = FILTERS.find((f) => f.id === show) ?? FILTERS[0];
-  const shown = posts.filter((p) => filter.has(p.group));
+  const shown = posts.filter((p) => filter.has(p.group, p.status));
   const date = (d: string) => new Intl.DateTimeFormat("en", { day: "numeric", month: "short", timeZone: "UTC" })
     .format(new Date(`${d}T00:00:00Z`));
 
@@ -124,7 +148,7 @@ export default async function LibraryPage({ searchParams }: { searchParams: Prom
 
       <div className="flex flex-wrap gap-2 text-sm">
         {FILTERS.map((f) => {
-          const n = posts.filter((p) => f.has(p.group)).length;
+          const n = posts.filter((p) => f.has(p.group, p.status)).length;
           const on = f.id === filter.id;
           return (
             <Link key={f.id} href={f.id === "all" ? "/library" : `/library?show=${f.id}`}
@@ -154,12 +178,13 @@ export default async function LibraryPage({ searchParams }: { searchParams: Prom
                     <video src={`/media/post/${p.id}#t=1`} muted playsInline preload="metadata"
                            className="size-full object-cover" />
                   ) : (
-                    <div className="flex size-full items-center justify-center p-3 text-center text-xs text-muted">
-                      {p.group === "making" ? "Being made…" : "No video yet"}
+                    <div className="flex size-full items-center justify-center p-4 text-center text-xs text-muted">
+                      {STEP[p.status]?.hint ?? "No video yet"}
                     </div>
                   )}
-                  <span className={`absolute left-2 top-2 rounded-full px-2 py-0.5 text-[11px] font-medium backdrop-blur ${TONE_CLASS[g.tone]}`}>
-                    {g.label}
+                  <span className="absolute left-2 top-2 flex items-center gap-1.5 rounded-full bg-black/70 px-2 py-0.5 text-[11px] font-medium text-white backdrop-blur">
+                    <span className={`size-1.5 rounded-full ${DOT[g.tone]}`} />
+                    {chip(p, p.group)}
                   </span>
                   {p.seconds != null && p.has_video && !p.has_slides && (
                     <span className="absolute bottom-2 right-2 rounded bg-black/60 px-1.5 py-0.5 text-[11px] tabular-nums text-white">
