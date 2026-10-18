@@ -1,0 +1,24 @@
+{
+  "look_id": "cartoon_2d",
+  "name": "2D cartoon",
+  "realism": "stylised",
+  "playful": true,
+  "prompt": "Bright flat 2D cartoon animation: bold clean outlines, simple shapes, cheerful saturated colours, expressive characters, smooth animated motion.",
+  "avoid": "photograph, realistic, 3d render, gore",
+  "grade": "",
+  "best_for": [
+    "humour",
+    "kids' topics",
+    "everyday life",
+    "light explainers"
+  ],
+  "never_for": [
+    "death",
+    "violence",
+    "war",
+    "disaster",
+    "crime with victims",
+    "terror",
+    "tragedy"
+  ]
+}

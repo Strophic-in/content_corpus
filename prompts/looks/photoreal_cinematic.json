@@ -1,0 +1,18 @@
+{
+  "look_id": "photoreal_cinematic",
+  "name": "Photoreal cinematic",
+  "realism": "photoreal",
+  "playful": false,
+  "prompt": "Photorealistic cinematic footage: natural light, true-to-life textures and colours, shallow depth of field, a 35 mm lens look, smooth stabilised camera moves.",
+  "avoid": "cartoon, anime, 3d render, cgi, plastic look, illustration, painting, oversaturated",
+  "grade": "",
+  "best_for": [
+    "real places",
+    "travel",
+    "lifestyle",
+    "technology products",
+    "nature",
+    "dramatic stories"
+  ],
+  "never_for": []
+}

@@ -167,7 +167,10 @@ def test_two_pods_drain_one_queue(tmp_path):
 
 
 def test_a_shot_one_pod_fails_is_rendered_by_the_other(tmp_path):
-    small, big = FakeComfy(fail_idx={1}), FakeComfy(polls=3)       # shot 1 is too much for `small`
+    # Shot 1 is too much for `small`. `big` is slow enough to still be working when
+    # `small` hands shot 1 back (under load it once finished first and left: then the
+    # shot fails here, and in production the job's retry renders it, biggest GPU first).
+    small, big = FakeComfy(fail_idx={1}), FakeComfy(polls=10)
     try:
         q = render.ShotQueue(shots(97, 241, 137))
         done, errors = run_pods(q, [small, big], tmp_path)

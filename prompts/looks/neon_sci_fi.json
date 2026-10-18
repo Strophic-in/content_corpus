@@ -1,0 +1,17 @@
+{
+  "look_id": "neon_sci_fi",
+  "name": "Neon sci-fi",
+  "realism": "stylised",
+  "playful": false,
+  "prompt": "Futuristic neon-lit sci-fi: glowing cyan and magenta light, sleek technology, reflective surfaces, atmospheric haze, slow cinematic moves.",
+  "avoid": "cartoon, gore, historical",
+  "grade": "",
+  "best_for": [
+    "AI",
+    "space",
+    "future technology",
+    "cybersecurity",
+    "gadgets"
+  ],
+  "never_for": []
+}

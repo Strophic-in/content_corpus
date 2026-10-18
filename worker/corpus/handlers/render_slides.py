@@ -18,7 +18,7 @@ from pathlib import Path
 
 from psycopg.types.json import Jsonb
 
-from .. import auto, costs, db, images, storage, templates, vault
+from .. import auto, costs, db, images, looks, storage, templates, vault
 from ..config import settings
 from ..ideas import media as idea_media
 from ..media import assemble as join
@@ -63,8 +63,11 @@ def run(ctx: JobContext) -> dict:
             return {"skipped": "already made", "final_key": post["final_key"]}
         script = c.execute("select slides, title from scripts where id = %s", (script_id,)).fetchone()
         look = templates.look_for_post(c, post)
-        fmt = c.execute("select template_id, visual_style from formats where id = %s",
-                        (post["format_id"],)).fetchone() or {}
+        fmt = dict(c.execute("select template_id, visual_style from formats where id = %s",
+                             (post["format_id"],)).fetchone() or {})
+        vlook = looks.get(post.get("look_id"))
+        if vlook:                                   # the post's video look styles its AI pictures too
+            fmt["visual_style"] = vlook.prompt
         assets = {r["n"]: r for r in c.execute(
             """select id, n, kind, key, credit, license, rights, state from assets
                 where post_id = %s and rights = 'approved' and state = 'ready'""", (post["id"],)).fetchall()}

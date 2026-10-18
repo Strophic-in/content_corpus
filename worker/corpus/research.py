@@ -12,7 +12,7 @@ through net (public addresses only, size-capped).
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from urllib.parse import urljoin, urlparse
 
 import httpx
@@ -119,6 +119,53 @@ class Article:
     text: str
     ok: bool = True
     error: str | None = None
+    # The page's photos: its lead picture (og:image) and large pictures in the article
+    # body, [{"url", "caption"}] — candidates for the asset finder.
+    images: list[dict] = field(default_factory=list)
+
+
+_NOT_A_PHOTO = re.compile(r"logo|icon|avatar|sprite|placeholder|blank|pixel|badge|author|byline|\.svg|\.gif", re.I)
+
+
+def page_images(soup: BeautifulSoup, container, base: str, limit: int = 6) -> list[dict]:
+    """The page's own photos, lead picture first: og:image, then the article body's
+    large <img>s (a figure's caption kept). Icons, logos and tiny images are skipped."""
+    out: list[dict] = []
+    seen: set[str] = set()
+
+    def add(src: str | None, caption: str = "") -> None:
+        if not src:
+            return
+        u = urljoin(base, src.strip().split(" ")[0])
+        if not u.startswith("http") or u in seen or _NOT_A_PHOTO.search(u):
+            return
+        seen.add(u)
+        out.append({"url": u, "caption": " ".join(caption.split())[:300]})
+
+    for prop in ("og:image:secure_url", "og:image", "twitter:image"):
+        m = soup.find("meta", attrs={"property": prop}) or soup.find("meta", attrs={"name": prop})
+        if m and m.get("content"):
+            add(m["content"])
+            break
+    for img in (container if container is not None else soup).find_all("img"):
+        try:
+            if int(str(img.get("width") or "9999").rstrip("px")) < 400:
+                continue
+        except ValueError:
+            pass
+        src = img.get("data-src") or img.get("data-original") or img.get("src")
+        srcset = img.get("srcset") or img.get("data-srcset")
+        if srcset:                      # the largest candidate of a srcset
+            parts = [p.strip().split(" ") for p in srcset.split(",") if p.strip()]
+            parts = [(p[0], int(p[1].rstrip("w")) if len(p) > 1 and p[1].rstrip("w").isdigit() else 0) for p in parts]
+            if parts:
+                src = max(parts, key=lambda x: x[1])[0]
+        fig = img.find_parent("figure")
+        cap = fig.find("figcaption") if fig else None
+        add(src, (cap.get_text(" ") if cap else img.get("alt") or ""))
+        if len(out) >= limit:
+            break
+    return out[:limit]
 
 
 def _clean_paragraph(para: str) -> str:
@@ -212,4 +259,4 @@ def read(client: httpx.Client, url: str, *, _hop: int = 0) -> Article:
             fuller = read(client, alt, _hop=1)
             if fuller.ok and len(fuller.text) >= len(text) + 200:
                 return Article(url, site, title or fuller.title, fuller.text[:MAX_TEXT])
-    return Article(url, site, title, text[:MAX_TEXT], ok=bool(text))
+    return Article(url, site, title, text[:MAX_TEXT], ok=bool(text), images=page_images(soup, container, page.url))

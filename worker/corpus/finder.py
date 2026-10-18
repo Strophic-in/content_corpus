@@ -1,0 +1,198 @@
+"""The asset finder: real photos for a story, chosen by Jev, before the script.
+
+Runs at the end of research_post (ideas lane: it fetches URLs), when the owner has
+a Jev key:
+
+  1. Is the story a real event that was photographed or filmed (an incident, a
+     protest, a flood, a match, a launch) — or a concept, an invention, a forecast,
+     an explainer? Only a real event looks for news photos; anything else keeps to
+     open-licence pictures that show its subject, or none (its shots are generated).
+  2. Candidates: the photos of the articles read for the story (their lead picture
+     and large in-article pictures), and open-licence pictures from Wikimedia
+     Commons and Openverse (searched by the story's own words).
+  3. Jev looks at each one (image input) — does it show this story, is it a usable
+     photograph, is there a watermark or a channel logo, is it graphic — and the
+     best few join the post as assets (approved: owner's rule of 2026-10-18 for real
+     events), credited on screen and in the caption, then fetched and analysed like
+     any footage. write_script waits for them.
+
+Never: a post whose owner asked for an AI version of its media, graphic pictures,
+watermarked ones, or more than KEEP. Videos come from the idea itself (Reddit and
+the social feeds); article pages rarely offer a usable video file.
+"""
+
+from __future__ import annotations
+
+import io
+import logging
+import re
+from concurrent.futures import ThreadPoolExecutor
+
+import httpx
+from psycopg.types.json import Jsonb
+
+from . import db, net
+from .jev import Jev, score, yes
+from .research import Article, sig_tokens
+
+log = logging.getLogger("corpus.finder")
+
+KEEP = 4
+MAX_CANDIDATES = 14
+IMAGE_BYTES = 8_000_000
+COMMONS = "https://commons.wikimedia.org/w/api.php"
+OPENVERSE = "https://api.openverse.org/v1/images/"
+UA = "ContentCorpus/1.0 (asset finder; https://content-corpus.strophic.in)"
+
+REAL_EVENT = {"real_event": {"type": "noul", "instructions":
+              "Is `story` about a specific real event that was photographed or filmed — an incident, accident, "
+              "protest, disaster, match, speech, ceremony or launch — rather than a concept, invention, study, "
+              "forecast or general explainer?"}}
+
+PHOTO_QUESTIONS = {
+    "shows": {"type": "score", "instructions": "How closely does `photo` show `story`?",
+              "criteria": ["Unrelated to the story", "The general topic, not this story",
+                           "The place, people or things of this story", "The event of this story itself"]},
+    "usable": {"type": "noul", "instructions": "Is `photo` a clear photograph that works full screen — not a logo, "
+                                              "chart, map, screenshot, collage, poster or text graphic?"},
+    "watermark": {"type": "noul", "instructions": "Does `photo` carry a visible watermark or a TV channel's logo?"},
+    "graphic": {"type": "noul", "instructions": "Does `photo` show gore, blood, injured or dead people, or other "
+                                               "graphic content?"},
+}
+
+
+def _query(story: str) -> str:
+    words = sorted(sig_tokens(story), key=len, reverse=True)[:5]
+    return " ".join(words)
+
+
+def commons(client: httpx.Client, query: str, n: int = 5) -> list[dict]:
+    r = client.get(COMMONS, params={"action": "query", "generator": "search", "gsrsearch": f"{query} filetype:bitmap",
+                                    "gsrnamespace": 6, "gsrlimit": n, "prop": "imageinfo",
+                                    "iiprop": "url|extmetadata|size", "iiurlwidth": 1280, "format": "json"},
+                   headers={"User-Agent": UA}, timeout=20)
+    out = []
+    for page in ((r.json().get("query") or {}).get("pages") or {}).values():
+        info = (page.get("imageinfo") or [{}])[0]
+        meta = info.get("extmetadata") or {}
+        artist = re.sub(r"<[^>]+>", "", (meta.get("Artist") or {}).get("value", "")).strip()[:60]
+        lic = (meta.get("LicenseShortName") or {}).get("value", "")
+        if not info.get("thumburl") or not lic:
+            continue
+        out.append({"url": info["thumburl"], "page": info.get("descriptionurl"), "origin": "commons",
+                    "credit": f"{artist or 'Unknown'} / Wikimedia Commons, {lic}"[:120],
+                    "license": "cc0" if re.search(r"public domain|cc0", lic, re.I) else "third_party"})
+    return out
+
+
+def openverse(client: httpx.Client, query: str, n: int = 5) -> list[dict]:
+    r = client.get(OPENVERSE, params={"q": query, "page_size": n, "license_type": "commercial,modification",
+                                      "mature": "false"}, headers={"User-Agent": UA}, timeout=20)
+    out = []
+    for it in r.json().get("results") or []:
+        if not it.get("url"):
+            continue
+        lic = f"CC {str(it.get('license', '')).upper()} {it.get('license_version') or ''}".strip()
+        out.append({"url": it["url"], "page": it.get("foreign_landing_url"), "origin": "openverse",
+                    "credit": f"{(it.get('creator') or 'Unknown')[:50]} / {it.get('source') or 'Openverse'}, {lic}"[:120],
+                    "license": "cc0" if it.get("license") in ("cc0", "pdm") else "third_party"})
+    return out
+
+
+def article_photos(articles: list[Article]) -> list[dict]:
+    return [{"url": im["url"], "page": a.url, "origin": "article", "credit": a.site, "license": "third_party",
+             "caption": im.get("caption", "")}
+            for a in articles if a.ok for im in a.images]
+
+
+def _download(client: httpx.Client, url: str) -> bytes | None:
+    """The picture as a JPEG Jev can read (at most 1280 px, at least 280 px a side)."""
+    from PIL import Image
+
+    try:
+        raw = net.get(client, url, max_bytes=IMAGE_BYTES, accept=("image/",),
+                      headers={"User-Agent": net.BROWSER_UA}).content
+        img = Image.open(io.BytesIO(raw))
+        img.load()
+    except Exception:  # noqa: BLE001 - an unreadable picture is skipped
+        return None
+    if min(img.size) < 400:
+        return None
+    img = img.convert("RGB")
+    img.thumbnail((1280, 1280))
+    if min(img.size) < 280:
+        return None
+    buf = io.BytesIO()
+    img.save(buf, "JPEG", quality=85)
+    return buf.getvalue()
+
+
+def find(judge: Jev, client: httpx.Client, story: str, articles: list[Article]) -> tuple[list[dict], float]:
+    """(the pictures worth adding to the post, best first, with their Jev scores;
+    how sure Jev is that the story is a real, filmed event)."""
+    real = yes((judge.ask({"story": story[:1500]}, REAL_EVENT)).get("real_event"))
+    cands = article_photos(articles) if real >= 0.5 else []
+    q = _query(story)
+    for src in (commons, openverse):
+        try:
+            cands += src(client, q)
+        except Exception as e:  # noqa: BLE001 - one library down is fine
+            log.warning("finder: %s: %s", src.__name__, e)
+    seen, unique = set(), []
+    for c in cands:
+        if c["url"] not in seen:
+            seen.add(c["url"])
+            unique.append(c)
+    unique = unique[:MAX_CANDIDATES]
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        pictures = list(pool.map(lambda c: _download(client, c["url"]), unique))
+    jobs = [(c, data) for c, data in zip(unique, pictures) if data]
+    answers = _ask_images(judge, story, jobs)
+    picked = []
+    for (c, _), a in zip(jobs, answers):
+        if a is None:
+            continue
+        shows, usable = score(a.get("shows")), yes(a.get("usable"))
+        if yes(a.get("graphic"), 1.0) >= 0.3 or yes(a.get("watermark"), 1.0) >= 0.5 or usable < 0.5:
+            continue
+        # A real event wants pictures of the event; anything else, pictures of its subject.
+        if shows < (2.0 if c["origin"] == "article" else 1.6):
+            continue
+        picked.append({**c, "shows": round(shows, 2), "usable": round(usable, 2)})
+    picked.sort(key=lambda c: (c["origin"] == "article", c["shows"] + c["usable"]), reverse=True)
+    return picked[:KEEP], real
+
+
+def _ask_images(judge: Jev, story: str, jobs: list[tuple[dict, bytes]]) -> list[dict | None]:
+    def one(job):
+        try:
+            return judge.ask({"story": story[:1200], "photo": "photo-1"}, PHOTO_QUESTIONS, images={"photo-1": job[1]})
+        except Exception as e:  # noqa: BLE001 - that picture is skipped
+            log.warning("finder: jev: %s", e)
+            return None
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        return list(pool.map(one, jobs))
+
+
+def add_to_post(post: dict, picked: list[dict]) -> int:
+    """The chosen pictures as the post's assets (approved, credited), queued to fetch."""
+    added = 0
+    with db.tx() as c:
+        have = {(r["fetch_from"] or {}).get("item", {}).get("image_url")
+                for r in c.execute("select fetch_from from assets where post_id = %s", (post["id"],)).fetchall()}
+        n = c.execute("select coalesce(max(n), 0) as n from assets where post_id = %s", (post["id"],)).fetchone()["n"]
+        for p in picked:
+            if p["url"] in have:
+                continue
+            n += 1
+            aid = c.execute(
+                """insert into assets (user_id, post_id, n, kind, origin, source_url, credit, license, rights, fetch_from)
+                   values (%s, %s, %s, 'image', %s, %s, %s, %s, 'approved', %s) returning id""",
+                (post["user_id"], post["id"], n, p["origin"], p.get("page"), p["credit"], p["license"],
+                 Jsonb({"item": {"image_url": p["url"], "media_hint": "image", "link": p.get("page")},
+                        "found": {"shows": p["shows"], "usable": p["usable"]}}))).fetchone()["id"]
+            db.enqueue(c, user_id=post["user_id"], lane="ideas", kind="fetch_asset", dedupe_key=f"fetch_asset:{aid}",
+                       payload={"asset_id": str(aid)}, post_id=post["id"], priority=30, max_attempts=2,
+                       lease_seconds=900)
+            added += 1
+    return added

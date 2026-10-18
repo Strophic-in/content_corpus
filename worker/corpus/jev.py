@@ -16,6 +16,7 @@ Calls are made in parallel; each stage's tokens are recorded as one cost row.
 
 from __future__ import annotations
 
+import base64
 import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -49,13 +50,20 @@ class Jev:
         self.name = MODEL           # the version asked for
         self._lock = threading.Lock()
 
-    def ask(self, state, questions: dict) -> dict:
-        """One request: every question answered against the same state."""
+    def ask(self, state, questions: dict, images: dict[str, bytes] | None = None) -> dict:
+        """One request: every question answered against the same state. `images`:
+        {reference: JPEG bytes}, each reference written in the state where the
+        picture belongs (Jev's image input, still marked preview by TypeSafe)."""
+        body = {"model": self.name, "state": state, "questions": questions}
+        headers = {"Authorization": f"Bearer {self.key}"}
+        if images:
+            body["assets"] = {ref: {"type": "image", "format": "jpg", "data_base64": base64.b64encode(data).decode()}
+                              for ref, data in images.items()}
+            headers["TypeSafe-Danger-Zone-Images"] = "true"
         last: Exception | None = None
         for attempt in range(3):
             try:
-                r = self.client.post(API, json={"model": self.name, "state": state, "questions": questions},
-                                     headers={"Authorization": f"Bearer {self.key}"})
+                r = self.client.post(API, json={**body, "model": self.name}, headers=headers)
             except httpx.HTTPError as e:
                 last = e
                 continue

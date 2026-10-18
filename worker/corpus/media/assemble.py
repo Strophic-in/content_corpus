@@ -301,7 +301,7 @@ def _hex(c: str) -> str:
 def build_segment(clip: Path, out_video: Path, out_audio: Path, *, narration: Path | None = None,
                   words: Words | None = None, style: CaptionStyle = CaptionStyle(),
                   label: str | None = None, look=None, extras: dict | None = None,
-                  panel: Path | None = None, panel_credit: str | None = None) -> dict:
+                  panel: Path | None = None, panel_credit: str | None = None, grade: str | None = None) -> dict:
     """One rendered shot → its finished piece of the reel.
 
     `words` are timed from the start of the shot. With `narration` the shot's own
@@ -313,7 +313,8 @@ def build_segment(clip: Path, out_video: Path, out_audio: Path, *, narration: Pa
     format's template draws: its captions mode (word groups, text beats, kinetic
     words or none), a headline, a chip or rank number, and a split screen — the
     picture's middle in the top half, the format's panel colour or `panel` (a
-    second picture) in the bottom half."""
+    second picture) in the bottom half. `grade` (a video look's ffmpeg filters:
+    black and white, film grain…) colours the picture before any text is drawn."""
     from . import overlays
 
     ex = extras or {}
@@ -339,6 +340,8 @@ def build_segment(clip: Path, out_video: Path, out_audio: Path, *, narration: Pa
                 add("[pan]overlay=0:960:shortest=1")
         else:
             first = "[0:v]scale=1080:-2:flags=lanczos,crop=1080:1920,setsar=1,fps=24[v0]"
+        if grade:
+            add(grade)
         mode = look.captions if look is not None else "karaoke"
         events: list[str] = []
         clean: Words = []

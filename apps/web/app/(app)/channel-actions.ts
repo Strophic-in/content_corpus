@@ -39,6 +39,7 @@ const ChannelInput = z.object({
   default_publish_time: z.string().regex(/^\d{2}:\d{2}(:\d{2})?$/, "Pick a time."),
   ideas_daily_at: z.string().regex(/^\d{2}:\d{2}(:\d{2})?$/, "Pick a time."),
   ideas_daily: z.string().optional().transform((v) => v === "on"),
+  video_look: z.string().regex(/^[a-z0-9_]{3,40}$/, "Pick a video look.").default("auto"),
 });
 
 export async function createChannel(_: ActionState, form: FormData): Promise<ActionState> {
@@ -51,10 +52,10 @@ export async function createChannel(_: ActionState, form: FormData): Promise<Act
     id = await asUser(user.id, async (db) => {
       const r = await db.query(
         `insert into channels (user_id, name, niche, audience, voice, language, timezone, default_publish_time,
-                               ideas_daily, ideas_daily_at)
+                               ideas_daily, ideas_daily_at, video_look)
          values ($1, $2, $3, $4, $5, $6, $7, $8::time, $9, $10::time) returning id`,
         [user.id, v.name, v.niche, v.audience, v.voice, v.language, v.timezone, v.default_publish_time,
-         v.ideas_daily, v.ideas_daily_at],
+         v.ideas_daily, v.ideas_daily_at, v.video_look],
       );
       await starterFormats(db, user.id, r.rows[0].id);
       return r.rows[0].id as string;
@@ -74,10 +75,11 @@ export async function updateChannel(channelId: string, _: ActionState, form: For
   try {
     await asUser(user.id, (db) => db.query(
       `update channels set name = $2, niche = $3, audience = $4, voice = $5, language = $6, timezone = $7,
-              default_publish_time = $8::time, ideas_daily = $9, ideas_daily_at = $10::time, updated_at = now()
+              default_publish_time = $8::time, ideas_daily = $9, ideas_daily_at = $10::time, video_look = $11,
+              updated_at = now()
         where id = $1`,
       [channelId, v.name, v.niche, v.audience, v.voice, v.language, v.timezone, v.default_publish_time,
-       v.ideas_daily, v.ideas_daily_at]));
+       v.ideas_daily, v.ideas_daily_at, v.video_look]));
   } catch (err) {
     return { ok: false, error: friendly(err) };
   }

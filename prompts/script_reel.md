@@ -24,7 +24,7 @@ write for that model, not for a human crew.
   palette or mood in one short sentence, appended to every shot so they match. Use
   "" if the channel look is enough.
 - `shots`: {shot_count_hint}. Each shot:
-  - `seconds`: an integer from 3 to 12. The shots together should total about
+  - `seconds`: an integer from 3 to 8. The shots together should total about
     {target_seconds} seconds.
   - `visual`: one continuous take, described in the order it happens: who is in
     frame (describe them fully again in every shot — the model has no memory between

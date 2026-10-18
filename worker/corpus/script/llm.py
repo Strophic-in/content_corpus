@@ -14,8 +14,10 @@ from typing import Protocol
 from pydantic import BaseModel
 
 # LTX-2.5 renders one continuous shot per generation; ~20 s is the documented
-# ceiling and quality is best well under it.
-MIN_SHOT_SECONDS, MAX_SHOT_SECONDS = 3, 12
+# ceiling and quality is best well under it. 8 s (193 frames) is the most a 32 GB
+# RTX 5090 renders at our size: longer shots needed the PRO 6000 at a higher rate
+# (owner's choice, 2026-10-18 — a longer thought becomes two shots).
+MIN_SHOT_SECONDS, MAX_SHOT_SECONDS = 3, 8
 # Spoken pace that fits a shot without rushing: ~2.5 words per second for
 # on-screen characters.
 MAX_WORDS_PER_SECOND = 2.8

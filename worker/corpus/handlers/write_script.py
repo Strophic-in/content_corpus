@@ -6,6 +6,9 @@ it; script/footage.py tells the writer what it may show. It also waits for the
 story's research (research_post: the sources read in full) and writes from it.
 The script picks a background-music mood when a Freesound key is set.
 
+The post's video look (looks.py) is chosen here, once: the channel's, or on auto
+Jev's pick for this story; its words are the look of every generated shot.
+
 The post's format is one of the templates (templates.py): its prompt (or the
 template's own when the owner hasn't written one), the template's guide to its
 structure and on-screen fields, and its checks (script/structure.py). A carousel
@@ -25,7 +28,7 @@ import hashlib
 
 from psycopg.types.json import Jsonb
 
-from .. import channels, costs, db, prompts, templates, vault
+from .. import channels, costs, db, jev, looks, prompts, templates, vault
 from ..config import settings
 from ..runner import Defer, Handler, JobContext, Permanent, Retryable
 from ..script import carousel as carousel_
@@ -53,7 +56,8 @@ def template_of(fmt: dict | None, audio_source: str) -> templates.Template:
 
 
 def _system_prompt(st: dict, target_seconds: int, revision_note: str, audio_source: str,
-                   speed: float = 1.1, fmt: dict | None = None, slide_hint: str = "") -> str:
+                   speed: float = 1.1, fmt: dict | None = None, slide_hint: str = "",
+                   look_text: str | None = None) -> str:
     """The script writer's instructions: the post's format's prompt (prompt library) —
     or its template's shipped prompt while the owner hasn't written one — or the
     shipped default for posts made before formats existed."""
@@ -63,7 +67,7 @@ def _system_prompt(st: dict, target_seconds: int, revision_note: str, audio_sour
         template = prompts.read(template_of(fmt, audio_source).base_prompt)
     else:
         template = prompts.default(f"script:{audio_source}")
-    look = fmt["visual_style"] if fmt else prompts.default("visual_style")
+    look = look_text or (fmt["visual_style"] if fmt else prompts.default("visual_style"))
     shots = max(1, round(target_seconds / 8))
     cap = narration_word_cap(speed)
     return prompts.fill(template, {
@@ -154,8 +158,9 @@ def run(ctx: JobContext) -> dict:
     # Platform-native music is added by the owner in the app; none is none.
     music = (bool(vault.secret(post["user_id"], "freesound_api_key"))
              and look.music_source_mode == "licensed_asset")
+    look_text, judge = _video_look(post, t, category)
     if as_slides:
-        system = (_system_prompt(st, target, revision, "none", speed, fmt, carousel_.count_hint(look))
+        system = (_system_prompt(st, target, revision, "none", speed, fmt, carousel_.count_hint(look), look_text)
                   + footage_.picture_section(footage) + _ai_pictures_note(look.ai_images) + "\n\n" + t.guide
                   + _music_section(music))
         writer = CAROUSEL_FACTORY(key)
@@ -166,7 +171,7 @@ def run(ctx: JobContext) -> dict:
         def check(o):
             return carousel_.problems(o, t, look, footage)
     else:
-        system = (_system_prompt(st, target, revision, post["audio_source"], speed, fmt)
+        system = (_system_prompt(st, target, revision, post["audio_source"], speed, fmt, look_text=look_text)
                   + footage_.prompt_section(footage, narrated)
                   + (structure.writer_section(t, look, post["audio_source"]) if fmt else "")
                   + _music_section(music))
@@ -186,6 +191,8 @@ def run(ctx: JobContext) -> dict:
 
     billed = dict(user_id=post["user_id"], post_id=post_id, channel_id=post.get("channel_id"),
                   category_id=post.get("category_id"), job_id=ctx.job.get("id"))
+    if judge is not None:
+        judge.record("Jev: video look", **billed)
 
     def call(prompt: str):
         try:
@@ -274,6 +281,25 @@ def sources_note(research: dict | None) -> str:
     parts = [f"### {a['site']} — {a.get('title') or a['url']}\n{a['text'][:per]}" for a in articles]
     return ("\n\n## What the sources report (the only facts you may use; attribute claims to them)\n"
             + "\n\n".join(parts))
+
+
+def _video_look(post: dict, t, category: dict | None):
+    """(the look's words for generated shots, or None for the format's own; the Jev
+    client if one decided). Chosen once per post and stored on it."""
+    look_id, judge = post.get("look_id"), None
+    if not look_id:
+        with db.conn() as c:
+            ch = (c.execute("select video_look from channels where id = %s", (post["channel_id"],)).fetchone()
+                  if post.get("channel_id") else None) or {}
+        setting = ch.get("video_look") or "auto"
+        judge = jev.for_user(post["user_id"]) if setting == "auto" else None
+        look_id, why = looks.choose(judge, setting, story=f"{post['topic']}. {post.get('brief') or ''}",
+                                    category=f"{(category or {}).get('name', '')}: {(category or {}).get('brief', '')}",
+                                    template=t)
+        with db.conn() as c:
+            c.execute("update posts set look_id = %s, look_why = %s where id = %s", (look_id, why, post["id"]))
+    vl = looks.get(look_id)
+    return (vl.prompt if vl else None), judge
 
 
 def _ai_pictures_note(mode: str) -> str:

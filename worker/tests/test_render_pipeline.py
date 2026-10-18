@@ -429,7 +429,23 @@ def test_assemble_builds_segments_the_cache_lost(s3, owner, user, gpu, segment_c
                          (sid,)).fetchone()["n"] == 3                  # timings measured and kept
 
 
-def test_two_gpus_share_the_shots(s3, owner, user, gpu):
+@pytest.fixture
+def helpers_from_two(monkeypatch):
+    """These scripts have 3 generated shots; in production a helper GPU joins from
+    HELPER_MIN_SHOTS (4). The helper mechanics are tested from 2."""
+    monkeypatch.setattr(render_post, "HELPER_MIN_SHOTS", 2)
+
+
+def test_a_small_reel_uses_one_gpu(s3, owner, user, gpu):
+    gpu.cached = [(32, 32), (96, 96)]
+    pid, sid = approved_narrated_post(owner, user)
+    cpu_all().tick()
+    as_user(owner, user, "select api.request_render(%s)", (pid,))
+    assert gpu_lane().tick()
+    assert set(gpu.by_pod) == {32} and sorted(gpu.rendered) == [0, 1, 2]   # the cheaper card, alone
+
+
+def test_two_gpus_share_the_shots(s3, owner, user, gpu, helpers_from_two):
     gpu.cached = [(32, 32), (96, 96)]                                  # a 5090 and a PRO 6000, both paused
     gpu.slow = {96: 0.4, 32: 0.4}
     pid, sid = approved_narrated_post(owner, user)
@@ -448,8 +464,8 @@ def test_two_gpus_share_the_shots(s3, owner, user, gpu):
     assert all(b["inr_paise"] is not None for b in bills)
 
 
-def test_a_busy_or_unready_helper_is_skipped(s3, owner, user, gpu):
-    gpu.cached = [(96, 96), (32, 32), (33, 32)]
+def test_a_busy_or_unready_helper_is_skipped(s3, owner, user, gpu, helpers_from_two):
+    gpu.cached = [(96, 24), (32, 32), (33, 32)]                        # 96 is tried first
     gpu.busy = {32}                                                    # Race: no GPU of this type
     gpu.no_models = {33}                                               # would need a 40 GB download
     gpu.slow = {96: 0.2}
@@ -466,8 +482,8 @@ def test_a_busy_or_unready_helper_is_skipped(s3, owner, user, gpu):
     assert owner.execute("select status from posts where id = %s", (pid,)).fetchone()["status"] == "rendered"
 
 
-def test_a_helper_without_models_is_not_woken_again(s3, owner, user, gpu):
-    gpu.cached = [(96, 96), (33, 32)]
+def test_a_helper_without_models_is_not_woken_again(s3, owner, user, gpu, helpers_from_two):
+    gpu.cached = [(96, 24), (33, 32)]
     gpu.no_models = {33}
     for _ in range(2):
         pid, sid = approved_narrated_post(owner, user)
@@ -478,7 +494,7 @@ def test_a_helper_without_models_is_not_woken_again(s3, owner, user, gpu):
     assert gpu.resumed == [96, 33, 96]                                 # second render left 33 alone
 
 
-def test_a_shot_the_smaller_gpu_cannot_render_goes_to_the_bigger_one(s3, owner, user, gpu):
+def test_a_shot_the_smaller_gpu_cannot_render_goes_to_the_bigger_one(s3, owner, user, gpu, helpers_from_two):
     gpu.cached = [(96, 96), (32, 32)]
     gpu.slow = {96: 0.3}
     gpu.fails = {32: {0, 1, 2}}                                        # out of memory on the 5090
@@ -507,8 +523,8 @@ def test_a_shot_failing_everywhere_twice_stops_the_job(s3, owner, user, gpu):
     assert sorted(gpu.rendered) == [0, 2]                              # the good shots were kept
 
 
-def test_a_helper_dying_mid_shot_hands_it_back(s3, owner, user, gpu):
-    gpu.cached = [(96, 96), (32, 32)]
+def test_a_helper_dying_mid_shot_hands_it_back(s3, owner, user, gpu, helpers_from_two):
+    gpu.cached = [(96, 24), (32, 32)]
     gpu.breaks = {32}
     gpu.slow = {96: 0.3}
     pid, sid = approved_narrated_post(owner, user)

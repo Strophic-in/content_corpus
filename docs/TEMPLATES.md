@@ -75,3 +75,28 @@ captions are timed evenly (there is no voice).
 bash db/dev/test.sh                                   # everything, on the local test database
 bash db/dev/test.sh worker/tests/test_templates.py    # the templates alone
 ```
+
+## Video looks
+
+How a post's *generated* shots look — photoreal cinematic, documentary realism,
+3D animation, editorial 3D, 2D cartoon, anime, stick figures, claymation,
+watercolour, comic book, retro 70s film, 90s VHS, black-and-white archival, war
+documentary, neon sci-fi, minimal motion graphics — lives in
+`prompts/looks/<id>.json`: the words added to every generated shot, what the video
+model should avoid, and an optional colour grade (ffmpeg filters) applied after
+rendering, to generated shots only (real footage stays as filmed).
+
+A channel's **Video look** (channel page) is *Auto* (Jev picks per post from the
+story, its category and its format; a sensitive story never gets a playful look),
+*each format's own look text*, or one look. The choice is made once per post when
+its script is written and shown on the post page. Photoreal looks label their
+generated shots "AI-generated" on screen. Code: `worker/corpus/looks.py`.
+
+## The asset finder
+
+With a Jev key, after a story's sources are read (`handlers/research_post.py`),
+`worker/corpus/finder.py` decides whether the story is a real, photographed event;
+gathers the articles' own photos (real events only) and open-licence pictures from
+Wikimedia Commons and Openverse; and lets Jev look at each — does it show this
+story, is it a usable photo, a watermark, graphic — keeping the best few as the
+post's assets, credited, before the script is written.

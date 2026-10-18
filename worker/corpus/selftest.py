@@ -72,13 +72,14 @@ def main() -> int:
             print(f"selftest FAILED: the fast join did not work here (fell back to {info['join']})")
             return 1
         # Templates: on-screen text and a split screen, blended joins, a loop seam, a slide.
-        from . import templates
+        from . import looks, templates
         from .media import slides
 
         look = templates.look("ranked_countdown")
         tseg = (d / "t.mp4", d / "t.wav")
         media.build_segment(shots[0][0], *tseg, words=media.shifted(words, media.LEAD_IN), look=look,
-                            extras={"label": "#2", "text": "A headline here", "layout": "split"})
+                            extras={"label": "#2", "text": "A headline here", "layout": "split"},
+                            grade=looks.get("black_and_white_archival").grade)     # a video look's colour grade
         blended = media.join_segments([tseg, *segments[1:3]], d / "blend.mp4", transitions=["", "whip", "fade"])
         looped = media.join_segments(segments[:2], d / "loop.mp4", transitions=["", "crossfade"], loop=True)
         slides.render({"heading": "Five things", "body": "A body line.", "visual": {"source": "none"}}, 1, 5,

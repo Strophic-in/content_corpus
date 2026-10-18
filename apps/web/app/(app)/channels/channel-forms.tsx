@@ -15,10 +15,11 @@ function Feedback({ state }: { state: ActionState }) {
 
 type ChannelData = {
   id: string; name: string; niche: string; audience: string; voice: string; language: string; timezone: string;
-  default_publish_time: string; ideas_daily: boolean; ideas_daily_at: string;
+  default_publish_time: string; ideas_daily: boolean; ideas_daily_at: string; video_look?: string;
 };
+export type LookOption = { look_id: string; name: string; best_for: string[] };
 
-export function ChannelForm({ channel }: { channel?: ChannelData }) {
+export function ChannelForm({ channel, looks = [] }: { channel?: ChannelData; looks?: LookOption[] }) {
   const action = channel ? updateChannel.bind(null, channel.id) : createChannel;
   const [state, formAction, pending] = useActionState<ActionState, FormData>(action, null);
   const c = channel;
@@ -50,6 +51,15 @@ export function ChannelForm({ channel }: { channel?: ChannelData }) {
       </label>
       <label className="flex flex-col gap-1 text-sm">New ideas every day at
         <input name="ideas_daily_at" type="time" step={60} required defaultValue={c?.ideas_daily_at ?? "08:00"} className={input} />
+      </label>
+      <label className="flex flex-col gap-1 text-sm sm:col-span-2">Video look
+        <select name="video_look" defaultValue={c?.video_look ?? "auto"} className={input}>
+          <option value="auto">Auto — Jev picks the best look for each story</option>
+          <option value="format">Each format&apos;s own look text</option>
+          {looks.map((l) => <option key={l.look_id} value={l.look_id}>{l.name} — {l.best_for.slice(0, 3).join(", ")}</option>)}
+        </select>
+        <span className="text-xs text-muted">How generated shots look: photoreal, documentary, 3D, cartoon, anime, retro,
+          black and white… Real footage always stays as filmed. Sensitive stories never get a playful look.</span>
       </label>
       <label className="flex items-center gap-2 text-sm sm:col-span-2">
         <input name="ideas_daily" type="checkbox" defaultChecked={c?.ideas_daily ?? true} className="size-4 accent-[var(--accent)]" />

@@ -1,0 +1,17 @@
+{
+  "look_id": "watercolour",
+  "name": "Watercolour",
+  "realism": "stylised",
+  "playful": false,
+  "prompt": "Animated watercolour painting: soft bleeding pigments on textured paper, gentle washes of colour, delicate ink outlines, calm slow movement.",
+  "avoid": "photograph, 3d render, harsh contrast",
+  "grade": "",
+  "best_for": [
+    "history",
+    "culture",
+    "poetry",
+    "nature",
+    "reflective stories"
+  ],
+  "never_for": []
+}

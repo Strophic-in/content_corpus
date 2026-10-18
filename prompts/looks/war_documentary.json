@@ -1,0 +1,16 @@
+{
+  "look_id": "war_documentary",
+  "name": "War documentary",
+  "realism": "photoreal",
+  "playful": false,
+  "prompt": "Gritty war-documentary footage: desaturated cold colours, overcast light, dust and smoke in the air, handheld camera, ruins and landscapes seen from a distance.",
+  "avoid": "gore, blood, bodies, cartoon, 3d render, glamour",
+  "grade": "eq=saturation=0.55:contrast=1.12,colorbalance=bs=0.04,noise=alls=8:allf=t",
+  "best_for": [
+    "conflict",
+    "military",
+    "geopolitics",
+    "disaster aftermath"
+  ],
+  "never_for": []
+}

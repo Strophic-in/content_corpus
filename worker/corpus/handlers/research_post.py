@@ -16,7 +16,7 @@ from urllib.parse import urlparse
 import httpx
 from psycopg.types.json import Jsonb
 
-from .. import db, jev, research
+from .. import db, finder, jev, research
 from ..ideas import sites
 from ..runner import Handler, JobContext
 
@@ -46,7 +46,8 @@ def _article_urls(items: list[dict]) -> list[str]:
 def run(ctx: JobContext) -> dict:
     log = lambda m: print(f"[research_post] {m}", flush=True)  # noqa: E731
     with db.conn() as c:
-        post = c.execute("select id, user_id, channel_id, category_id, topic, research_state from posts where id = %s",
+        post = c.execute("""select id, user_id, channel_id, category_id, topic, research_state, media_choice
+                              from posts where id = %s""",
                          (ctx.payload["post_id"],)).fetchone()
         idea = c.execute("select items, title from ideas where id = %s", (ctx.payload.get("idea_id"),)).fetchone()
     if not post or post["research_state"] != "pending":
@@ -83,8 +84,17 @@ def run(ctx: JobContext) -> dict:
                 sites_read.add(site)
         if skipped:
             log(f"left out {skipped} search result(s) about other stories")
+        # Real photos for the story, chosen by Jev (not when the owner asked for an AI version).
+        found = 0
+        if judge is not None and post.get("media_choice") != "ai":
+            try:
+                picked, real = finder.find(judge, client, story, articles)
+                found = finder.add_to_post(post, picked)
+                log(f"asset finder: real event {real:.0%}; added {found} picture(s)")
+            except Exception as e:  # noqa: BLE001 - the script goes ahead with what there is
+                log(f"asset finder skipped: {type(e).__name__}: {e}")
     if judge is not None:
-        judge.record("Jev: same story?", user_id=post["user_id"], post_id=post["id"],
+        judge.record("Jev: same story, real photos", user_id=post["user_id"], post_id=post["id"],
                      channel_id=post["channel_id"], category_id=post["category_id"], job_id=ctx.job.get("id"))
     good = [a for a in articles if a.ok]
     with db.conn() as c:
@@ -95,7 +105,7 @@ def run(ctx: JobContext) -> dict:
                           "read_at": datetime.now(timezone.utc).isoformat()}),
                    "ready" if good else "none", post["id"]))
     log(f"{post['topic'][:60]}: read {len(good)} of {len(articles)} pages")
-    return {"read": len(good), "tried": len(articles), "sites": sorted({a.site for a in good})}
+    return {"read": len(good), "tried": len(articles), "sites": sorted({a.site for a in good}), "pictures": found}
 
 
 def on_give_up(ctx: JobContext, err: dict) -> None:

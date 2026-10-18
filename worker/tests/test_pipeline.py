@@ -151,7 +151,7 @@ def test_invalid_draft_is_repaired_in_the_same_attempt(owner, user):
     assert post(owner, pid)["status"] == "awaiting_approval"
     assert FakeWriter.calls == 2
     fix = FakeWriter.prompts[1]                                 # the draft and what to fix, sent back
-    assert "## Your previous draft" in fix and "shot 1 is 30s; make it 3-12s" in fix
+    assert "## Your previous draft" in fix and "shot 1 is 30s; make it 3-8s" in fix
 
 
 def test_draft_still_invalid_after_repairs_is_retried(owner, user):
@@ -257,8 +257,7 @@ def _narrated(audio='Heartbeat thumps, a low whoosh.') -> ScriptOut:
     out = _script(seconds=(8, 8, 8))
     for i, sh in enumerate(out.shots):
         sh.audio = audio
-        sh.narration = (f"This is fact number {i + 1}, told to you clearly, with a short pause, "
-                        "so that every single word lands on time.")
+        sh.narration = f"This is fact number {i + 1}, told to you clearly so every word lands."
     return out
 
 
@@ -306,10 +305,13 @@ def test_narrated_shot_with_dialogue_is_repaired(owner, user):
 
 def test_narration_must_fit_one_shot_not_the_guessed_seconds(owner, user):
     """Live failure: 27 words "for 7s" was rejected, though the voice sets the length
-    and 27 words fit one shot; 35 words do not fit any shot."""
+    and they fit one shot (12 s then); now a shot is at most 8 s, so the cap is lower —
+    the full cap fits, 35 words do not fit any shot."""
+    from corpus.script.llm import narration_word_cap
+    cap = narration_word_cap(1.1)
     fits = _narrated()
-    fits.shots[1].seconds = 7
-    fits.shots[1].narration = " ".join(["word"] * 27)
+    fits.shots[1].seconds = 4
+    fits.shots[1].narration = " ".join(["word"] * cap)
     FakeWriter.outputs = [fits]
     pid = new_narrated_post(owner, user)
     as_user(owner, user, "select api.generate_script(%s)", (pid,))
@@ -323,7 +325,7 @@ def test_narration_must_fit_one_shot_not_the_guessed_seconds(owner, user):
     as_user(owner, user, "select api.generate_script(%s)", (pid,))
     runner().tick()
     assert post(owner, pid)["status"] == "awaiting_approval" and FakeWriter.calls == 3
-    assert "shot 3 narration is 35 words but at most 30 fit one shot" in FakeWriter.prompts[2]
+    assert f"shot 3 narration is 35 words but at most {cap} fit one shot" in FakeWriter.prompts[2]
 
 
 def test_prompt_states_the_word_cap(owner, user):

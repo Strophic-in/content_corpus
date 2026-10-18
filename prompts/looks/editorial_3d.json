@@ -1,0 +1,17 @@
+{
+  "look_id": "editorial_3d",
+  "name": "Editorial 3D illustration",
+  "realism": "stylised",
+  "playful": false,
+  "prompt": "Clean editorial 3D illustration: symbolic objects, maps, buildings and silhouettes rather than lifelike people; a muted newsroom palette of deep navy, slate grey and one red accent; soft studio light; slow camera moves.",
+  "avoid": "lifelike faces, gore, real logos, flags of real organisations, text",
+  "grade": "",
+  "best_for": [
+    "policy",
+    "economy",
+    "elections",
+    "courts",
+    "abstract news"
+  ],
+  "never_for": []
+}

@@ -1,0 +1,25 @@
+{
+  "look_id": "anime",
+  "name": "Anime",
+  "realism": "stylised",
+  "playful": true,
+  "prompt": "Japanese anime style: cel shading, crisp line art, vivid skies, dramatic lighting and expressive characters, cinematic anime camera moves.",
+  "avoid": "photograph, realistic, 3d render, western cartoon",
+  "grade": "",
+  "best_for": [
+    "stories",
+    "fiction",
+    "gaming",
+    "pop culture",
+    "emotional moments"
+  ],
+  "never_for": [
+    "death",
+    "violence",
+    "war",
+    "disaster",
+    "crime with victims",
+    "terror",
+    "tragedy"
+  ]
+}

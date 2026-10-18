@@ -5,6 +5,7 @@ import { ACCOUNT_COLS, type Account, CHANNEL_COLS, type Channel } from "@/lib/ch
 import { asUser } from "@/lib/db";
 import { configured } from "@/lib/oauth";
 import { requireUser } from "@/lib/session";
+import { looks } from "@/lib/looks";
 import { KIND_LABEL, template } from "@/lib/templates";
 
 import { AutoRefresh } from "../../posts/[id]/post-actions";
@@ -78,7 +79,7 @@ export default async function ChannelPage({ params, searchParams }: {
       <section className="rounded-2xl border border-border bg-surface p-5">
         <h2 className="font-medium">Profile</h2>
         <p className="mt-1 text-sm text-muted">Every idea and script for this channel is written in this voice.</p>
-        <div className="mt-4"><ChannelForm channel={channel} /></div>
+        <div className="mt-4"><ChannelForm channel={channel} looks={looks()} /></div>
       </section>
     </div>
   );

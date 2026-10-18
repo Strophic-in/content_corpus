@@ -1,0 +1,17 @@
+{
+  "look_id": "motion_graphics",
+  "name": "Minimal motion graphics",
+  "realism": "stylised",
+  "playful": false,
+  "prompt": "Clean minimal 2D motion graphics: flat shapes, soft gradients, simple icons and diagrams in motion, a calm modern palette.",
+  "avoid": "photograph, 3d render, clutter, text",
+  "grade": "",
+  "best_for": [
+    "finance",
+    "data",
+    "business",
+    "productivity",
+    "how-to"
+  ],
+  "never_for": []
+}

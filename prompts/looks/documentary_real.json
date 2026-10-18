@@ -1,0 +1,17 @@
+{
+  "look_id": "documentary_real",
+  "name": "Documentary realism",
+  "realism": "photoreal",
+  "playful": false,
+  "prompt": "Observational documentary footage: handheld camera, natural available light, muted true-to-life colours, real-world settings seen from a respectful distance.",
+  "avoid": "cartoon, anime, 3d render, cgi, glossy, staged studio look, oversaturated",
+  "grade": "eq=saturation=0.88:contrast=1.04",
+  "best_for": [
+    "news",
+    "current events",
+    "social issues",
+    "investigations",
+    "public interest"
+  ],
+  "never_for": []
+}

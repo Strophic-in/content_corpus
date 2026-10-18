@@ -5,10 +5,13 @@ ComfyUI through an SSH tunnel, and the pod never holds database or R2
 credentials. Cheapest GPU first (paused pods that already cache the models,
 then fresh pods checked for disk), and the pod is always paused afterwards.
 
-Two GPUs when they are free: after the main pod, other paused pods that already
-hold the models are resumed too, and every pod takes shots from one shared queue
-until it is empty — the same GPU-minutes in about half the time. A helper is never
-deployed fresh or made to download models; if it is busy, it is simply skipped.
+Two GPUs when they are free and the reel is big enough (HELPER_MIN_SHOTS generated
+shots): after the main pod, other paused pods that already hold the models are
+resumed too, and every pod takes shots from one shared queue until it is empty —
+the same GPU-minutes in about half the time. A helper is never deployed fresh or
+made to download models; if it is busy, it is simply skipped. The main pod is the
+cheapest cached GPU that fits the shots (a 5090 takes up to SMALL_GPU_FRAMES); only
+longer shots (scripts from before the 8 s cap) start on the biggest.
 
 Resumable shot by shot: each clip is uploaded the moment it finishes (and handed
 to the cpu lane to be captioned while the GPU renders on), so a retry renders
@@ -52,16 +55,22 @@ RACE = lambda: RaceClient(os.environ["RACE_API_KEY"])  # noqa: E731
 NO_GPU_RETRY_SECONDS = 600
 # Pods per render: the main one plus up to (MAX_PODS - 1) cached helpers.
 MAX_PODS = max(1, int(os.environ.get("CORPUS_RENDER_PODS", "2")))
+# A second GPU only pays for its start-up on reels with this many generated shots.
+HELPER_MIN_SHOTS = 4
+# The longest shot a 32 GB card renders at our size (8 s at 24 fps, LTX's 8n+1).
+SMALL_GPU_FRAMES = 193
 SEGMENT_PRIORITY = 40     # ahead of default cpu work: someone is waiting for this reel
 
 
-def _cache_pods(race) -> list[int]:
+def _cache_pods(race, big_first: bool = False) -> list[int]:
     """Paused pods we rented before: they hold verified models (no download).
-    Biggest GPU first, so it is the main pod whenever it is free."""
+    Smallest (cheapest) GPU first — or, when a shot is too long for it, biggest
+    first — so that one is the main pod whenever it is free."""
     try:
         pods = [p for p in race.pods()
                 if p.get("status") == "stopped" and str(p.get("name", "")).startswith("corpus-")]
-        return [int(p["id"]) for p in sorted(pods, key=lambda p: -int(p.get("vram") or 0))]
+        sign = -1 if big_first else 1
+        return [int(p["id"]) for p in sorted(pods, key=lambda p: sign * int(p.get("vram") or 0))]
     except Exception:  # noqa: BLE001 - discovery is an optimisation, never a blocker
         return []
 
@@ -192,7 +201,7 @@ def run(ctx: JobContext) -> dict:
     if pending:
         race = RACE()
         slices = [int(x) for x in os.environ.get("CORPUS_RACE_SLICES", "5,16,11").split(",") if x]
-        cached = _cache_pods(race)
+        cached = _cache_pods(race, big_first=max(s["num_frames"] for s in pending) > SMALL_GPU_FRAMES)
         with db.conn() as c:
             fallback = (c.execute("select gpu_rate_paise_per_hour as r from app_settings where user_id = %s",
                                   (post["user_id"],)).fetchone() or {}).get("r")
@@ -238,7 +247,7 @@ def run(ctx: JobContext) -> dict:
         # it were busy a moment ago); a fresh pod means no cached one was free at all.
         skip = _pods_without_models()
         helpers = (([pid for pid in cached[cached.index(pod.id) + 1:] if pid not in skip])[:MAX_PODS - 1]
-                   if pod.id in cached and len(pending) > 1 else [])
+                   if pod.id in cached and len(pending) >= HELPER_MIN_SHOTS else [])
         stop = threading.Event()               # a Permanent error stops every pod
         fatal: list[BaseException] = []
         errors: list[str] = []

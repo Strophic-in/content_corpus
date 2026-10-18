@@ -11,6 +11,7 @@ import { PLATFORM_NAMES, publishInfo, type PublishTarget } from "@/lib/publish";
 import { signedUrl } from "@/lib/r2";
 import { requireUser } from "@/lib/session";
 import { IN_FLIGHT, statusBadge } from "@/lib/status";
+import { lookName } from "@/lib/looks";
 import { template } from "@/lib/templates";
 
 import { PostForm } from "../post-form";
@@ -66,7 +67,12 @@ export default async function PostPage({ params }: { params: Promise<{ id: strin
             ← {post.slot_date}
           </Link>
           <h1 className="mt-1 text-2xl font-semibold tracking-tight">{post.topic}</h1>
-          {post.template_id && <p className="mt-0.5 text-xs text-muted">{t.display_name}</p>}
+          {post.template_id && (
+            <p className="mt-0.5 text-xs text-muted">
+              {t.display_name}
+              {lookName(post.look_id) && <> · look: {lookName(post.look_id)}{post.look_why ? ` (${post.look_why})` : ""}</>}
+            </p>
+          )}
           {post.brief && <p className="mt-1 max-w-3xl text-sm whitespace-pre-line text-muted">{post.brief}</p>}
         </div>
         <span className={`rounded-md px-2 py-1 text-sm font-medium ${badge.className}`}>{badge.label}</span>

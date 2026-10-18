@@ -18,6 +18,9 @@ bottom-panel picture, punch-in and timelapse — goes to shots.extras as written
 "plain" shot is the format's background colour, made on the server. A format with
 no voice (audio 'none') has no narration and asks the video model for no speech.
 Carousels and cards have no shots: their slides are made by render_slides.
+
+The post's video look (looks.py) gives every generated shot its style words and
+what to avoid; a photoreal look labels its generated shots "AI-generated" on screen.
 """
 
 from __future__ import annotations
@@ -26,7 +29,7 @@ import hashlib
 
 from psycopg.types.json import Jsonb
 
-from .. import auto, db, prompts
+from .. import auto, db, looks, prompts
 from ..config import settings
 from ..runner import Handler, JobContext, Permanent
 from ..script.llm import MAX_CLIP_SECONDS, MAX_SHOT_SECONDS, MIN_SHOT_SECONDS
@@ -132,7 +135,7 @@ def run(ctx: JobContext) -> dict:
                          (script_id,)).fetchone()["n"]
         if have:
             return {"shots": have, "reused": True}
-        post = c.execute("""select p.audio_source, p.format, f.visual_style from posts p
+        post = c.execute("""select p.audio_source, p.format, p.look_id, f.visual_style from posts p
                               left join formats f on f.id = p.format_id where p.id = %s""",
                          (s["post_id"],)).fetchone()
         slides = post["format"] in ("carousel", "image")
@@ -141,7 +144,10 @@ def run(ctx: JobContext) -> dict:
             raise Permanent("approved script has no shots", stage="input")
         narrated = post["audio_source"] == "kokoro"
         silent = post["audio_source"] == "none"     # nobody speaks: text, music and the shots' own sound
-        look = post["visual_style"] or ""
+        vlook = looks.get(post["look_id"])
+        look = vlook.prompt if vlook else (post["visual_style"] or "")
+        avoid = f", {vlook.avoid}" if vlook and vlook.avoid else ""
+        ai_label = "AI-generated" if vlook and vlook.realism == "photoreal" else None
 
         assets = {r["n"]: r for r in c.execute(
             "select id, n, kind, credit, key, rights from assets where post_id = %s", (s["post_id"],)).fetchall()}
@@ -162,7 +168,7 @@ def run(ctx: JobContext) -> dict:
             if shot.get("asset") and (guide is None or guide["kind"] != "image"):
                 raise Permanent(f"shot {idx + 1} animates footage #{shot.get('asset')}, which isn't a picture "
                                 "of this post", stage="input")
-            credit = guide["credit"] if guide else ("AI reconstruction" if reconstruction else None)
+            credit = guide["credit"] if guide else ("AI reconstruction" if reconstruction else ai_label)
             c.execute(
                 """insert into shots (post_id, script_id, idx, scene_group, chain_role, prompt,
                                       negative_prompt, seed, width, height, num_frames, fps,
@@ -170,7 +176,7 @@ def run(ctx: JobContext) -> dict:
                    values (%s, %s, %s, %s, 'anchor', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
                 (s["post_id"], script_id, idx, idx,
                  shot_prompt(shot, s["style_prompt"], narrated or silent, look),
-                 NEGATIVE_NARRATED if narrated or silent else NEGATIVE, seed_for(str(script_id), idx),
+                 (NEGATIVE_NARRATED if narrated or silent else NEGATIVE) + avoid, seed_for(str(script_id), idx),
                  WIDTH, HEIGHT, frames, FPS, (shot.get("narration") or None) if narrated else None,
                  guide["id"] if guide else None, "first_frame" if guide else None,
                  guide["key"] if guide else None, credit, Jsonb(extras(shot, assets))))

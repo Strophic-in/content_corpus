@@ -1,0 +1,24 @@
+{
+  "look_id": "claymation",
+  "name": "Claymation",
+  "realism": "stylised",
+  "playful": true,
+  "prompt": "Stop-motion claymation: handmade plasticine characters and sets, visible fingerprints and texture, warm studio lighting, slightly stepped stop-motion movement.",
+  "avoid": "photograph, realistic people, cgi gloss",
+  "grade": "",
+  "best_for": [
+    "food",
+    "family topics",
+    "quirky stories",
+    "kids"
+  ],
+  "never_for": [
+    "death",
+    "violence",
+    "war",
+    "disaster",
+    "crime with victims",
+    "terror",
+    "tragedy"
+  ]
+}

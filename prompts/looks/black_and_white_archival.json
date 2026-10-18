@@ -1,0 +1,17 @@
+{
+  "look_id": "black_and_white_archival",
+  "name": "Black & white archival",
+  "realism": "photoreal",
+  "playful": false,
+  "prompt": "Archival black-and-white newsreel footage: high contrast, grainy film, period settings, steady documentary framing.",
+  "avoid": "colour, modern, cartoon, 3d render",
+  "grade": "hue=s=0,eq=contrast=1.15,noise=alls=12:allf=t,vignette=PI/5",
+  "best_for": [
+    "history",
+    "anniversaries",
+    "historical figures",
+    "war history",
+    "the past"
+  ],
+  "never_for": []
+}

@@ -13,6 +13,7 @@ export type Channel = {
   timezone: string; default_publish_time: string; ideas_daily: boolean; ideas_daily_at: string;
   // When daily ideas are paused: "forever" (until resumed), or when they start again; null = not paused.
   ideas_paused: string | null;
+  video_look: string;     // "auto", "format" or a look id (lib/looks.ts)
   is_default: boolean;
 };
 
@@ -34,7 +35,7 @@ export const CHANNEL_COOKIE = "cc_channel";
 
 export const CHANNEL_COLS = `id, name, niche, audience, voice, language, timezone,
   to_char(default_publish_time, 'HH24:MI') as default_publish_time, ideas_daily,
-  to_char(ideas_daily_at, 'HH24:MI') as ideas_daily_at, is_default,
+  to_char(ideas_daily_at, 'HH24:MI') as ideas_daily_at, is_default, video_look,
   case when ideas_paused_until = 'infinity' then 'forever'
        when ideas_paused_until > now() then to_char(ideas_paused_until at time zone timezone, 'Dy DD Mon, HH24:MI')
   end as ideas_paused`;

@@ -1,0 +1,16 @@
+{
+  "look_id": "vhs_90s",
+  "name": "90s VHS",
+  "realism": "photoreal",
+  "playful": false,
+  "prompt": "1990s home-video look: slightly washed colours, soft detail, everyday settings filmed on a consumer camcorder.",
+  "avoid": "modern, cinematic, cartoon, 3d render",
+  "grade": "eq=saturation=1.18:contrast=0.96,noise=alls=14:allf=t,gblur=sigma=0.6",
+  "best_for": [
+    "nostalgia",
+    "internet culture",
+    "retro tech",
+    "memes"
+  ],
+  "never_for": []
+}

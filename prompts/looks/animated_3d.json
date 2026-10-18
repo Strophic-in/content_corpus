@@ -1,0 +1,19 @@
+{
+  "look_id": "animated_3d",
+  "name": "3D animation",
+  "realism": "stylised",
+  "playful": false,
+  "prompt": "Stylised 3D animation with a smooth CGI finish, simple clean shapes and uncluttered frames, soft cinematic lighting, muted realistic colours and a shallow depth of field. People are smooth grey mannequin-like figures.",
+  "avoid": "photograph, live action, lifelike human faces",
+  "grade": "",
+  "best_for": [
+    "science",
+    "how things work",
+    "the human body",
+    "engineering",
+    "explainers"
+  ],
+  "never_for": [
+    "breaking news about real people"
+  ]
+}

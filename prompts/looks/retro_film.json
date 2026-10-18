@@ -1,0 +1,17 @@
+{
+  "look_id": "retro_film",
+  "name": "Retro 70s film",
+  "realism": "photoreal",
+  "playful": false,
+  "prompt": "1970s 16 mm film footage: warm faded colours, soft focus, natural light, period settings.",
+  "avoid": "modern, digital sharpness, cartoon, 3d render",
+  "grade": "colorbalance=rs=0.08:bs=-0.06,eq=saturation=0.8:contrast=1.05,noise=alls=10:allf=t,vignette=PI/5",
+  "best_for": [
+    "history",
+    "nostalgia",
+    "music",
+    "decades",
+    "throwbacks"
+  ],
+  "never_for": []
+}

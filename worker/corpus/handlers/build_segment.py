@@ -22,7 +22,7 @@ from pathlib import Path
 
 from psycopg.types.json import Jsonb
 
-from .. import db, storage, templates
+from .. import db, looks, storage, templates
 from ..config import settings
 from ..media import assemble as media
 from ..runner import Handler, JobContext
@@ -87,10 +87,13 @@ def ensure_segment(post: dict, shot: dict, style: media.CaptionStyle, hint: str,
                     c.execute("update shots set narration_words = %s where id = %s", (Jsonb(words), shot["id"]))
         # Footage shots carry their credit already; a generated one may have a label to draw.
         label = shot.get("credit") if (shot.get("source") or "generate") == "generate" else None
+        # The video look's colour grade: generated shots only — real footage stays as filmed.
+        vlook = looks.get(post.get("look_id"))
+        grade = vlook.grade if vlook and (shot.get("source") or "generate") == "generate" else None
         key = hashlib.sha256(json.dumps(
             [media.SEGMENT_VERSION, shot["artifact_sha256"] or shot["artifact_key"], shot["narration_key"],
              words, None if voiced else hint, asdict(style), media.LEAD_IN, media.SFX_GAIN,
-             shot.get("source"), shot.get("audio_mode"), label, ex,
+             shot.get("source"), shot.get("audio_mode"), label, ex, grade,
             look.model_dump() if look is not None else None],
             sort_keys=True, default=str).encode()).hexdigest()[:16]
         video, audio = d / f"{shot['idx']}-{key}.mp4", d / f"{shot['idx']}-{key}.wav"
@@ -112,7 +115,7 @@ def ensure_segment(post: dict, shot: dict, style: media.CaptionStyle, hint: str,
             if a and a["key"] and a["rights"] == "approved" and a["state"] == "ready":
                 panel = storage.get_file(a["key"], work / "panel.jpg")
         media.build_segment(clip, work / "seg.mp4", work / "seg.wav", narration=narration, words=timed,
-                            style=style, label=label, look=look, extras=ex, panel=panel,
+                            style=style, label=label, look=look, extras=ex, panel=panel, grade=grade,
                             panel_credit=ex.get("panel_credit") if panel else None)
         # Sound first, picture last: a picture on disk means the pair is complete.
         os.replace(work / "seg.wav", audio)
