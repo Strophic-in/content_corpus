@@ -3,13 +3,15 @@ import Link from "next/link";
 import { workspace } from "@/lib/channels";
 import { asUser } from "@/lib/db";
 import { requireUser } from "@/lib/session";
-import { CATEGORIES, REGIONS, search, trending, youtubeKey, YouTubeError, type Video } from "@/lib/youtube";
+import {
+  CATEGORIES, REGIONS, search, SUBCATEGORIES, subcategory, trending, WORLDWIDE, youtubeKey, YouTubeError, type Video,
+} from "@/lib/youtube";
 
 import { MakeIdea } from "./make-idea";
 
 export const metadata = { title: "Explore YouTube · Content Corpus" };
 
-const SORTS = { views: "Most viewed", momentum: "Fastest rising", newest: "Newest" } as const;
+const SORTS = { views: "Most viewed", momentum: "Fastest rising", newest: "Newest", reach: "Most countries" } as const;
 type Sort = keyof typeof SORTS;
 
 const compact = (n: number) => new Intl.NumberFormat("en-IN", { notation: "compact", maximumFractionDigits: 1 }).format(n);
@@ -30,10 +32,17 @@ export default async function ExplorePage({ searchParams }: {
   const tab = one("tab") === "search" ? "search" : "trending";
   const region = REGIONS.some(([c]) => c === one("region")) ? one("region") : "IN";
   const category = CATEGORIES.some(([c]) => c === one("cat")) ? one("cat") : "";
+  // A sub-category is a search inside its category (charts have none).
+  const sub = tab === "trending" ? subcategory(category, one("sub")) : null;
+  const world = region === WORLDWIDE;
   const q = one("q").trim().slice(0, 100);
   const days = [1, 7, 30].includes(Number(one("days"))) ? Number(one("days")) : 7;
   const shorts = one("shorts") === "1";
-  const sort: Sort = (one("sort") as Sort) in SORTS ? (one("sort") as Sort) : (tab === "search" ? "views" : "momentum");
+  const asked = one("sort") as Sort;
+  // "Most countries" only means something for the Worldwide chart.
+  const reachable = world && tab === "trending" && !sub;
+  const sort: Sort = asked in SORTS && (asked !== "reach" || reachable) ? asked
+    : tab === "search" || sub ? "views" : reachable ? "reach" : "momentum";
 
   const { active } = await workspace(user.id);
   const destinations = await asUser(user.id, async (db) => (await db.query(
@@ -48,17 +57,23 @@ export default async function ExplorePage({ searchParams }: {
   let error: string | null = null;
   if (key && (tab === "trending" || q)) {
     try {
-      videos = tab === "trending" ? await trending(key, region, category)
-        : await search(key, q, days, region, shorts, sort === "newest" ? "date" : "viewCount");
+      const order = sort === "newest" ? "date" : "viewCount";
+      videos = sub ? await search(key, sub.q, days, region, shorts, order, category)
+        : tab === "trending" ? await trending(key, region, category)
+        : await search(key, q, days, region, shorts, order, category);
     } catch (e) {
       error = e instanceof YouTubeError ? e.message : "YouTube couldn't be reached — try again in a moment.";
     }
   }
   if (shorts) videos = videos.filter((v) => v.short);
   videos = [...videos].sort((a, b) => sort === "views" ? b.views - a.views
-    : sort === "newest" ? a.ageHours - b.ageHours : b.viewsPerHour - a.viewsPerHour);
+    : sort === "newest" ? a.ageHours - b.ageHours
+    : sort === "reach" ? (b.countries?.length ?? 0) - (a.countries?.length ?? 0) || b.viewsPerHour - a.viewsPerHour
+    : b.viewsPerHour - a.viewsPerHour);
 
-  const keep = { tab, region, cat: category, q, days: String(days), shorts: shorts ? "1" : "", sort, to: to?.id ?? "" };
+  const keep: Record<string, string> = { tab, region, cat: category, sub: sub?.id ?? "", q, days: String(days), shorts: shorts ? "1" : "", sort,
+                 to: to?.id ?? "" };
+  const subs = tab === "trending" ? SUBCATEGORIES[category] ?? [] : [];
   const href = (over: Partial<typeof keep>) =>
     `/explore?${new URLSearchParams(Object.entries({ ...keep, ...over }).filter(([, v]) => v) as [string, string][])}`;
 
@@ -81,6 +96,7 @@ export default async function ExplorePage({ searchParams }: {
 
       <form action="/explore" className="flex flex-wrap items-end gap-2 rounded-2xl border border-border bg-surface p-3">
         <input type="hidden" name="tab" value={tab} />
+        {sub && <input type="hidden" name="sub" value={sub.id} />}
         {tab === "search" && (
           <input name="q" defaultValue={q} placeholder="A topic, like “monsoon floods”" required
                  className={`${input} min-w-0 flex-1 basis-56`} />
@@ -88,17 +104,17 @@ export default async function ExplorePage({ searchParams }: {
         <select name="region" defaultValue={region} aria-label="Country" className={input}>
           {REGIONS.map(([c, n]) => <option key={c} value={c}>{n}</option>)}
         </select>
-        {tab === "trending" ? (
-          <select name="cat" defaultValue={category} aria-label="Category" className={input}>
-            {CATEGORIES.map(([c, n]) => <option key={c} value={c}>{n}</option>)}
-          </select>
-        ) : (
+        <select name="cat" defaultValue={category} aria-label="Category" className={input}>
+          {CATEGORIES.map(([c, n]) => <option key={c} value={c}>{c ? n : tab === "search" ? "Any category" : n}</option>)}
+        </select>
+        {(tab === "search" || sub) && (
           <select name="days" defaultValue={String(days)} aria-label="Uploaded within" className={input}>
             <option value="1">Last 24 hours</option><option value="7">Last 7 days</option><option value="30">Last 30 days</option>
           </select>
         )}
         <select name="sort" defaultValue={sort} aria-label="Sort" className={input}>
-          {Object.entries(SORTS).map(([k, n]) => <option key={k} value={k}>{n}</option>)}
+          {Object.entries(SORTS).filter(([k]) => k !== "reach" || reachable)
+            .map(([k, n]) => <option key={k} value={k}>{n}</option>)}
         </select>
         <label className="flex items-center gap-2 px-1 text-sm">
           <input type="checkbox" name="shorts" value="1" defaultChecked={shorts} className="size-4 accent-accent" /> Shorts only
@@ -112,9 +128,27 @@ export default async function ExplorePage({ searchParams }: {
           {tab === "search" ? "Search" : "Show"}
         </button>
       </form>
+      {subs.length > 0 && (
+        <nav aria-label="Sub-categories" className="-mt-2 flex gap-1.5 overflow-x-auto pb-1 text-sm">
+          <Link href={href({ sub: "", sort: "" })}
+                className={`shrink-0 rounded-full border px-3 py-1 ${!sub ? "border-accent bg-accent/10 text-accent" : "border-border text-muted hover:text-foreground"}`}>
+            All {CATEGORIES.find(([c]) => c === category)?.[1]}
+          </Link>
+          {subs.map((x) => (
+            <Link key={x.id} href={href({ sub: x.id, sort: "" })}
+                  className={`shrink-0 rounded-full border px-3 py-1 ${sub?.id === x.id ? "border-accent bg-accent/10 text-accent" : "border-border text-muted hover:text-foreground"}`}>
+              {x.name}
+            </Link>
+          ))}
+        </nav>
+      )}
       <p className="-mt-2 text-xs text-muted">
-        {tab === "search" ? "A search uses 101 of your 10,000 daily YouTube units" : "A chart uses 1 of your 10,000 daily YouTube units"};
+        {tab === "search" || sub
+          ? `A ${sub ? "sub-category" : "search"} uses 101 of your 10,000 daily YouTube units`
+          : world ? "Worldwide reads 12 countries' charts: 12 of your 10,000 daily YouTube units"
+          : "A chart uses 1 of your 10,000 daily YouTube units"};
         results are kept for 15 minutes.
+        {sub && " A sub-category is a search for its topic inside the category, most viewed lately first."}
       </p>
 
       {!key ? (
@@ -148,6 +182,12 @@ export default async function ExplorePage({ searchParams }: {
                 <a href={`https://www.youtube.com/watch?v=${v.id}`} target="_blank" rel="noreferrer"
                    className="line-clamp-2 font-medium hover:underline">{v.title}</a>
                 <p className="truncate text-xs text-muted">{v.channel} · {age(v.ageHours)}</p>
+                {v.countries && v.countries.length > 0 && (
+                  <p className="text-xs" title={v.countries.join(", ")}>
+                    <span className="font-medium text-ok">🔥 Trending in {v.countries.length} {v.countries.length === 1 ? "country" : "countries"}</span>
+                    <span className="text-muted"> · {v.countries.slice(0, 5).join(" ")}{v.countries.length > 5 ? ` +${v.countries.length - 5}` : ""}</span>
+                  </p>
+                )}
                 <p className="flex flex-wrap gap-x-3 gap-y-1 text-xs">
                   <span><b>{compact(v.views)}</b> views</span>
                   <span className="text-accent"><b>{compact(v.viewsPerHour)}</b>/hour</span>
