@@ -243,3 +243,15 @@ def test_wikimedia_is_asked_with_an_honest_user_agent():
     assert net.user_agent("https://thumb.wikimedia.org/x.jpg") == net.UA
     assert net.user_agent("https://ichef.bbci.co.uk/x.jpg") == net.BROWSER_UA
     assert net.user_agent("https://evilwikimedia.org/x.jpg") == net.BROWSER_UA
+
+
+def test_a_before_after_post_is_known_by_its_format(owner, user):
+    from corpus.handlers import research_post
+    ch = owner.execute("insert into channels (user_id, name) values (%s, %s) returning id",
+                       (user, f"c-{uuid.uuid4().hex[:6]}")).fetchone()["id"]
+    fid = owner.execute("""insert into formats (user_id, channel_id, name, template_id, idea_prompt, script_prompt)
+                           values (%s, %s, 'Before vs Now', 'before_after_comparison', 'x', 'y') returning id""",
+                        (user, ch)).fetchone()["id"]
+    assert research_post._before_after({"format_id": fid}) is True
+    assert research_post._before_after({"format_id": None}) is False
+    assert "Limoges Town Hall" in finder._place_queries("Limoges Town Hall Spire: Before vs Now")

@@ -117,7 +117,8 @@ NEWS_WORDS = {"protest", "protests", "protesters", "arrested", "arrests", "arres
               "collapse", "collapsed", "burns", "burned", "burning", "fire", "fires", "blaze", "killed", "dead", "dies",
               "says", "after", "amid", "during", "over", "as", "in", "the", "a", "an", "of", "and", "to", "at", "on",
               "for", "with", "by", "from", "is", "are", "was", "were", "hit", "hits", "destroyed", "damaged", "flood",
-              "floods", "flooded", "storm", "quake", "earthquake", "breaking", "live", "update", "updates", "video"}
+              "floods", "flooded", "storm", "quake", "earthquake", "breaking", "live", "update", "updates", "video",
+              "before", "vs", "now", "then", "watch", "moment"}
 
 
 def _place_queries(title: str, most: int = 5) -> list[str]:
@@ -149,11 +150,14 @@ def _place_queries(title: str, most: int = 5) -> list[str]:
     return out[:most]
 
 
-def wikipedia(client: httpx.Client, title: str, per_query: int = 2) -> list[dict]:
+def wikipedia(client: httpx.Client, *titles: str, per_query: int = 2) -> list[dict]:
     """The lead pictures of the Wikipedia articles a headline's place searches find: a
-    landmark's article leads with a free photo of it as it is normally — the "before"."""
+    landmark's article leads with a free photo of it as it is normally — the "before".
+    Several titles (the post's topic and the report's headline): a report may not name
+    the place ("historic French town hall") where the topic does ("Limoges")."""
     names: list[str] = []
-    for q in _place_queries(title):
+    queries = list(dict.fromkeys(q for t in titles if t for q in _place_queries(t, most=4)))[:7]
+    for q in queries:
         r = client.get(WIKIPEDIA, params={"action": "query", "generator": "search", "gsrsearch": q,
                                           "gsrlimit": per_query, "prop": "pageimages", "piprop": "name",
                                           "format": "json"}, headers={"User-Agent": UA}, timeout=20)
@@ -212,7 +216,7 @@ def _download(client: httpx.Client, url: str) -> bytes | None:
 
 
 def find(judge: Jev, client: httpx.Client, story: str, articles: list[Article],
-         title: str = "", want_before: bool = False) -> tuple[list[dict], float]:
+         title: str = "", want_before: bool = False, topic: str = "") -> tuple[list[dict], float]:
     """(the pictures worth adding to the post, best first, with their Jev scores;
     how sure Jev is that the story is a real, filmed event). want_before: a
     before/after post — pictures of the place before the event are kept too."""
@@ -226,7 +230,7 @@ def find(judge: Jev, client: httpx.Client, story: str, articles: list[Article],
             log.warning("finder: %s: %s", src.__name__, e)
     if want_before:
         try:
-            cands = wikipedia(client, title or story.split(".")[0]) + cands
+            cands = wikipedia(client, topic, title or story.split(".")[0]) + cands
         except Exception as e:  # noqa: BLE001
             log.warning("finder: wikipedia: %s", e)
     # One copy of each picture; a news site's "branded" copy (its logo burned in) last.

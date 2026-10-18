@@ -46,7 +46,8 @@ def _article_urls(items: list[dict]) -> list[str]:
 def run(ctx: JobContext) -> dict:
     log = lambda m: print(f"[research_post] {m}", flush=True)  # noqa: E731
     with db.conn() as c:
-        post = c.execute("""select id, user_id, channel_id, category_id, topic, research_state, media_choice
+        post = c.execute("""select id, user_id, channel_id, category_id, format_id, topic, research_state,
+                                   media_choice
                               from posts where id = %s""",
                          (ctx.payload["post_id"],)).fetchone()
         idea = c.execute("select items, title from ideas where id = %s", (ctx.payload.get("idea_id"),)).fetchone()
@@ -89,7 +90,7 @@ def run(ctx: JobContext) -> dict:
         if judge is not None and post.get("media_choice") != "ai":
             try:
                 picked, real = finder.find(judge, client, story, articles, title=headline,
-                                           want_before=_before_after(post))
+                                           want_before=_before_after(post), topic=post["topic"])
                 found = finder.add_to_post(post, picked)
                 log(f"asset finder: real event {real:.0%}; added {found} picture(s)")
             except Exception as e:  # noqa: BLE001 - the script goes ahead with what there is
