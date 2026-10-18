@@ -61,9 +61,20 @@ PHOTO_QUESTIONS = {
 }
 
 
-def _query(story: str) -> str:
-    words = sorted(sig_tokens(story), key=len, reverse=True)[:5]
-    return " ".join(words)
+def _query(title: str) -> str:
+    """Search words for the picture libraries: the headline's own significant words, in
+    order, names first ("Limoges town hall spire falls" → "Limoges town hall spire")."""
+    words = [w for w in re.findall(r"[A-Za-z][A-Za-z'-]+", title) if sig_tokens(w)]
+    names = [w for w in words if w[0].isupper()]
+    picked = list(dict.fromkeys(names + words))[:4]
+    return " ".join(picked)
+
+
+def _same_picture(url: str) -> str:
+    """One key for the sizes and crops of one picture (…/976/abc-1.jpg, …/1536/abc-1.jpg)."""
+    name = url.split("?")[0].rstrip("/").rsplit("/", 1)[-1].lower()
+    name = re.sub(r"\.(webp|avif)$", "", name) if re.search(r"\.(jpe?g|png)\.(webp|avif)$", name) else name
+    return re.sub(r"[-_.]?(\d{2,4}x\d{2,4}|\d{3,4}w)(?=\.)", "", name)
 
 
 def commons(client: httpx.Client, query: str, n: int = 5) -> list[dict]:
@@ -127,21 +138,25 @@ def _download(client: httpx.Client, url: str) -> bytes | None:
     return buf.getvalue()
 
 
-def find(judge: Jev, client: httpx.Client, story: str, articles: list[Article]) -> tuple[list[dict], float]:
+def find(judge: Jev, client: httpx.Client, story: str, articles: list[Article],
+         title: str = "") -> tuple[list[dict], float]:
     """(the pictures worth adding to the post, best first, with their Jev scores;
     how sure Jev is that the story is a real, filmed event)."""
     real = yes((judge.ask({"story": story[:1500]}, REAL_EVENT)).get("real_event"))
     cands = article_photos(articles) if real >= 0.5 else []
-    q = _query(story)
+    q = _query(title or story.split(".")[0])
     for src in (commons, openverse):
         try:
             cands += src(client, q)
         except Exception as e:  # noqa: BLE001 - one library down is fine
             log.warning("finder: %s: %s", src.__name__, e)
+    # One copy of each picture; a news site's "branded" copy (its logo burned in) last.
+    cands.sort(key=lambda c: "brand" in c["url"].lower())
     seen, unique = set(), []
     for c in cands:
-        if c["url"] not in seen:
-            seen.add(c["url"])
+        key = _same_picture(c["url"])
+        if key not in seen:
+            seen.add(key)
             unique.append(c)
     unique = unique[:MAX_CANDIDATES]
     with ThreadPoolExecutor(max_workers=6) as pool:
@@ -155,8 +170,11 @@ def find(judge: Jev, client: httpx.Client, story: str, articles: list[Article]) 
         shows, usable = score(a.get("shows")), yes(a.get("usable"))
         if yes(a.get("graphic"), 1.0) >= 0.3 or yes(a.get("watermark"), 1.0) >= 0.5 or usable < 0.5:
             continue
-        # A real event wants pictures of the event; anything else, pictures of its subject.
-        if shows < (2.0 if c["origin"] == "article" else 1.6):
+        # A photo from an article about this very story is relevant by where it came from:
+        # it needs only to show its subject (Jev scored the BBC's own photos of an event
+        # 1.2-1.7 of 3, live). A library picture has to earn it: the story's place, people
+        # or things.
+        if shows < (1.1 if c["origin"] == "article" else 1.8):
             continue
         picked.append({**c, "shows": round(shows, 2), "usable": round(usable, 2)})
     picked.sort(key=lambda c: (c["origin"] == "article", c["shows"] + c["usable"]), reverse=True)

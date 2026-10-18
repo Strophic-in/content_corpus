@@ -88,7 +88,7 @@ def run(ctx: JobContext) -> dict:
         found = 0
         if judge is not None and post.get("media_choice") != "ai":
             try:
-                picked, real = finder.find(judge, client, story, articles)
+                picked, real = finder.find(judge, client, story, articles, title=headline)
                 found = finder.add_to_post(post, picked)
                 log(f"asset finder: real event {real:.0%}; added {found} picture(s)")
             except Exception as e:  # noqa: BLE001 - the script goes ahead with what there is
