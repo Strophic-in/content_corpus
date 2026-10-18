@@ -221,9 +221,9 @@ function LookFields({ t, params }: { t: TemplateInfo; params: Record<string, unk
                                 [String(s.count[0] + i), `Exactly ${s.count[0] + i}`])]} />
           )}
           <Select name="ai_images" label="AI pictures" value={p("ai_images")}
-                  options={[["", "Template default — the cover only"], ["cover", "The cover only (about ₹1.3)"],
-                            ["all", "Any slide that needs one (about ₹1.3 each)"], ["none", "Never"]]}
-                  hint="Used only where the post has no picture of its own." />
+                  options={[["", "Template default — the cover only"], ["cover", "The cover only"],
+                            ["all", "Any slide that needs one"], ["none", "Never"]]}
+                  hint="Used only where the post has no picture of its own. Each costs what your image model charges (about ₹3.5 with gpt-image-2 at medium quality)." />
         </>
       )}
       {video && (

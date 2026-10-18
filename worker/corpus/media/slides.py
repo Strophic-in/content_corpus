@@ -122,7 +122,10 @@ def plan(slide: dict, idx: int, total: int, layout: str, aspect: str, font_name:
     h = _fit("heading", heading, heavy, sizes=(86, 50), width=width, lines=4, height_=H * 0.36)
     yb = top + 20 + _block(h, heavy) + 30
     b = _fit("body", text, body, sizes=(48, 30), width=width, lines=12, height_=bottom - yb)
-    return Plan(None, False, h, (M, top + 20), b, (M, int(yb)), True)
+    # A text-only slide: the words centred in the space between the counter and the footer.
+    block = _block(h, heavy) + (30 + _block(b, body) if b else 0)
+    y0 = max(top + 20, int(top + (bottom - top - block) / 2))
+    return Plan(None, False, h, (M, y0), b, (M, int(y0 + _block(h, heavy) + 30)), True)
 
 
 # ── drawing ───────────────────────────────────────────────────────────────────

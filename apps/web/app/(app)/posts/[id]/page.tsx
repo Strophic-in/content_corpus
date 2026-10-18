@@ -529,7 +529,7 @@ async function SlidesPanel({ post }: { post: PostRow }) {
       <section className={box}>
         <h2 className="font-medium">Ready to make the slides</h2>
         <p className="text-muted">The slides for Instagram and a slideshow Short for YouTube — on the server, no GPU
-          (an AI picture, if the script asks for one, costs about ₹1.3).</p>
+          (an AI picture, if the script asks for one, costs what your image model charges — about ₹3.5 with gpt-image-2).</p>
         <RenderButton postId={post.id} retry={post.status === "failed"} label={post.status === "failed" ? "Try again" : "Make the slides"} />
       </section>
     );

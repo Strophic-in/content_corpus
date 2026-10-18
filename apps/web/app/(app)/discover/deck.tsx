@@ -449,7 +449,7 @@ export function Deck({ picker, daily, cards, looking, channel, categories, forma
                     + "whoever made it — only if you're comfortable publishing it." },
                 { id: "ai", title: "Make an AI version",
                   note: what === "picture"
-                    ? "A new picture of the same scene, drawn by OpenAI in your channel's look (about ₹1.3). The original is never shown."
+                    ? "A new picture of the same scene, drawn by OpenAI in your channel's look (about ₹3.5 with gpt-image-2). The original is never shown."
                     : "Its moments recreated on the GPU, labelled “AI reconstruction”. The original is never shown." },
               ];
               return (

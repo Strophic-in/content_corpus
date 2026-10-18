@@ -75,7 +75,7 @@ def styles(look) -> list[str]:
                 f"100,100,0,0,{border},{outline},{shadow},{align},{m},{m},{mv},1")
     return [
         st("Head", 66, white, "&H00000000", "&H96000000", 1, 6, 3, 8, 300),
-        st("Beat", 92, white, "&H5A000000", "&H00000000", 3, 26, 0, 5, 0),
+        st("Beat", 92, white, "&H00000000", "&H82000000", 1, 7, 5, 5, 0),
         st("Chip", 42, "&H00FFFFFF", accent, "&H00000000", 3, 14, 0, 7, 0),
         st("Rank", 150, accent, "&H00000000", "&H96000000", 1, 8, 4, 7, 0),
         st("Kin", KINETIC, white, "&H00000000", "&H96000000", 1, 9, 4, 5, 0),
@@ -109,7 +109,7 @@ def beat(text: str, look, seconds: float, split: bool) -> list[str]:
     if not text.strip():
         return []
     heavy = tx.heavy(look.font)
-    width = W - 2 * look.safe_margin_px - 52            # the box's padding
+    width = W - 2 * look.safe_margin_px
     got = _fitted(text, heavy, BEAT, width) or _fitted(text, heavy, {**BEAT, "min_size": 44, "max_lines": 7}, width)
     if got is None:
         return []

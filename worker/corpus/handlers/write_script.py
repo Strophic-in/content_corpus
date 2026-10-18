@@ -156,7 +156,8 @@ def run(ctx: JobContext) -> dict:
              and look.music_source_mode == "licensed_asset")
     if as_slides:
         system = (_system_prompt(st, target, revision, "none", speed, fmt, carousel_.count_hint(look))
-                  + footage_.picture_section(footage) + "\n\n" + t.guide + _music_section(music))
+                  + footage_.picture_section(footage) + _ai_pictures_note(look.ai_images) + "\n\n" + t.guide
+                  + _music_section(music))
         writer = CAROUSEL_FACTORY(key)
 
         def tidy(o):
@@ -273,6 +274,14 @@ def sources_note(research: dict | None) -> str:
     parts = [f"### {a['site']} — {a.get('title') or a['url']}\n{a['text'][:per]}" for a in articles]
     return ("\n\n## What the sources report (the only facts you may use; attribute claims to them)\n"
             + "\n\n".join(parts))
+
+
+def _ai_pictures_note(mode: str) -> str:
+    """What this format allows of AI pictures, so the writer (and its caption) never claims otherwise."""
+    return {"none": "\n\nThis format draws no AI pictures: never use \"ai_image\", and never say the visuals are "
+                    "AI-generated.",
+            "cover": "\n\nThis format draws an AI picture for the first slide only, when it has no picture of its own.",
+            "all": "\n\nThis format may draw an AI picture for any slide that has no picture of its own."}[mode]
 
 
 def _music_section(available: bool) -> str:
