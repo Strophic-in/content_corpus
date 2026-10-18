@@ -1,70 +1,26 @@
 import Link from "next/link";
 
 import { workspace } from "@/lib/channels";
-import { libraryPosts, type LibraryPost } from "@/lib/posts";
+import { overview } from "@/lib/costs";
+import { lookName } from "@/lib/looks";
+import { libraryPosts } from "@/lib/posts";
 import { requireUser } from "@/lib/session";
-import { TONE_CLASS } from "@/lib/status";
 import { COST_LABEL, KIND_LABEL, ordered, template, templateInfo } from "@/lib/templates";
 
 import { ChannelPicker } from "../nav";
 import { NewFormatForm } from "./library-forms";
+import { OverviewTable, type TableRow } from "./overview-table";
+import { chip, DOT, FILTERS, group, GROUP, STEP } from "./stage";
 
 export const metadata = { title: "Library · Content Corpus" };
 
 const AUDIO = { kokoro: "Narrated", ltx_native: "Characters speak", none: "No voice" } as const;
 
-// The Library's plain-words status: has it gone out, is it waiting to, or did it stop.
-type Group = "posted" | "scheduled" | "ready" | "review" | "making" | "failed" | "cancelled";
-const GROUP: Record<Group, { label: string; tone: keyof typeof TONE_CLASS }> = {
-  posted: { label: "Posted", tone: "good" },
-  scheduled: { label: "Scheduled", tone: "good" },
-  ready: { label: "Ready to post", tone: "busy" },
-  review: { label: "Needs review", tone: "attention" },
-  making: { label: "In progress", tone: "neutral" },
-  failed: { label: "Failed", tone: "bad" },
-  cancelled: { label: "Cancelled", tone: "neutral" },
-};
-
-function group(p: LibraryPost): Group {
-  if (p.status === "published" || p.live.length) return "posted";
-  if (p.status === "scheduled" || p.scheduled) return "scheduled";
-  if (p.status === "ready" || p.status === "rendered") return "ready";
-  if (p.status === "awaiting_approval" || p.status === "needs_review") return "review";
-  if (p.status === "failed") return "failed";
-  if (p.status === "cancelled") return "cancelled";
-  return "making";
-}
-
-// The step a post is at, named exactly: a draft has not even a script yet, and
-// "being made" for it would be wrong. (hint: what the card's empty frame says.)
-const STEP: Record<string, { label: string; hint: string }> = {
-  draft: { label: "Not started", hint: "Script not written yet" },
-  scripting: { label: "Writing script", hint: "Writing the script…" },
-  awaiting_approval: { label: "Script to review", hint: "Script written — waiting for your OK" },
-  needs_review: { label: "Needs attention", hint: "Stopped — open it to see why" },
-  approved: { label: "Not rendered yet", hint: "Script approved — not rendered yet" },
-  queued_for_render: { label: "Queued to render", hint: "Waiting for a GPU" },
-  rendering: { label: "Rendering", hint: "Rendering…" },
-  post_processing: { label: "Assembling", hint: "Putting it together…" },
-  failed: { label: "Failed", hint: "Failed — open it to see why" },
-  cancelled: { label: "Cancelled", hint: "Cancelled" },
-};
-
-function chip(p: LibraryPost, g: Group) {
-  return g === "making" || g === "review" || g === "failed" ? STEP[p.status]?.label ?? GROUP[g].label : GROUP[g].label;
-}
-
-// The filter chips: "Not posted yet" is everything still on its way out.
-const FILTERS: { id: string; label: string; has: (g: Group, status: string) => boolean }[] = [
-  { id: "all", label: "All", has: () => true },
-  { id: "posted", label: "Posted", has: (g: Group) => g === "posted" },
-  { id: "waiting", label: "Not posted yet", has: (g: Group) => ["scheduled", "ready", "review", "making"].includes(g) },
-  { id: "notstarted", label: "Not started", has: (_g, s) => s === "draft" },
-  { id: "stopped", label: "Failed or cancelled", has: (g: Group) => g === "failed" || g === "cancelled" },
-];
-
-const DOT: Record<keyof typeof TONE_CLASS, string> = {
-  neutral: "bg-white/60", busy: "bg-accent", attention: "bg-warn", good: "bg-ok", bad: "bg-danger",
+// Pipeline order, so sorting by stage reads from "not started" to "posted".
+const STAGE_ORDER = ["draft", "scripting", "awaiting_approval", "needs_review", "approved", "queued_for_render",
+  "rendering", "rendered", "post_processing", "ready", "scheduled", "published", "failed", "cancelled"];
+const SCRIPT_STATE: Record<string, string> = {
+  draft: "draft", awaiting_approval: "to review", approved: "approved", rejected: "rejected", superseded: "replaced",
 };
 
 const KIND = { reel: "Reel", longform: "Video", carousel: "Carousel", image: "Picture" } as const;
@@ -77,7 +33,8 @@ export default async function LibraryPage({ searchParams }: { searchParams: Prom
   const picker = <ChannelPicker channels={channels.map(({ id, name }) => ({ id, name }))} activeId={active.id} />;
   const tabs = (
     <div className="flex gap-1 rounded-full border border-border bg-surface p-1 text-sm">
-      {[{ href: "/library", label: "Posts", on: view !== "formats" },
+      {[{ href: "/library", label: "Posts", on: view !== "formats" && view !== "table" },
+        { href: "/library?view=table", label: "Table", on: view === "table" },
         { href: "/library?view=formats", label: "Formats", on: view === "formats" }].map((t) => (
         <Link key={t.href} href={t.href}
               className={`rounded-full px-3 py-1 ${t.on ? "bg-accent text-white" : "text-muted hover:text-foreground"}`}>
@@ -86,6 +43,38 @@ export default async function LibraryPage({ searchParams }: { searchParams: Prom
       ))}
     </div>
   );
+
+  if (view === "table") {
+    const stamp = new Intl.DateTimeFormat("sv-SE", { timeZone: active.timezone, dateStyle: "short", timeStyle: "short" });
+    const rows: TableRow[] = (await overview(user.id, active.id)).map((r) => {
+      const g = group(r);
+      return {
+        id: r.id, title: r.title, topic: r.topic, date: r.slot_date, time: r.publish_time,
+        kind: KIND[r.format as keyof typeof KIND] ?? r.format, template: r.template_id ? template(r.template_id).display_name : "",
+        stage: chip(r, g), dot: DOT[GROUP[g].tone], stageOrder: STAGE_ORDER.indexOf(r.status), error: r.error,
+        script: r.script_version != null ? `v${r.script_version} · ${SCRIPT_STATE[r.script_state ?? ""] ?? r.script_state}` : null,
+        scriptScore: r.script_score != null ? Number(r.script_score) : null, versions: r.versions,
+        shots: r.shots, shotsDone: r.shots_done, slides: r.slides, seconds: r.seconds != null ? Number(r.seconds) : null,
+        look: lookName(r.look_id),
+        cost: { writing: r.writing, pictures: r.pictures, voice: r.voice, gpu: r.gpu, idea: r.idea, total: r.total,
+                unpriced: r.unpriced },
+        gpuMinutes: r.gpu_seconds != null ? Number(r.gpu_seconds) / 60 : null,
+        live: r.live, views: r.views, likes: r.likes, comments: r.comments, updated: stamp.format(r.updated_at),
+      };
+    });
+    return (
+      <div className="flex flex-col gap-5">
+        <div className="flex flex-wrap items-start gap-3">
+          <div className="min-w-0 flex-1">
+            <h1 className="text-2xl font-semibold tracking-tight">Overview</h1>
+            <p className="mt-1 text-sm text-muted">Every post {picker} has made, one row each. Click a column to sort.</p>
+          </div>
+          {tabs}
+        </div>
+        <OverviewTable rows={rows} />
+      </div>
+    );
+  }
 
   if (view === "formats") {
     return (
