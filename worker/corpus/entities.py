@@ -103,18 +103,25 @@ def _article(client: httpx.Client, name: str) -> tuple[str, str, str] | None:
     return None
 
 
+# A country's or a region's lead picture is a map, a flag or a seal: not a picture of it.
+_NOT_A_PICTURE = re.compile(r"map|locator|location|flag|orthographic|coat[_ ]of[_ ]arms|seal[_ .]|emblem", re.I)
+
+
 def _is_logo(file: str) -> bool:
     return bool(re.search(r"logo|wordmark|emblem|\.svg$", file, re.I))
 
 
 def _claim_file(client: httpx.Client, qid: str, prop: str) -> str | None:
+    """The item's current file for `prop`: the preferred one, else the last that has no
+    end date (Meta Platforms lists Facebook's old logos too, ended, besides its own)."""
     r = client.get(WIKIDATA, params={"action": "wbgetclaims", "entity": qid, "property": prop, "format": "json"},
                    headers={"User-Agent": UA}, timeout=20)
+    current = []
     for c in (r.json().get("claims") or {}).get(prop) or []:
         v = ((c.get("mainsnak") or {}).get("datavalue") or {}).get("value")
-        if isinstance(v, str) and v:
-            return v
-    return None
+        if isinstance(v, str) and v and c.get("rank") != "deprecated" and "P582" not in (c.get("qualifiers") or {}):
+            current.append((c.get("rank") == "preferred", v))
+    return max(current, key=lambda x: x[0])[1] if current else None
 
 
 def _commons_file(client: httpx.Client, file: str, width: int) -> dict | None:
@@ -151,6 +158,8 @@ def lookup(client: httpx.Client, e: Entity) -> dict | None:
                 logo = not file
         else:
             file = _claim_file(client, qid, "P18") or lead
+            if file and _NOT_A_PICTURE.search(file):
+                return None
         if not file:
             return None
         f = _commons_file(client, file, 1200 if logo else 1600)

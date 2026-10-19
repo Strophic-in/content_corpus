@@ -275,7 +275,11 @@ def read(client: httpx.Client, url: str, *, _hop: int = 0) -> Article:
         for alt in _fuller_versions(page.url, soup, container):
             fuller = read(client, alt, _hop=1)
             if fuller.ok and len(fuller.text) >= len(text) + 200:
-                return Article(url, site, title or fuller.title, fuller.text[:MAX_TEXT])
+                # The fuller text, with the page's own photos, outlet and date (an AMP copy may lack them).
+                outlet, published = page_meta(soup)
+                return Article(url, site, title or fuller.title, fuller.text[:MAX_TEXT],
+                               images=page_images(soup, container, page.url) or fuller.images,
+                               outlet=outlet or fuller.outlet, published=published or fuller.published)
     outlet, published = page_meta(soup)
     return Article(url, site, title, text[:MAX_TEXT], ok=bool(text), images=page_images(soup, container, page.url),
                    outlet=outlet, published=published)

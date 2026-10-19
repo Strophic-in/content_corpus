@@ -154,3 +154,18 @@ def test_the_writer_is_told_what_each_asset_is_and_never_animates_a_logo():
     shot = lambda **kw: generated_shot(**{"seconds": 4, "visual": "v", "audio": "", "narration": "x", **kw})  # noqa: E731
     assert "warps its letters" in _footage_problems(1, shot(asset=1), fx, True)[0]
     assert not _footage_problems(1, shot(source="image", asset=1), fx, True)
+
+
+def test_the_current_logo_is_chosen_and_a_site_name_is_cut_from_a_headline(public_dns):
+    claims = {"claims": {"P154": [
+        {"rank": "normal", "mainsnak": {"datavalue": {"value": "Facebook 2019.svg"}}, "qualifiers": {"P582": []}},
+        {"rank": "preferred", "mainsnak": {"datavalue": {"value": "Meta Platforms Inc. logo.svg"}}},
+        {"rank": "normal", "mainsnak": {"datavalue": {"value": "Facebook 2015.svg"}}, "qualifiers": {"P582": []}}]}}
+    client = _routes({entities.WIKIDATA: httpx.Response(200, json=claims)})
+    assert entities._claim_file(client, "Q380", "P154") == "Meta Platforms Inc. logo.svg"
+    assert finder.clean_title("Meta's glasses, and its audio fix - BusinessToday", "businesstoday.in") \
+        == "Meta's glasses, and its audio fix"
+    assert finder.clean_title("Jio IPO | The Economic Times", "economictimes.com", "The Economic Times") == "Jio IPO"
+    assert finder.clean_title("Jio IPO: what it means for you", "economictimes.com", "The Economic Times") \
+        == "Jio IPO: what it means for you"
+    assert entities._NOT_A_PICTURE.search("Kenya location map.svg") and not entities._NOT_A_PICTURE.search("Nairobi.jpg")

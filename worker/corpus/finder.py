@@ -449,6 +449,17 @@ def _names(post: dict, client: httpx.Client, ents: list, have: set, log) -> int:
     return added + add_to_post(post, photos)
 
 
+def clean_title(title: str, site: str, outlet: str = "") -> str:
+    """The headline without the site's name tacked on ("… audio only fix - BusinessToday")."""
+    m = re.search(r"\s+[-|–—:]\s+([^-|–—:]{2,40})$", title)
+    if m:
+        tail = re.sub(r"[^a-z0-9]", "", m.group(1).lower())
+        names = {re.sub(r"[^a-z0-9]", "", n.lower()) for n in (outlet, site.split(".")[0], site.rsplit(".", 1)[0])}
+        if tail and any(n and (tail in n or n in tail) for n in names):
+            return title[:m.start()].strip()
+    return title.strip()
+
+
 def _headlines(post: dict, client: httpx.Client, articles: list[Article], have: set, log) -> int:
     import tempfile
 
@@ -457,15 +468,17 @@ def _headlines(post: dict, client: httpx.Client, articles: list[Article], have: 
         if ("headline", a.url) in have:
             continue
         photo = None
-        if a.images:
+        for im in a.images[:3]:          # the lead picture, else the next that downloads
             try:
-                photo = net.get(client, a.images[0]["url"], max_bytes=IMAGE_BYTES, accept=("image/",),
-                                headers={"User-Agent": net.user_agent(a.images[0]["url"])}).content
+                photo = net.get(client, im["url"], max_bytes=IMAGE_BYTES, accept=("image/",),
+                                headers={"User-Agent": net.user_agent(im["url"])}).content
+                break
             except Exception:  # noqa: BLE001 - a card without its photo still reads
                 photo = None
         outlet = a.outlet or a.site
         with tempfile.TemporaryDirectory() as tmp:
-            card = headline_card.render(Path(tmp) / "headline.jpg", headline=a.title, outlet=outlet,
+            card = headline_card.render(Path(tmp) / "headline.jpg", headline=clean_title(a.title, a.site, a.outlet),
+                                        outlet=outlet,
                                         published=a.published, photo=photo)
             if card is None:
                 continue
