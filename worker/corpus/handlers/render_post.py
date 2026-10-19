@@ -5,10 +5,14 @@ ComfyUI through an SSH tunnel, and the pod never holds database or R2
 credentials. Cheapest GPU first (paused pods that already cache the models,
 then fresh pods checked for disk), and the pod is always paused afterwards.
 
-Two GPUs when they are free and the reel is big enough (HELPER_MIN_SHOTS generated
-shots): after the main pod, other paused pods that already hold the models are
-resumed too, and every pod takes shots from one shared queue until it is empty —
-the same GPU-minutes in about half the time. A helper is never deployed fresh or
+One GPU by default (owner, 2026-10-19): a second pays its own start-up, so a reel on
+two cost ~60% more to save ~2.5 minutes. One parked RTX 5090 renders everything (8 s
+shots fit it). When the parked pod's slot is taken while it sleeps, the render waits
+for it (NO_GPU_RETRY_SECONDS) rather than renting a fresh GPU that has to download
+the models again — until it has waited WAIT_FOR_PARKED, or the post is due within
+DUE_SOON. CORPUS_RENDER_PODS=2 brings the helper back: after the main pod, other
+paused pods that already hold the models are resumed too, and every pod takes shots
+from one shared queue until it is empty. A helper is never deployed fresh or
 made to download models; if it is busy, it is simply skipped. The main pod is the
 cheapest cached GPU that fits the shots (a 5090 takes up to SMALL_GPU_FRAMES); only
 longer shots (scripts from before the 8 s cap) start on the biggest.
@@ -28,6 +32,7 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import datetime, timedelta, timezone
 import subprocess
 import tempfile
 import threading
@@ -54,7 +59,10 @@ RACE = lambda: RaceClient(os.environ["RACE_API_KEY"])  # noqa: E731
 
 NO_GPU_RETRY_SECONDS = 600
 # Pods per render: the main one plus up to (MAX_PODS - 1) cached helpers.
-MAX_PODS = max(1, int(os.environ.get("CORPUS_RENDER_PODS", "2")))
+MAX_PODS = max(1, int(os.environ.get("CORPUS_RENDER_PODS", "1")))
+# Waiting for the parked pod's slot, before renting a fresh GPU (which downloads ~60 GB).
+WAIT_FOR_PARKED = timedelta(hours=1)
+DUE_SOON = timedelta(hours=2)
 # A second GPU only pays for its start-up on reels with this many generated shots.
 HELPER_MIN_SHOTS = 4
 # The longest shot a 32 GB card renders at our size (8 s at 24 fps, LTX's 8n+1).
@@ -177,6 +185,15 @@ def _set_post(post_id, status: str, reason: str, error: dict | None = None) -> N
             db.log_event(c, post_id, old, status, f"worker:{settings().worker_id}", reason, error)
 
 
+def _waited_long_enough(ctx: JobContext, post: dict) -> bool:
+    """A fresh GPU may be rented: the render has waited WAIT_FOR_PARKED for the parked
+    one, or the post goes out within DUE_SOON."""
+    now = datetime.now(timezone.utc)
+    asked = ctx.job.get("created_at") or now
+    due = post.get("publish_at")
+    return now - asked >= WAIT_FOR_PARKED or (due is not None and due - now <= DUE_SOON)
+
+
 def run(ctx: JobContext) -> dict:
     script_id = ctx.payload["script_id"]
     log = lambda m: print(f"[render_post {script_id}] {m}", flush=True)  # noqa: E731
@@ -213,11 +230,14 @@ def run(ctx: JobContext) -> dict:
                              pod_id=pod_id, gpu=rates.gpu(pod_id) or None, seconds=seconds,
                              rate_paise_h=rates.paise_h(pod_id, slice_id), confirmed=confirmed, note=note)
 
-        pod = ACQUIRE(race, resume_ids=cached, slices=slices, name="corpus-render", log=log,
+        fresh_ok = not cached or _waited_long_enough(ctx, post)
+        pod = ACQUIRE(race, resume_ids=cached, slices=slices if fresh_ok else [], name="corpus-render", log=log,
                       on_billed=lambda pid, s, sl, note: bill(pid, s, sl, note))
         if pod is None:
-            _set_post(post["id"], "queued_for_render", "waiting for a GPU",
-                      {"stage": "no_gpu", "message": "Waiting for a free GPU — retrying every 10 minutes."})
+            message = ("Waiting for a free GPU — retrying every 10 minutes." if fresh_ok else
+                       "Waiting for your parked GPU (another customer has its slot) — retrying every 10 minutes; "
+                       "a new one is rented after an hour, or sooner if the post is due.")
+            _set_post(post["id"], "queued_for_render", "waiting for a GPU", {"stage": "no_gpu", "message": message})
             raise Retryable("no free GPU on Race", stage="no_gpu", retry_in=NO_GPU_RETRY_SECONDS)
 
         _set_post(post["id"], "rendering", "rendering started")

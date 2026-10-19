@@ -477,9 +477,11 @@ def test_assemble_builds_segments_the_cache_lost(s3, owner, user, gpu, segment_c
 
 @pytest.fixture
 def helpers_from_two(monkeypatch):
-    """These scripts have 3 generated shots; in production a helper GPU joins from
-    HELPER_MIN_SHOTS (4). The helper mechanics are tested from 2."""
+    """These scripts have 3 generated shots; with the helper switched on
+    (CORPUS_RENDER_PODS=2) a second GPU joins from HELPER_MIN_SHOTS (4). The helper
+    mechanics are tested from 2."""
     monkeypatch.setattr(render_post, "HELPER_MIN_SHOTS", 2)
+    monkeypatch.setattr(render_post, "MAX_PODS", 2)
 
 
 def test_a_small_reel_uses_one_gpu(s3, owner, user, gpu):
@@ -623,6 +625,28 @@ def test_no_free_gpu_waits_and_retries(s3, owner, user, gpu):
     p = owner.execute("select status, error from posts where id = %s", (pid,)).fetchone()
     assert p["status"] == "queued_for_render" and "Waiting for a free GPU" in p["error"]["message"]
     assert gpu.released == []                                          # nothing was rented
+
+
+def test_a_busy_parked_gpu_is_waited_for_before_a_fresh_one_is_rented(s3, owner, user, gpu):
+    gpu.cached, gpu.busy = [(32, 32)], {32}                            # the one parked 5090's slot is taken
+    pid, sid = approved_narrated_post(owner, user)
+    cpu_all().tick()
+    job = as_user(owner, user, "select * from api.request_render(%s)", (pid,))
+    owner.execute("update posts set publish_at = now() + interval '1 day' where id = %s", (pid,))
+    gpu_lane().tick()
+    assert gpu.released == [] and gpu.rendered == []                   # nothing rented: it waits
+    p = owner.execute("select status, error from posts where id = %s", (pid,)).fetchone()
+    assert p["status"] == "queued_for_render" and "Waiting for your parked GPU" in p["error"]["message"]
+    # An hour later (or with the post due soon) a fresh GPU is rented.
+    owner.execute("update jobs set created_at = now() - interval '61 minutes', not_before = now() where id = %s",
+                  (job["id"],))
+    assert gpu_lane().tick()
+    assert gpu.rendered and gpu.by_pod.keys() == {1}                   # the fresh pod
+    owner.execute("delete from jobs where post_id = %s", (pid,))
+
+
+def test_one_gpu_by_default():
+    assert render_post.MAX_PODS == 1
 
 
 def test_captions_use_script_words_not_misheard_ones():
