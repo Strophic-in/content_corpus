@@ -7,7 +7,10 @@ and Hindi well, follows directions, billed to the owner's key, about ₹1 a reel
 Free first: an English post is read by a free voice; a Hindi post by an AI voice (the
 free Hindi voices are the fallback). The owner switches voices on in Settings →
 Voices; Jev picks one of those for the story (it reads each voice's description — it
-cannot hear them). An AI voice is also told how to sound: a short direction written
+cannot hear them), told which voices the channel's last posts had, so the narrator
+varies — women's voices as often as men's (owner, 2026-10-19: nearly every reel was
+read by the same man). When Jev isn't sure, the voice the channel used least lately
+reads it, a woman's after a man's and the other way round. An AI voice is also told how to sound: a short direction written
 from the script itself (direction()), so the tone follows the content — urgent for
 breaking news, calm for science, slow and respectful for a tragedy. A free voice
 only takes the owner's speed.
@@ -71,30 +74,51 @@ def _pool(st: dict, lang: str) -> list[Voice]:
         [v for v in cat.values() if lang in v.languages][:1]
 
 
+def _rotate(pool: list[Voice], recent: list[str]) -> Voice:
+    """The voice the channel used least lately — of the other gender than its last post's
+    voice when there is one — so an unsure pick still varies."""
+    cat = catalog()
+    last = cat.get(recent[0]) if recent else None
+    other = [v for v in pool if last and v.gender != last.gender] or pool
+    age = {vid: i for i, vid in reversed(list(enumerate(recent)))}       # 0 = the last post's
+    return max(other, key=lambda v: age.get(v.id, len(recent) + 1))
+
+
 def choose(judge: Jev | None, st: dict, *, language: str | None, story: str, category: str = "",
-           template: str = "") -> tuple[str, str]:
-    """(voice id, why) for a post."""
+           template: str = "", recent: list[str] | None = None) -> tuple[str, str]:
+    """(voice id, why) for a post. `recent`: the voices of the channel's last posts,
+    newest first."""
     lang = language_code(language)
     pool = _pool(st, lang)
+    recent = [r for r in (recent or []) if r]
     fixed = catalog().get(st.get("fixed_voice") or "")
     if st.get("voice_mode") == "fixed" and fixed and lang in fixed.languages:
         return fixed.id, "your voice"
+    if len(pool) < 2:
+        return pool[0].id, "the only voice switched on"
     own = fixed or catalog().get(f"kokoro:{st.get('narrator_voice') or ''}")
-    first = own if own in pool else pool[0]
-    if judge is None or len(pool) < 2:
-        return first.id, "your voice" if first is own else "the first voice switched on"
-    q = {"voice": {"type": "choice", "instructions": "Which narrator voice suits `story` best, for this `category`?",
+    # No posts voiced yet on this channel: the owner's own voice; after that, turns.
+    fallback, why = (_rotate(pool, recent), "taking turns with the channel's other voices") if recent or own not in pool         else (own, "your voice")
+    if judge is None:
+        return fallback.id, why
+    names = [catalog()[r].name + f" ({catalog()[r].gender})" for r in recent[:6] if r in catalog()]
+    q = {"voice": {"type": "choice",
+                   "instructions": "Which narrator voice suits `story` best, for this `category`? Vary the narrator "
+                                   "across the channel's posts (`recent_voices`, newest first): prefer a voice not "
+                                   "used in the last few posts, and use women's voices as often as men's — unless "
+                                   "the story clearly calls for a particular voice.",
                    "criteria": {f"v{i}": f"{v.name}: {v.gender}, {v.accent} accent; {v.tone}. "
                                          f"Best for {', '.join(v.best_for)}." for i, v in enumerate(pool)}}}
     try:
-        a = judge.ask({"story": story[:1500], "category": category or "news", "format": template or "short video"}, q)
+        a = judge.ask({"story": story[:1500], "category": category or "news", "format": template or "short video",
+                       "recent_voices": ", ".join(names) or "none yet"}, q)
         pick = a.get("voice") or {}
         ch, conf = str(pick.get("choice") or ""), float(pick.get("confidence") or 0)
         if ch.startswith("v") and ch[1:].isdigit() and int(ch[1:]) < len(pool) and conf >= SURE:
             return pool[int(ch[1:])].id, f"Jev's pick ({round(conf * 100)}% sure)"
     except Exception as e:  # noqa: BLE001 - a voice is still needed
         log.warning("voice choice: %s", e)
-    return first.id, "your voice" if first is own else "the first voice switched on"
+    return fallback.id, why
 
 
 DIRECTION_PROMPT = """You direct a narrator for a short vertical video. Read the script and write how it should be

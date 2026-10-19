@@ -20,6 +20,7 @@ export type IdeaCard = {
   mediaPending: boolean;
   summary: string | null;      // what the video shows (vision model)
   flags: string[];             // rights and content warnings
+  cost: number | null;         // ₹ spent on it so far (finding, writing, checking its media)
   sources: { url: string; label: string; detail?: string }[];
 };
 
@@ -103,6 +104,12 @@ function CardBody({ card, active, muted, stamp }: { card: IdeaCard; active: bool
           </span>
         )}
         {card.whyNow && <span className="rounded-full bg-accent/15 px-2 py-0.5 text-accent">{card.whyNow}</span>}
+        {card.cost != null && (
+          <span className="ml-auto rounded-full border border-border px-2 py-0.5 text-muted tabular-nums"
+                title="Spent on this idea so far: its share of finding and writing the batch, and checking its media">
+            ₹{card.cost < 1 ? card.cost.toFixed(2) : card.cost.toFixed(1)}
+          </span>
+        )}
       </div>
       {card.media[0] && (
         <div data-media>

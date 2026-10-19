@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { CHANNEL_COLS, workspace, type Channel } from "@/lib/channels";
+import { currentFx } from "@/lib/costs";
 import { asUser } from "@/lib/db";
 import { requireUser } from "@/lib/session";
 import { KIND_LABEL, template } from "@/lib/templates";
@@ -23,7 +24,7 @@ function host(url: string) {
 
 type Row = {
   id: string; title: string; hook: string; brief: string; why_now: string; category_id: string | null;
-  media_state: string; created_at: Date; format_id: string | null; format_why: string;
+  media_state: string; created_at: Date; format_id: string | null; format_why: string; cost: number | null;
   media: { type: "image" | "video"; w: number; h: number; seconds?: number; credit?: string; gallery?: boolean;
            poster_key?: string }[];
   items: { url?: string; title?: string; source?: string; subreddit?: string; author?: string; platform?: string }[];
@@ -71,6 +72,7 @@ function card(r: Row, cats: Map<string, { id: string; name: string; color: strin
     category: r.category_id ? cats.get(r.category_id) ?? null : null,
     format: r.format_id ? fmts.get(r.format_id) ?? null : null, formatWhy: r.format_why ?? "",
     media, mediaPending: r.media_state === "pending", summary: v?.summary ?? null, flags, sources,
+    cost: r.cost,
   };
 }
 
@@ -88,10 +90,19 @@ export default async function ChannelDeckPage({ params }: { params: Promise<{ ch
     const categories = (await db.query(
       "select id, name, color from categories where channel_id = $1 and enabled order by created_at", [channelId],
     )).rows as { id: string; name: string; color: string }[];
+    // What each idea has cost so far: its share of the batch that wrote it (the agent's
+    // call, Jev's ranking), plus the checks on its own media (safety, what a video shows).
+    const inr = `case when c.inr_paise is not null then c.inr_paise / 100.0
+                      when c.usd_micros is not null then c.usd_micros / 1e6 * coalesce(c.fx_usd_inr, $2) end`;
     const ideas = (await db.query(
-      `select id, title, hook, brief, why_now, category_id, media_state, created_at, media, items, sources, analysis,
-              format_id, format_why
-         from ideas where channel_id = $1 and status = 'new' order by created_at desc, id`, [channelId])).rows as Row[];
+      `select i.id, i.title, i.hook, i.brief, i.why_now, i.category_id, i.media_state, i.created_at, i.media, i.items,
+              i.sources, i.analysis, i.format_id, i.format_why,
+              (coalesce((select sum(${inr}) from costs c where c.job_id = i.batch_job_id), 0)
+                 / greatest((select count(*) from ideas x where x.batch_job_id = i.batch_job_id), 1)
+               + coalesce((select sum(${inr}) from costs c join jobs j on j.id = c.job_id
+                            where j.kind = 'attach_media' and j.payload->>'idea_id' = i.id::text), 0))::float8 as cost
+         from ideas i where i.channel_id = $1 and i.status = 'new' order by i.created_at desc, i.id`,
+      [channelId, await currentFx(db)])).rows as Row[];
     const formats = (await db.query(
       "select id, name, template_id from formats where channel_id = $1 order by is_default desc, created_at",
       [channelId])).rows as { id: string; name: string; template_id: string }[];

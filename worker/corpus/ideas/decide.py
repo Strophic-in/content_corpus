@@ -98,9 +98,19 @@ def pick_format(jev: Jev, ideas: list[dict], items_of: list[list[Item]], fmts: l
         criteria[f"f{n}"] = (f"{f['name']}: {f.get('description') or t.format}. Best for {', '.join(t.best_for)}. Needs "
                              f"{', '.join(t.required_assets).replace('_', ' ')}. Cost: {t.estimated_render_cost}. "
                              + (performance.get(f["id"]) or ""))
+    # Live, 68 of 71 ideas went to the two narrated explainers (owner, 2026-10-19): the
+    # instructions say what each kind of format is for, so the story's shape decides.
     q = {"format": {"type": "choice", "criteria": criteria,
                     "instructions": "Which format makes the best short post of `idea`, given `media` and each "
-                                    "format's cost and record on this channel?"}}
+                                    "format's cost and record on this channel? Match the format to the shape of the "
+                                    "story, not to its topic - being news is not a reason to pick a news format. A "
+                                    "narrated explainer suits a story that needs explaining (a why, a how, numbers, a "
+                                    "process); a format without narration suits a story the pictures tell by "
+                                    "themselves (a moment caught on camera, an incident, a spectacle, something "
+                                    "satisfying or surprising to watch), above all when `media` has a video; a "
+                                    "before/after suits a place that changed; a list or countdown suits several "
+                                    "items; a carousel or picture card suits a quick fact to read. Prefer the "
+                                    "cheaper format when two fit equally well."}}
     # A choice among many formats leans on "it's news" (live: a town hall spire burning
     # went to the news explainer); a yes/no on the one thing a before/after needs is
     # sharper, and wins when Jev is sure.

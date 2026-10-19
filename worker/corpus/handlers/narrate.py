@@ -139,9 +139,13 @@ def _voice_for(post: dict, st: dict, shots: list) -> str:
     if post["voice_id"] in voices.catalog():
         return post["voice_id"]
     said = " ".join((sh["narration"] or "") for sh in shots)[:1200]
+    with db.conn() as c:
+        recent = [r["voice_id"] for r in c.execute(
+            """select voice_id from posts where channel_id = %s and id <> %s and voice_id is not null
+                order by updated_at desc limit 8""", (post["channel_id"], post["id"])).fetchall()]
     voice_id, why = voices.choose(
         jev.for_user(post["user_id"]), st, language=post["language"], story=f"{post['topic']}. {said}",
-        category=post["category"] or "", template=post["template_id"] or "")
+        category=post["category"] or "", template=post["template_id"] or "", recent=recent)
     with db.conn() as c:
         c.execute("update posts set voice_id = %s, voice_style = null, voice_why = %s where id = %s",
                   (voice_id, why, post["id"]))

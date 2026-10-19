@@ -93,3 +93,19 @@ def test_an_ai_voice_reads_with_a_direction_written_from_the_script(s3, owner, u
                          (pid,)).fetchone()
     assert cost["model"] == voices.TTS_MODEL and cost["usd_micros"] > 0
     owner.execute("delete from jobs where post_id = %s", (pid,))
+
+
+def test_the_narrator_varies_across_a_channels_posts():
+    # Jev is told which voices the last posts had, and asked to vary them.
+    j = VoiceJev("v1")
+    voices.choose(j, ON, language="English", story="x", recent=["kokoro:am_michael", "kokoro:am_michael"])
+    state, q = j.asked[-1]
+    assert state["recent_voices"] == "Michael (male), Michael (male)"
+    assert "women's voices as often as men's" in q["voice"]["instructions"]
+    # Unsure: the voice used least lately, a woman's after a man's and a man's after a woman's.
+    assert voices.choose(VoiceJev(sure=0.1), ON, language="English", story="x",
+                         recent=["kokoro:am_michael"])[0] == "kokoro:bf_emma"
+    assert voices.choose(VoiceJev(sure=0.1), ON, language="English", story="x",
+                         recent=["kokoro:bf_emma", "kokoro:am_michael"])[0] == "kokoro:am_michael"
+    assert voices.choose(None, ON, language="English", story="x", recent=["kokoro:bf_emma"]) \
+        == ("kokoro:am_michael", "taking turns with the channel's other voices")

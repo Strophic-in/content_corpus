@@ -33,7 +33,7 @@ export function rupees(r: Pick<CostRow, "usd_micros" | "inr_paise" | "fx_usd_inr
   return rate ? (Number(r.usd_micros) / 1e6) * rate : null;
 }
 
-async function currentFx(db: { query: (q: string, p?: unknown[]) => Promise<{ rows: Record<string, unknown>[] }> }) {
+export async function currentFx(db: { query: (q: string, p?: unknown[]) => Promise<{ rows: Record<string, unknown>[] }> }) {
   const o = (await db.query("select usd_inr_override as r from app_settings")).rows[0]?.r;
   if (o) return Number(o);
   const r = (await db.query("select usd_inr from fx_rates order by day desc limit 1")).rows[0]?.usd_inr;
