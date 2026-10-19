@@ -19,8 +19,8 @@ import { template } from "@/lib/templates";
 
 import { PostForm } from "../post-form";
 import {
-  AssetRightsButton, AutoRefresh, CancelPublishButton, DeletePostButton, GenerateButton, PublishForm, RenderButton,
-  RepackageButton,
+  AssetRightsButton, AutoRefresh, CancelPublishButton, DeletePostButton, GenerateButton, PublishForm, PublishNowButton,
+  RenderButton, RepackageButton,
   ReviewActions,
 } from "./post-actions";
 import { NextStep } from "./next-step";
@@ -241,6 +241,8 @@ function assetLabel(a: AssetRow, twin?: AssetRow): { tag: string; title: string 
   if (a.role === "headline") return { tag: "Report", title: a.outlet || a.credit };
   if (a.role === "person") return { tag: "Person", title: a.entity || a.credit };
   if (a.role === "place") return { tag: "Place", title: a.entity || a.credit };
+  if (a.role === "map") return { tag: "Map", title: a.entity || a.credit };
+  if (a.role === "flag") return { tag: "Flag", title: a.entity || a.credit };
   return { tag: a.kind === "video" ? "Video" : "Photo", title: a.credit || a.origin };
 }
 
@@ -262,7 +264,7 @@ function AssetsPanel({ postId, assets, uploads, collecting, collected }: {
             {collecting && <span aria-hidden className="size-2 animate-pulse rounded-full bg-accent" />}
           </h2>
           <p className="text-muted">{collecting
-            ? "Collecting: the logos of who the story names, a card of each report, its photos and videos. Add your own meanwhile — the script waits for all of it."
+            ? "Collecting: the logos, photos, maps and flags of who and where the story names, a card of each report, its photos and videos. Add your own meanwhile — the script waits for all of it."
             : "Real pictures and video the script uses first — free to show, and fewer shots for the GPU to make. Switch off any you don't want."}</p>
         </div>
         {uploads && !collecting && <CollectAgain postId={postId} first={!collected} />}
@@ -483,6 +485,7 @@ async function PublishPanel({ post, userId }: { post: PostRow; userId: string })
       ) : (
         <span className="flex flex-wrap items-center gap-2">
           <span>Scheduled for {when(t.job.not_before)}{t.job.privacy ? ` · ${t.job.privacy}` : ""}</span>
+          <PublishNowButton postId={post.id} platform={t.platform} />
           <CancelPublishButton postId={post.id} platform={t.platform} />
         </span>
       );

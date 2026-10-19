@@ -10,7 +10,8 @@ item: the logo (P154) of a company, organisation or product, the image (P18) of 
 person or place (lookup). The file comes from Wikimedia Commons, which also renders
 SVG logos as PNG at any width, with its licence and author for the credit.
 
-A Wikipedia search can land on the wrong article ("Paras" → a mountain), so a match
+A place also brings its flag (P41) and its locator map (P242): news happens anywhere,
+and "where" is often the first thing a viewer needs. A Wikipedia search can land on the wrong article ("Paras" → a mountain), so a match
 must carry the name's own words in its title (_same_name). A logo is drawn on a
 clean card at reel size (logo_card) — a transparent PNG would otherwise come out on
 black — and LTX can't draw a logo, so the writer shows it as a still picture.
@@ -103,8 +104,12 @@ def _article(client: httpx.Client, name: str) -> tuple[str, str, str] | None:
     return None
 
 
-# A country's or a region's lead picture is a map, a flag or a seal: not a picture of it.
-_NOT_A_PICTURE = re.compile(r"map|locator|location|flag|orthographic|coat[_ ]of[_ ]arms|seal[_ .]|emblem", re.I)
+# A country's or a region's lead picture is often a map, a flag or a seal: kept, as what it is.
+_MAP = re.compile(r"map|locator|location|orthographic|relief", re.I)
+_FLAG = re.compile(r"flag", re.I)
+_EMBLEM = re.compile(r"coat[_ ]of[_ ]arms|emblem|seal[_ .]", re.I)
+# Graphics, drawn on a card and shown still: the video model warps their lines and letters.
+GRAPHIC_ROLES = ("logo", "flag", "map")
 
 
 def _is_logo(file: str) -> bool:
@@ -133,49 +138,72 @@ def _commons_file(client: httpx.Client, file: str, width: int) -> dict | None:
         meta = info.get("extmetadata") or {}
         if not info.get("thumburl"):
             continue
-        artist = re.sub(r"<[^>]+>", "", (meta.get("Artist") or {}).get("value", "")).strip()[:60]
+        artist = re.sub(r"<[^>]+>", "", (meta.get("Artist") or {}).get("value", "")).strip()
+        artist = " ".join(artist.splitlines()[0].split()) if artist else ""
+        if len(artist) > 50 or re.search(r"description|this (map|file|image)|\.(png|jpe?g|svg)", artist, re.I):
+            artist = ""                    # a description pasted into the author field, not a name
         lic = (meta.get("LicenseShortName") or {}).get("value", "")
         return {"url": info["thumburl"], "page": info.get("descriptionurl"), "artist": artist, "license": lic}
     return None
 
 
-def lookup(client: httpx.Client, e: Entity) -> dict | None:
-    """The entity's picture as a finder candidate: {url, page, origin, credit, license,
-    role ('logo' | 'person' | 'place'), entity}; None when Wikipedia has none."""
+def _role(file: str, kind: str) -> str:
+    """What a picture file is: a map or a flag (a country's lead picture often is), an
+    emblem (as a logo), or a photo of the person or place."""
+    if _MAP.search(file):
+        return "map"
+    if _FLAG.search(file):
+        return "flag"
+    if _EMBLEM.search(file):
+        return "logo"
+    return "place" if kind in LOGO_KINDS else kind
+
+
+def _hit(client: httpx.Client, file: str, role: str, title: str, e: Entity) -> dict | None:
+    f = _commons_file(client, file, 1200 if role in GRAPHIC_ROLES else 1600)
+    if not f:
+        return None
+    what = {"logo": f"{title} logo", "flag": f"Flag of {title}", "map": f"Map of {title}"}.get(role)
+    lic = f["license"] or "see source"
+    credit = f"{what} / Wikimedia Commons" if role in ("logo", "flag") else \
+        f"{what or f['artist'] or 'Unknown'}{' — ' + f['artist'] if what and f['artist'] else ''} / Wikimedia Commons, {lic}"
+    return {"url": f["url"], "page": f["page"], "origin": "wikidata", "credit": credit[:120],
+            "license": "cc0" if re.search(r"public domain|cc0", f["license"], re.I) else "third_party",
+            "role": role, "entity": title, "central": e.central}
+
+
+def lookup(client: httpx.Client, e: Entity) -> list[dict]:
+    """The entity's pictures as finder candidates — {url, page, origin, credit, license,
+    role, entity} — first the main one: a company's logo (else a photo of it), a
+    person's photo, a place's photo; then, for a place, its flag and its locator map.
+    [] when Wikipedia has none."""
     try:
         art = _article(client, e.name)
         if not art:
-            return None
+            return []
         title, qid, lead = art
-        logo = e.kind in LOGO_KINDS
-        # Wikidata's logo (or photo); else the article's lead picture, which for a company
-        # is usually its logo in the infobox (Jio Platforms has no P154; its article
-        # leads with Reliance_Jio_Logo.svg).
-        if logo:
-            file = _claim_file(client, qid, "P154") or (lead if _is_logo(lead) else "")
-            if not file:                       # no free logo (Reliance's is non-free): a photo of it instead
-                file = lead or _claim_file(client, qid, "P18") or ""
-                logo = not file
+        files: list[tuple[str, str]] = []
+        if e.kind in LOGO_KINDS:
+            # Wikidata's logo; else the article's lead picture, which for a company is
+            # usually its logo in the infobox (Jio Platforms has no P154; its article
+            # leads with Reliance_Jio_Logo.svg); else a photo of it (Reliance's logo is non-free).
+            logo = _claim_file(client, qid, "P154") or (lead if _is_logo(lead) else "")
+            if logo:
+                files.append((logo, "logo"))
+            elif photo := lead or _claim_file(client, qid, "P18"):
+                files.append((photo, _role(photo, e.kind)))
         else:
-            file = _claim_file(client, qid, "P18") or lead
-            if file and _NOT_A_PICTURE.search(file):
-                return None
-        if not file:
-            return None
-        f = _commons_file(client, file, 1200 if logo else 1600)
+            if photo := _claim_file(client, qid, "P18") or lead:
+                files.append((photo, _role(photo, e.kind)))
+            if e.kind == "place":
+                for prop, role in (("P41", "flag"), ("P242", "map")):
+                    f = _claim_file(client, qid, prop)
+                    if f and all(f != x for x, _ in files) and all(r != role for _, r in files):
+                        files.append((f, role))
+        return [h for f, role in files if (h := _hit(client, f, role, title, e))]
     except Exception as ex:  # noqa: BLE001 - one missing picture is fine
         log.warning("entities: %s: %s", e.name, ex)
-        return None
-    if not f:
-        return None
-    if logo:
-        credit = f"{title} logo / Wikimedia Commons"
-    else:
-        credit = f"{f['artist'] or 'Unknown'} / Wikimedia Commons, {f['license'] or 'see source'}"
-    return {"url": f["url"], "page": f["page"], "origin": "wikidata", "credit": credit[:120],
-            "license": "cc0" if re.search(r"public domain|cc0", f["license"], re.I) else "third_party",
-            "role": "logo" if logo else ("place" if e.kind in LOGO_KINDS else e.kind), "entity": title,
-            "central": e.central}
+        return []
 
 
 # ── a logo on a clean card, at reel size ──────────────────────────────────────────
@@ -183,13 +211,14 @@ def lookup(client: httpx.Client, e: Entity) -> dict | None:
 W, H = 1080, 1920
 
 
-def logo_card(raw: bytes, out: Path) -> Path:
-    """The logo centred on a light card (a transparent PNG on black would vanish), with a
-    soft shadow, as a 1080x1920 JPEG."""
+def logo_card(raw: bytes, out: Path, box: tuple[float, float] = (0.72, 0.30)) -> Path:
+    """The logo (or flag, or map) centred on a light card — a transparent PNG on black
+    would vanish — with a soft glow, as a 1080x1920 JPEG. `box`: the most of the
+    card's width and height it may fill."""
     from PIL import Image, ImageDraw, ImageFilter, ImageStat
 
     logo = Image.open(io.BytesIO(raw)).convert("RGBA")
-    box_w, box_h = int(W * 0.72), int(H * 0.30)
+    box_w, box_h = int(W * box[0]), int(H * box[1])
     scale = min(box_w / logo.width, box_h / logo.height)
     logo = logo.resize((max(1, int(logo.width * scale)), max(1, int(logo.height * scale))), Image.LANCZOS)
     # Light logos (white text) need a dark card; everything else sits on near-white.

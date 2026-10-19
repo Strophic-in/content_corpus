@@ -208,9 +208,9 @@ def _footage_problems(i: int, s: Shot, footage: Footage | None, narrated: bool) 
         if not s.asset:
             return []
         a = footage.asset(s.asset) if footage else None     # animating a picture (image-to-video)
-        if a and a.get("role") in ("logo", "headline"):
+        if a and a.get("role") in ("logo", "headline", "flag", "map"):
             return [f"shot {i} animates picture #{s.asset}, a {a['role']} card: the video model warps its "
-                    "letters; show it as an \"image\" shot instead"]
+                    "letters and lines; show it as an \"image\" shot instead"]
         return [] if a and a["kind"] == "image" else [
             f"shot {i} is generated from footage #{s.asset}, which is not a picture in the footage list; "
             "animate a listed picture, or set asset 0"]

@@ -49,10 +49,10 @@ ROUTES = {
 
 def test_a_companys_logo_is_found_by_its_wikipedia_article_and_a_wrong_match_is_not(public_dns):
     client = _routes(ROUTES)
-    hit = entities.lookup(client, entities.Entity("Jio Platforms", "company", True))
+    [hit] = entities.lookup(client, entities.Entity("Jio Platforms", "company", True))
     assert hit["role"] == "logo" and hit["entity"] == "Jio Platforms" and hit["url"] == "https://upload.test/jio.png"
     assert hit["credit"] == "Jio Platforms logo / Wikimedia Commons" and hit["license"] == "cc0"
-    assert entities.lookup(client, entities.Entity("Paras Healthcare", "company", False)) is None
+    assert entities.lookup(client, entities.Entity("Paras Healthcare", "company", False)) == []
 
 
 def test_a_logo_is_drawn_on_a_card_that_keeps_it_visible(tmp_path):
@@ -82,9 +82,9 @@ def _post(owner, uid):
 
 def test_collect_adds_logo_and_report_cards_once(s3, owner, user, public_dns, monkeypatch):
     post = _post(owner, user)
-    monkeypatch.setattr(entities, "lookup", lambda client, e: {
+    monkeypatch.setattr(entities, "lookup", lambda client, e: [{
         "url": "https://upload.test/jio.png", "page": "p", "origin": "wikidata", "credit": "Jio Platforms logo",
-        "license": "cc0", "role": "logo", "entity": e.name, "central": True})
+        "license": "cc0", "role": "logo", "entity": e.name, "central": True}])
     client = _routes({"https://upload.test/jio.png": httpx.Response(200, content=_png((10, 40, 140, 255)),
                                                                      headers={"content-type": "image/png"}),
                       "https://news.test/lead.jpg": httpx.Response(200, content=_png((200, 30, 30), (900, 600), "RGB"),
@@ -168,4 +168,41 @@ def test_the_current_logo_is_chosen_and_a_site_name_is_cut_from_a_headline(publi
     assert finder.clean_title("Jio IPO | The Economic Times", "economictimes.com", "The Economic Times") == "Jio IPO"
     assert finder.clean_title("Jio IPO: what it means for you", "economictimes.com", "The Economic Times") \
         == "Jio IPO: what it means for you"
-    assert entities._NOT_A_PICTURE.search("Kenya location map.svg") and not entities._NOT_A_PICTURE.search("Nairobi.jpg")
+    assert [entities._role(f, "place") for f in ("Kenya location map.svg", "Flag of Kenya.svg", "Nairobi.jpg")]         == ["map", "flag", "place"]
+
+
+def test_a_place_brings_its_photo_its_flag_and_its_map(public_dns):
+    files = {"P18": "Nairobi skyline.jpg", "P41": "Flag of Kenya.svg", "P242": "Kenya location map.svg"}
+
+    def wikidata(req):
+        prop = req.url.params["property"]
+        return httpx.Response(200, json={"claims": {prop: [{"rank": "normal", "mainsnak": {
+            "datavalue": {"value": files[prop]}}}]}})
+
+    def commons(req):
+        name = req.url.params["titles"].removeprefix("File:")
+        return httpx.Response(200, json={"query": {"pages": {"1": {"imageinfo": [{
+            "thumburl": f"https://upload.test/{name}.png", "descriptionurl": "d",
+            "extmetadata": {"Artist": {"value": "DescriptionKenya.svg This map shows"},
+                            "LicenseShortName": {"value": "CC BY 3.0"}}}]}}}})
+    client = _routes({entities.WIKIPEDIA: httpx.Response(200, json={"query": {"pages": {"1": {
+        "title": "Kenya", "index": 1, "pageprops": {"wikibase_item": "Q114"}}}}}),
+        entities.WIKIDATA: wikidata, entities.COMMONS: commons})
+    hits = entities.lookup(client, entities.Entity("Kenya", "place", True))
+    assert [(h["role"], h["entity"]) for h in hits] == [("place", "Kenya"), ("flag", "Kenya"), ("map", "Kenya")]
+    assert hits[1]["credit"] == "Flag of Kenya / Wikimedia Commons"
+    assert hits[2]["credit"] == "Map of Kenya / Wikimedia Commons, CC BY 3.0"     # no description as the author
+
+
+def test_a_scheduled_post_can_go_out_now(owner, user):
+    post = _post(owner, user)
+    owner.execute("""select private.enqueue_job(%s, 'publish', 'publish_post', %s, '{}'::jsonb, %s,
+                                                p_not_before => now() + interval '3 hours')""",
+                  (user, f"publish:{post['id']}:youtube", post["id"]))
+    assert as_user(owner, user, "select api.publish_now(%s) as n", (post["id"],))["n"] == 1
+    due = owner.execute("select not_before <= now() as due from jobs where dedupe_key = %s",
+                        (f"publish:{post['id']}:youtube",)).fetchone()["due"]
+    assert due
+    with pytest.raises(Exception, match="nothing is scheduled"):
+        as_user(owner, user, "select api.publish_now(%s)", (post["id"],))
+    owner.execute("delete from jobs where post_id = %s", (post["id"],))

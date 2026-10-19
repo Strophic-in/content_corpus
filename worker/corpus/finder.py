@@ -55,7 +55,9 @@ BEFORE_KEEP = 2
 VIDEO_KEEP = 2
 VIDEO_PAGES = 5
 LOGO_KEEP = 3
-PEOPLE_KEEP = 2
+PEOPLE_KEEP = 3          # photos of the people and places named
+GRAPHIC_KEEP = {"logo": LOGO_KEEP, "flag": 2, "map": 2}
+CARD_BOX = {"logo": (0.72, 0.30), "flag": (0.80, 0.30), "map": (0.92, 0.55)}
 HEADLINE_CARDS = 2
 MAX_CANDIDATES = 14
 IMAGE_BYTES = 8_000_000
@@ -68,8 +70,10 @@ PHOTO_QUESTIONS = {
     "shows": {"type": "score", "instructions": "How closely does `photo` show `story`?",
               "criteria": ["Unrelated to the story", "The general topic, not this story",
                            "The place, people or things of this story", "The event of this story itself"]},
-    "usable": {"type": "noul", "instructions": "Is `photo` a clear photograph that works full screen — not a logo, "
-                                              "chart, map, screenshot, collage, poster or text graphic?"},
+    "usable": {"type": "noul", "instructions": "Does `photo` work full screen in a news video — a clear photograph, "
+                                              "or a clear map, chart or infographic about the story — rather than a "
+                                              "tiny icon, an advert, an author's headshot or a collage of unrelated "
+                                              "pictures?"},
     "watermark": {"type": "noul", "instructions": "Does `photo` carry a visible watermark or a TV channel's logo?"},
     "graphic": {"type": "noul", "instructions": "Does `photo` show gore, blood, injured or dead people, or other "
                                                "graphic content?"},
@@ -422,30 +426,34 @@ def _names(post: dict, client: httpx.Client, ents: list, have: set, log) -> int:
     """Logos and photos of the story's named companies, people and places."""
     import tempfile
 
-    added, logos, people = 0, 0, 0
+    added, kept = 0, {"logo": 0, "flag": 0, "map": 0, "photo": 0}
     photos: list[dict] = []
     for e in sorted(ents, key=lambda e: not e.central):
-        hit = entities.lookup(client, e)
-        if not hit or (hit["role"], hit["entity"]) in have:
-            continue
-        have.add((hit["role"], hit["entity"]))
-        if hit["role"] == "logo":
-            if logos >= LOGO_KEEP:
+        for hit in entities.lookup(client, e):
+            role = hit["role"]
+            if (role, hit["entity"]) in have:
                 continue
-            try:
-                raw = net.get(client, hit["url"], max_bytes=IMAGE_BYTES, accept=("image/",),
-                              headers={"User-Agent": UA}).content
-                with tempfile.TemporaryDirectory() as tmp:
-                    card = entities.logo_card(raw, Path(tmp) / "logo.jpg")
-                    add_made(post, card, origin="wikidata", credit=hit["credit"], license=hit["license"],
-                             found={"role": "logo", "entity": hit["entity"]})
-                logos += 1
-                added += 1
-            except Exception as ex:  # noqa: BLE001 - the other names still go
-                log(f"logo of {hit['entity']}: {type(ex).__name__}: {ex}")
-        elif people < PEOPLE_KEEP:
-            photos.append(hit)
-            people += 1
+            if role in entities.GRAPHIC_ROLES:
+                if kept[role] >= GRAPHIC_KEEP[role]:
+                    continue
+                try:
+                    raw = net.get(client, hit["url"], max_bytes=IMAGE_BYTES, accept=("image/",),
+                                  headers={"User-Agent": UA}).content
+                    with tempfile.TemporaryDirectory() as tmp:
+                        card = entities.logo_card(raw, Path(tmp) / f"{role}.jpg", box=CARD_BOX[role])
+                        add_made(post, card, origin="wikidata", credit=hit["credit"], license=hit["license"],
+                                 found={"role": role, "entity": hit["entity"]})
+                    kept[role] += 1
+                    added += 1
+                except Exception as ex:  # noqa: BLE001 - the other names still go
+                    log(f"{role} of {hit['entity']}: {type(ex).__name__}: {ex}")
+                    continue
+            elif kept["photo"] < PEOPLE_KEEP:
+                photos.append(hit)
+                kept["photo"] += 1
+            else:
+                continue
+            have.add((role, hit["entity"]))
     return added + add_to_post(post, photos)
 
 

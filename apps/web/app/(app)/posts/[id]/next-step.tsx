@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 
-import { approveScript, generateScript, setAutopilot, type ActionState } from "../../actions";
+import { approveScript, generateScript, publishNow, setAutopilot, type ActionState } from "../../actions";
 import { bulkPostAction } from "../../library/table-actions";
 
 // The one thing to do next on a post, as a single button — and the autopilot switch
@@ -48,7 +48,8 @@ export function NextStep({ postId, status, autopilot, scriptId, publishTime, fai
     title = "Finished"; note = on ? `Autopilot posts it at ${publishTime ?? "its time"}.` : "Choose where and when to post it below.";
     primary = on ? null : { label: "Post it", act: () => document.getElementById("publish")?.scrollIntoView({ behavior: "smooth" }) };
   } else if (status === "scheduled") {
-    title = "Scheduled"; note = publishTime ? `Goes out at ${publishTime}.` : "It goes out at its time.";
+    title = "Scheduled"; note = publishTime ? `Goes out at ${publishTime} — or post it now.` : "It goes out at its time — or post it now.";
+    primary = { label: "Post it now", act: () => run(() => publishNow(postId)) };
   } else if (status === "published") {
     title = "Posted"; note = "Its numbers come in below as they arrive.";
   }

@@ -4,9 +4,8 @@ import { useRouter } from "next/navigation";
 import { useActionState, useEffect, useState, useTransition } from "react";
 
 import {
-  cancelPublish, deletePost, generateScript, rejectScript, requestPackage, requestPublish, requestRender,
-  setAssetRights,
-  type ActionState,
+  cancelPublish, deletePost, generateScript, publishNow, rejectScript, requestPackage, requestPublish, requestRender,
+  setAssetRights, type ActionState,
 } from "../../actions";
 
 /** Allow or withdraw a piece of footage. */
@@ -219,6 +218,20 @@ export function PublishForm({ postId, platforms, youtubePrivacy, plannedLocal, t
       <p className="text-xs text-muted">Times are in {tz}. The caption is the script&apos;s title, description and hashtags.</p>
       <ErrorNote state={state} />
     </div>
+  );
+}
+
+export function PublishNowButton({ postId, platform }: { postId: string; platform?: Platform }) {
+  const [state, setState] = useState<ActionState>(null);
+  const [pending, start] = useTransition();
+  return (
+    <>
+      <button disabled={pending} onClick={() => start(async () => setState(await publishNow(postId, platform)))}
+              className="text-sm font-medium text-accent hover:underline disabled:opacity-60">
+        {pending ? "Starting…" : "Post now"}
+      </button>
+      <ErrorNote state={state} />
+    </>
   );
 }
 

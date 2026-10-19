@@ -193,6 +193,19 @@ export async function requestPublish(postId: string, input: z.input<typeof Publi
   return { ok: true };
 }
 
+/** A scheduled post goes out now, on one platform or on every one it is scheduled for. */
+export async function publishNow(postId: string, platform?: "youtube" | "instagram"): Promise<ActionState> {
+  const user = await requireUser();
+  try {
+    await asUser(user.id, (db) => db.query("select api.publish_now($1, $2)", [postId, platform ?? null]));
+  } catch (err) {
+    return { ok: false, error: friendly(err) };
+  }
+  await wakeWorker();
+  refresh();
+  return { ok: true, message: "Posting now." };
+}
+
 export async function cancelPublish(postId: string, platform: "youtube" | "instagram"): Promise<ActionState> {
   const user = await requireUser();
   try {

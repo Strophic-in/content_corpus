@@ -70,6 +70,12 @@ def _describe(a: dict, label: str | None = None) -> str:
     elif role == "headline":
         lines.append(f"   HEADLINE CARD of {a.get('outlet') or 'the report'}'s report: show it as an \"image\" shot "
                      "when the narration cites that report (\"ET Markets reports…\"), ideally early.")
+    elif role == "map":
+        lines.append(f"   MAP of {a.get('entity') or 'the place'}: show it as an \"image\" shot when the narration "
+                     "says where it happened. Never animate it.")
+    elif role == "flag":
+        lines.append(f"   FLAG of {a.get('entity') or 'the country'}: show it as an \"image\" shot when the narration "
+                     "names the country or its government. Never animate it.")
     elif role in ("person", "place") and a.get("entity"):
         lines.append(f"   Photo of {a['entity']} ({role}).")
     elif a.get("origin") in ("upload", "link"):
