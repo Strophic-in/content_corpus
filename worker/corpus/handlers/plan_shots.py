@@ -29,7 +29,7 @@ import hashlib
 
 from psycopg.types.json import Jsonb
 
-from .. import auto, db, looks, prompts
+from .. import auto, db, jev, looks, prompts, styles
 from ..config import settings
 from ..runner import Handler, JobContext, Permanent
 from ..script.llm import MAX_CLIP_SECONDS, MAX_SHOT_SECONDS, MIN_SHOT_SECONDS
@@ -190,11 +190,30 @@ def run(ctx: JobContext) -> dict:
             db.enqueue(c, user_id=user_id, lane="cpu", kind="narrate",
                        dedupe_key=f"narrate:{script_id}", payload={"script_id": str(script_id)},
                        post_id=s["post_id"], max_attempts=3, lease_seconds=600)
+    if not slides:
+        _caption_style(s)
     if not narrated:
         auto.request_render(s["post_id"])        # Automatic mode: nothing to voice, on to rendering
     if slides:
         return {"slides": True}
     return {"shots": len(plan), "seconds": round(total, 2)}
+
+
+def _caption_style(s: dict) -> None:
+    """The post's caption style (Settings → Styles: Jev picks among those switched on)."""
+    post = db.one("""select p.id, p.user_id, p.topic, p.caption_preset, k.name as category,
+                            (select f.template_id from formats f where f.id = p.format_id) as template_id,
+                            st.caption_styles_enabled
+                       from posts p left join categories k on k.id = p.category_id
+                       left join app_settings st on st.user_id = p.user_id where p.id = %s""", (s["post_id"],))
+    if not post or post["caption_preset"]:
+        return
+    said = " ".join((x.get("narration") or x.get("text") or "") for x in (s["shot_plan"] or []))[:1200]
+    preset, why = styles.choose_caption(jev.for_user(post["user_id"]), post["caption_styles_enabled"],
+                                        story=f"{post['topic']}. {said}", category=post["category"] or "",
+                                        template=post["template_id"])
+    with db.conn() as c:
+        c.execute("update posts set caption_preset = %s, caption_why = %s where id = %s", (preset, why, post["id"]))
 
 
 HANDLER = Handler(run=run)

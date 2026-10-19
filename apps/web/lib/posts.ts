@@ -37,6 +37,7 @@ export type PostRow = {
   voice_id: string | null;      // its narrator voice and style (Jev's pick, or the owner's)
   voice_style: string | null;
   voice_why: string | null;
+  caption_preset: string | null;  // its caption style (Jev's pick)
   go_ahead: boolean;            // on its way to a finished reel without stops
   autopilot: boolean;           // and posted at its time (pipeline_mode auto)
 };
@@ -91,7 +92,7 @@ export type EventRow = { id: string; from_state: string | null; to_state: string
 const POST_COLS = `id, topic, brief, audio_source, to_char(slot_date, 'YYYY-MM-DD') as slot_date,
                    to_char(publish_at at time zone publish_tz, 'HH24:MI') as publish_time, channel_id, format_id, status,
                    target_seconds, auto_approve, approved_script_id, error, final_key,
-                   final_duration_s, updated_at, research_state, music, format, slides, look_id, look_why, package, go_ahead, voice_id, voice_style, voice_why, pipeline_mode = 'auto' as autopilot,
+                   final_duration_s, updated_at, research_state, music, format, slides, look_id, look_why, package, go_ahead, voice_id, voice_style, voice_why, caption_preset, pipeline_mode = 'auto' as autopilot,
                    (package is null and status = 'ready' and updated_at > now() - interval '10 minutes') as packaging,
                    (select f.template_id from formats f where f.id = posts.format_id) as template_id`;
 

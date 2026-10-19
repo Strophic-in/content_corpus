@@ -22,7 +22,7 @@ from pathlib import Path
 
 from psycopg.types.json import Jsonb
 
-from .. import db, looks, storage, templates
+from .. import db, looks, storage, styles, templates
 from ..config import settings
 from ..media import assemble as media
 from ..runner import Handler, JobContext
@@ -50,6 +50,9 @@ def _clip_speaks(shot: dict) -> bool:
 
 
 def caption_style(c, post: dict) -> media.CaptionStyle:
+    preset = styles.caption_style(post.get("caption_preset"))
+    if preset is not None:
+        return preset
     sid = post.get("caption_style_id") or (c.execute(
         "select caption_style_id from app_settings where user_id = %s", (post["user_id"],)).fetchone() or {}).get(
         "caption_style_id")

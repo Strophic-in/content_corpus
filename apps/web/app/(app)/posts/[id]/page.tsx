@@ -12,6 +12,7 @@ import { signedUrl } from "@/lib/r2";
 import { requireUser } from "@/lib/session";
 import { IN_FLIGHT, statusBadge } from "@/lib/status";
 import { lookName } from "@/lib/looks";
+import { styleName } from "@/lib/styles";
 import { voiceLabel } from "@/lib/voices";
 import { pipeline } from "@/lib/pipeline";
 import { template } from "@/lib/templates";
@@ -85,6 +86,9 @@ export default async function PostPage({ params }: { params: Promise<{ id: strin
           {lookName(post.look_id) && <span title={post.look_why ?? undefined}>Look: {lookName(post.look_id)}</span>}
           {voiceLabel(post.voice_id, post.voice_style) &&
             <span title={post.voice_why ?? undefined}>Voice: {voiceLabel(post.voice_id, post.voice_style)}</span>}
+          {styleName("caption", post.caption_preset) && <span>Captions: {styleName("caption", post.caption_preset)}</span>}
+          {styleName("thumb", (post.package as { thumb_style?: string } | null)?.thumb_style) &&
+            <span>Cover: {styleName("thumb", (post.package as { thumb_style?: string } | null)?.thumb_style)}</span>}
           {post.final_duration_s && <span>{Math.round(Number(post.final_duration_s))} s</span>}
         </p>
       </header>

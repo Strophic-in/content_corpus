@@ -46,6 +46,16 @@ class CaptionStyle:
     words_per_group: int = 3
     active_scale: float = 1.18
     uppercase: bool = True
+    # Caption presets (prompts/caption_styles/): a box behind the words, how the word
+    # being said stands out, how it arrives, and a soft glow.
+    outline_color: str = "#000000"
+    box: bool = False                 # the line on a box (box_color, box_alpha 0 = solid … 255 = clear)
+    box_color: str = "#000000"
+    box_alpha: int = 96
+    active: str = "accent"            # accent (coloured, enlarged) | dim (the others faded) | none
+    animation: str = "none"           # none | pop (the word grows in) | fade (each line fades in)
+    blur: float = 0.0                 # \blur on the edges: a glow with a coloured outline
+    dim_alpha: int = 150              # how faded the other words are, for active "dim"
 
 
 def probe_duration(p: Path) -> float:
@@ -189,10 +199,19 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
 
 
+def _ass_rgba(hex_rgb: str, alpha: int) -> str:
+    return f"&H{max(0, min(255, alpha)):02X}{_ass_color(hex_rgb)[4:]}"
+
+
 def caption_style_line(style: CaptionStyle) -> str:
     primary = _ass_color(style.primary_color)
     margin_v = int(1920 * (1 - style.position_y))
-    return (f"Style: Cap,{style.font_family},{_ass_font_size(style):.0f},{primary},{primary},&H00000000,&H64000000,"
+    if style.box:       # BorderStyle 3: the outline colour fills a box, Outline is its padding
+        return (f"Style: Cap,{style.font_family},{_ass_font_size(style):.0f},{primary},{primary},"
+                f"{_ass_rgba(style.box_color, style.box_alpha)},&H00000000,-1,0,0,0,100,100,0,0,3,"
+                f"{max(8, style.outline_px)},0,2,60,60,{margin_v},1")
+    return (f"Style: Cap,{style.font_family},{_ass_font_size(style):.0f},{primary},{primary},"
+            f"{_ass_rgba(style.outline_color, 0)},&H64000000,"
             f"-1,0,0,0,100,100,0,0,1,{style.outline_px},{style.shadow_px},2,60,60,{margin_v},1")
 
 
@@ -200,7 +219,9 @@ def caption_events(words: Words, breaks_after: set[int], style: CaptionStyle) ->
     """The word groups as ASS events (style "Cap"), the active word enlarged and accented."""
     bs = chr(92)  # a literal backslash for ASS override tags
     primary, accent = _ass_color(style.primary_color), _ass_color(style.accent_color)
-    scale = int(round(style.active_scale * 100))
+    scale = int(round(style.active_scale * 100)) if style.active == "accent" else 100
+    dim = f"{bs}1a&H{max(0, min(255, style.dim_alpha)):02X}&"
+    glow = f"{{{bs}blur{style.blur:g}}}" if style.blur else ""
     groups, cur = [], []
     for n, w in enumerate(words):
         cur.append(w)
@@ -223,10 +244,20 @@ def caption_events(words: Words, breaks_after: set[int], style: CaptionStyle) ->
         fit = f"{{{bs}fs{int(_ass_font_size(style) * SAFE_WIDTH / widest)}}}" if widest > SAFE_WIDTH else ""
         for i, (st, en, _) in enumerate(grp):
             stop = grp[i + 1][0] if i + 1 < len(grp) else en + 0.12
-            parts = [(f"{{{bs}c{accent}&{bs}fscx{scale}{bs}fscy{scale}}}{w}{{{bs}c{primary}&{bs}fscx100{bs}fscy100}}"
-                      if j == i else w) for j, (_, _, w) in enumerate(grp)]
-            text = fit + "".join(p if j == 0 else (bs + "N" if j == split else " ") + p
-                                 for j, p in enumerate(parts))
+            if style.active == "none":
+                parts = [w for _, _, w in grp]
+            elif style.active == "dim":     # the word being said at full strength, the rest faded
+                parts = [(f"{{{bs}1a&H00&{bs}c{accent}&}}{w}{{{bs}c{primary}&{dim}}}" if j == i else w)
+                         for j, (_, _, w) in enumerate(grp)]
+                parts[0] = f"{{{dim}}}" + parts[0] if i != 0 else parts[0]
+            else:
+                grow = (f"{bs}fscx{int(scale * 0.7)}{bs}fscy{int(scale * 0.7)}{bs}t(0,110,{bs}fscx{scale}{bs}fscy{scale})"
+                        if style.animation == "pop" else f"{bs}fscx{scale}{bs}fscy{scale}")
+                parts = [(f"{{{bs}c{accent}&{grow}}}{w}{{{bs}c{primary}&{bs}fscx100{bs}fscy100}}"
+                          if j == i else w) for j, (_, _, w) in enumerate(grp)]
+            fade = f"{{{bs}fad(90,0)}}" if style.animation == "fade" and i == 0 else ""
+            text = fit + glow + fade + "".join(p if j == 0 else (bs + "N" if j == split else " ") + p
+                                               for j, p in enumerate(parts))
             states.append([st, stop, text])
     for a, b in zip(states, states[1:]):
         a[1] = min(a[1], b[0])

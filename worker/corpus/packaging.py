@@ -27,7 +27,7 @@ from urllib.parse import urlparse
 from psycopg.types.json import Jsonb
 from pydantic import BaseModel
 
-from . import costs, db, jev, storage, vault
+from . import costs, db, jev, storage, styles, vault
 from .media import thumbnail
 
 log = logging.getLogger("corpus.packaging")
@@ -86,7 +86,7 @@ def _post(post_id) -> dict | None:
                             p.research, p.package, p.approved_script_id, p.topic,
                             s.title, s.hook, s.description, s.hashtags, s.shot_plan, s.slides,
                             f.template_id, ch.name as channel, ch.niche, ch.audience,
-                            k.name as category, st.script_model
+                            k.name as category, st.script_model, st.thumb_styles_enabled
                        from posts p
                        join scripts s on s.id = p.approved_script_id
                        left join formats f on f.id = p.format_id
@@ -248,9 +248,14 @@ def _cover(post: dict, pkg: dict, work: Path) -> Path:
     if before is not None and (picture is None or not _same_place(post["user_id"], before, picture)):
         # No true "now" of the same place: the place as it was, full screen, marked so.
         picture, before, kicker = before, None, "Before the fire" if "fire" in story_words(post) else "Before"
+    style, why = styles.choose_thumb(jev.for_user(post["user_id"]), post.get("thumb_styles_enabled"),
+                                     title=pkg["title"], line=pkg["thumbnail_text"], story=_brief(post)[:1200],
+                                     template=post.get("template_id"), has_before=before is not None,
+                                     has_number=thumbnail._number(pkg["thumbnail_text"]) is not None)
+    pkg["thumb_style"], pkg["thumb_why"] = style, why
     out = work / "cover.jpg"
     return thumbnail.render(out, line=pkg["thumbnail_text"], kicker=kicker, picture=picture,
-                            before=before, brand=post.get("channel") or "")
+                            before=before, brand=post.get("channel") or "", style=style)
 
 
 def story_words(post: dict) -> str:

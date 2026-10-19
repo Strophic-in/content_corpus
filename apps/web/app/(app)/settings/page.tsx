@@ -57,6 +57,19 @@ export default async function SettingsPage() {
         <span aria-hidden className="text-muted">›</span>
       </Link>
 
+      <Link href="/settings/styles"
+            className="pressable flex items-center gap-4 rounded-2xl border border-border bg-surface p-4 hover:border-accent">
+        <span aria-hidden className="btn-primary grid size-10 shrink-0 place-items-center rounded-xl">
+          <svg viewBox="0 0 24 24" className="size-5" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round">
+            <path d="M4 5h16v14H4zM8 15h8M8 11h5" /></svg>
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block font-medium">Styles</span>
+          <span className="block text-sm text-muted">Caption styles and cover layouts Jev picks from — with previews.</span>
+        </span>
+        <span aria-hidden className="text-muted">›</span>
+      </Link>
+
       <section className="rounded-xl border border-border bg-surface p-5">
         <h2 className="font-medium">OpenAI API key</h2>
         <p className="mt-1 text-sm text-muted">
