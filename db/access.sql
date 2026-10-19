@@ -90,7 +90,7 @@ grant update (timezone, auto_approve, default_publish_time, youtube_category_id,
               youtube_privacy, caption_style_id, gpu_autopause, channel_name,
               channel_niche, channel_audience, channel_voice, script_language,
               default_reel_seconds, script_model, openai_models, default_audio_source,
-              narrator_voice, narrator_speed, pipeline_mode, auto_spend_cap_paise_day,
+              narrator_voice, narrator_speed, pipeline_mode, auto_spend_cap_paise_day, max_gpu_shots,
               vision_model, usd_inr_override, image_model, image_quality,
               voice_mode, voices_enabled, fixed_voice,
               caption_styles_enabled, thumb_styles_enabled)

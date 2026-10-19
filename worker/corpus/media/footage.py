@@ -253,24 +253,77 @@ def plain(out: Path, *, seconds: float, look=None, size: tuple[int, int] = (W, H
     return {"frames": frames, "plain": look.background_color}
 
 
+# How far a pan travels across a picture (of the frame's width or height), and how
+# much taller than the frame a picture must be to be scrolled down.
+PAN_TRAVEL = 0.35
+SCROLL_MIN = 1.25
+
+
+def choose_move(pw: int, ph: int, idx: int, size: tuple[int, int] = (W, H), layout: str | None = None) -> str:
+    """How a picture moves (owner, 2026-10-19: zoom in, zoom out, pan, scroll), varied by
+    shot: a tall one scrolls down, a wide one pans across full screen every other
+    shot (left, then right), and the rest zoom in or out in turn."""
+    if not pw or not ph or layout not in (None, "cover"):
+        return "zoom_in" if idx % 2 == 0 else "zoom_out"
+    w, h = size
+    aspect, frame = pw / ph, w / h
+    if aspect < frame / SCROLL_MIN:
+        return "scroll_down"
+    if aspect > frame * 1.6:                  # wide: pan right, zoom out, pan left, zoom in…
+        if idx % 2 == 1:
+            return "pan_right" if idx % 4 == 1 else "pan_left"
+        return "zoom_in" if idx % 4 == 0 else "zoom_out"
+    return "zoom_in" if idx % 2 == 0 else "zoom_out"
+
+
+def _pan(src: Path, out: Path, *, move: str, frames: int, crop: str, credit: str | None,
+         size: tuple[int, int]) -> None:
+    """The picture larger than the frame (twice the size, so the motion is smooth),
+    and the frame's window sliding across it."""
+    work = out.parent
+    w, h = size
+    W2, H2 = 2 * w, 2 * h
+    if move == "scroll_down":
+        big = f"scale={W2}:-2:flags=lanczos,crop={W2}:'min(ih,{round(H2 * (1 + PAN_TRAVEL * 2))})'"
+    else:
+        big = f"scale=-2:{H2}:flags=lanczos,crop='min(iw,{round(W2 * (1 + PAN_TRAVEL))})':{H2}"
+    still = work / "pan.png"
+    _ff(["-i", str(src.resolve()), "-filter_complex", f"{crop};[f]{big},setsar=1[s]", "-map", "[s]",
+         "-frames:v", "1", still.name], cwd=work)
+    p = f"(n/{max(1, frames - 1)})"
+    ease = f"(0.5-0.5*cos(PI*{p}))"                      # starts and ends gently
+    x = {"pan_right": f"(iw-{W2})*{ease}", "pan_left": f"(iw-{W2})*(1-{ease})"}.get(move, "0")
+    y = f"(ih-{H2})*{ease}" if move == "scroll_down" else "0"
+    graph = (f"[0:v]crop={W2}:{H2}:x='{x}':y='{y}',scale={w}:{h}:flags=bicubic,setsar=1,fps={FPS}[kb];"
+             + _credit(work, credit, "kb", "v"))
+    _ff(["-loop", "1", "-framerate", str(FPS), "-i", still.name, "-filter_complex", graph, "-map", "[v]", "-an"]
+        + _encode(frames) + [out.name], cwd=work)
+    still.unlink(missing_ok=True)
+
+
 def ken_burns(src: Path, out: Path, *, seconds: float, idx: int = 0, credit: str | None = None,
               layout: str | None = None, zoom: float = KEN_BURNS_ZOOM, focus: dict | None = None,
-              size: tuple[int, int] = (W, H)) -> dict:
-    """A picture → the finished shot `out`: composed to the shot's shape, slowly zooming."""
+              size: tuple[int, int] = (W, H), move: str | None = None) -> dict:
+    """A picture → the finished shot `out`: composed to the shot's shape and moving —
+    zooming in or out, panning across or scrolling down (choose_move, unless `move`)."""
     work = out.parent
     i = info(src)
     frames = max(9, round(seconds * FPS))
     crop, fw, fh = _focus(focus, "0:v", "f")
+    move = move or choose_move(round(i.w * fw), round(i.h * fh), idx, size, layout)
+    if move in ("pan_left", "pan_right", "scroll_down"):
+        _pan(src, out, move=move, frames=frames, crop=crop, credit=credit, size=size)
+        return {"frames": frames, "layout": "cover", "move": move}
     layout = layout or choose_layout(round(i.w * fw), round(i.h * fh))
     w, h = size
     # Composed at twice the size, so the zoom's sub-pixel steps don't judder.
     still = work / "still.png"
     _ff(["-i", str(src.resolve()), "-filter_complex", crop + ";" + _layout(layout, "f", "s", 2 * w, 2 * h),
          "-map", "[s]", "-frames:v", "1", still.name], cwd=work)
-    z = f"1+{zoom}*on/{frames}" if idx % 2 == 0 else f"{1 + zoom}-{zoom}*on/{frames}"
+    z = f"1+{zoom}*on/{frames}" if move == "zoom_in" else f"{1 + zoom}-{zoom}*on/{frames}"
     graph = (f"[0:v]zoompan=z='{z}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s={w}x{h}:fps={FPS},"
              f"setsar=1[kb];" + _credit(work, credit, "kb", "v"))
     _ff(["-loop", "1", "-framerate", str(FPS), "-i", still.name, "-filter_complex", graph, "-map", "[v]", "-an"]
         + _encode(frames) + [out.name], cwd=work)
     still.unlink(missing_ok=True)
-    return {"frames": frames, "layout": layout, "zoom": "in" if idx % 2 == 0 else "out"}
+    return {"frames": frames, "layout": layout, "move": move}

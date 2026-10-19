@@ -127,6 +127,7 @@ class Footage:
     assets: list[dict]          # {"n", "kind": "video"|"image", "seconds", "w", "h", "credit", ...}
     stock: bool = False         # a Pexels key is set
     references: list[dict] = field(default_factory=list)
+    gpu_cap: int | None = None  # at most this many "generate" shots (the owner's GPU budget); None: no limit
 
     def asset(self, n: int) -> dict | None:
         return next((a for a in self.assets if a["n"] == n), None)
@@ -317,6 +318,14 @@ def validate(out: ScriptOut, target_seconds: int, narrated: bool = False, speed:
     if len(out.title) > 100:
         problems.append(f"the title is {len(out.title)} characters; shorten it to at most 100")
     cap = narration_word_cap(speed)
+    if footage is not None and footage.gpu_cap is not None:
+        gen = [i for i, s in enumerate(out.shots, 1) if (s.source or "generate") == "generate"]
+        if len(gen) > footage.gpu_cap:
+            problems.append(
+                f"{len(gen)} shots ({', '.join(map(str, gen))}) are \"generate\" but at most {footage.gpu_cap} may "
+                "be: each one renders on a rented GPU. Make the others from the footage list - an \"image\" shot of "
+                "a picture (a picture may be shown again, or another part of it with `focus`), a window of a video - "
+                "or a chart or text card where this format allows them")
     for i, s in enumerate(out.shots, 1):
         problems += _footage_problems(i, s, footage, narrated)
         keeps_sound = (s.source or "generate") == "clip" and s.keep_audio

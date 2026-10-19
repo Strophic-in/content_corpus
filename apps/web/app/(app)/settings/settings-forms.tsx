@@ -62,6 +62,7 @@ type Settings = {
   default_audio_source: "kokoro" | "ltx_native";
   narrator_voice: string; narrator_speed: number;
   pipeline_mode: "manual" | "auto"; auto_spend_cap_paise_day: number | null; vision_model: string | null;
+  max_gpu_shots: number;
   image_model: string; image_quality: "low" | "medium" | "high"; image_models: string[];
 };
 
@@ -94,6 +95,13 @@ export function SettingsForm({ settings: s }: { settings: Settings }) {
           <label className="flex flex-col gap-1 text-sm">Narration speed
             <input name="narrator_speed" type="number" min={0.7} max={1.5} step={0.05}
                    defaultValue={s.narrator_speed} className={input} />
+          </label>
+          <label className="flex flex-col gap-1 text-sm sm:col-span-2">GPU shots per video, at most
+            <input name="max_gpu_shots" type="number" min={0} max={12} step={1} defaultValue={s.max_gpu_shots}
+                   className={`${input} sm:w-1/2`} />
+            <span className="text-xs text-muted">Shots the AI video model renders (about ₹2–3 each). Every other shot
+              uses the pictures and footage collected for the story — zooming, panning and scrolling — or a chart or
+              text card. Formats where characters speak are not limited.</span>
           </label>
         </div>
         <label className="flex flex-col gap-1 text-sm">

@@ -172,7 +172,7 @@ export async function userSettings(userId: string) {
                 script_language, default_reel_seconds, script_model, openai_models,
                 default_audio_source, narrator_voice, narrator_speed::float8 as narrator_speed,
                 pipeline_mode, auto_spend_cap_paise_day, vision_model, usd_inr_override::float8 as usd_inr_override,
-                image_model, image_quality
+                image_model, image_quality, max_gpu_shots
            from app_settings`,
       )
     ).rows[0];

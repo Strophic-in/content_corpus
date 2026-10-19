@@ -151,6 +151,14 @@ def run(ctx: JobContext) -> dict:
     as_slides = bool(fmt) and t.content_type != "video"
     with db.conn() as c:
         footage, waiting = footage_.load(c, post_id, stock=bool(vault.secret(post["user_id"], "pexels_api_key")))
+    # The owner's GPU budget: held where the format can show something else (pictures,
+    # footage, stock, charts or text cards it allows, and has); characters speaking and
+    # POV scenes can only be generated.
+    other = set(t.render.sources) - {"generate"}
+    if st.get("max_gpu_shots") is not None and not dialogue and not as_slides and (
+            (footage.assets and other & {"image", "clip"}) or (footage.stock and "stock" in other)
+            or other & {"plain"}):
+        footage.gpu_cap = int(st["max_gpu_shots"])
     if waiting and footage_.still_worth_waiting(waiting):
         raise Defer(f"waiting for {len(waiting)} piece(s) of footage to be fetched and analysed", retry_in=45)
     if post.get("research_state") == "pending":

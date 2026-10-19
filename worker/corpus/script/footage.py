@@ -137,7 +137,7 @@ def prompt_section(footage: Footage, narrated: bool) -> str:
              "\"deaths\", or \"\"). Only numbers stated in the sources; never estimates.")
     if not footage.any:
         return ("\n\n## Shot sources\nEach shot has a `source`:\n- \"generate\": the AI video model renders its "
-                f"`visual`.\n{chart}\n{unused}" + GENERATE_GUIDE)
+                f"`visual`.\n{chart}\n{unused}" + _budget(footage) + GENERATE_GUIDE)
     videos = any(a["kind"] == "video" for a in footage.assets)
     images = any(a["kind"] == "image" for a in footage.assets)
     lines = ["", "", "## Shot sources",
@@ -187,7 +187,23 @@ def prompt_section(footage: Footage, narrated: bool) -> str:
                   "there is one, is in the list above as \"AI illustration\"."]
         lines += [_describe(a, f"Original {'video' if a['kind'] == 'video' else 'picture'}:")
                   for a in footage.references]
-    return "\n".join(lines) + GENERATE_GUIDE
+    return "\n".join(lines) + _budget(footage) + GENERATE_GUIDE
+
+
+def _budget(footage: Footage) -> str:
+    """The owner's GPU budget, when there is one."""
+    if footage.gpu_cap is None:
+        return ""
+    if footage.gpu_cap == 0:
+        return ("\n\n## No generated shots\nNo shot may be \"generate\": build the whole reel from the footage "
+                "above, charts and text cards. A picture may be shown more than once - another part of it (`focus`), "
+                "or after other shots.")
+    return (f"\n\n## GPU budget: at most {footage.gpu_cap} generated shots\nAt most {footage.gpu_cap} shots may be "
+            "\"generate\" (each renders on a rented GPU; everything else costs nothing). Spend them where nothing "
+            "real can show the moment - the hook, a detail, the scale or a consequence - and build every other shot "
+            "from the footage above (pictures move on screen: a slow zoom, a pan across, a scroll down a tall one), "
+            "charts and text cards. A picture may be shown more than once - another part of it (`focus`), or after "
+            "other shots - and a long video can give several windows.")
 
 
 def normalize(out: ScriptOut, footage: Footage, music: bool = False) -> None:

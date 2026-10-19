@@ -260,6 +260,7 @@ const SettingsInput = z.object({
   vision_model: z.string().trim().max(120),
   image_model: z.string().trim().max(120).optional(),
   image_quality: z.enum(["low", "medium", "high"]).optional(),
+  max_gpu_shots: z.coerce.number().int().min(0).max(12),
 });
 
 export async function saveSettings(_: ActionState, form: FormData): Promise<ActionState> {
@@ -274,9 +275,10 @@ export async function saveSettings(_: ActionState, form: FormData): Promise<Acti
         `update app_settings set script_model = nullif($1, ''), youtube_privacy = $2, auto_approve = $3,
                 narrator_voice = $4, narrator_speed = $5, pipeline_mode = $6, auto_spend_cap_paise_day = $7,
                 vision_model = nullif($8, ''), image_model = coalesce(nullif($9, ''), image_model),
-                image_quality = coalesce($10, image_quality)`,
+                image_quality = coalesce($10, image_quality), max_gpu_shots = $11`,
         [v.script_model, v.youtube_privacy, v.auto_approve, v.narrator_voice, v.narrator_speed,
-         v.pipeline_mode, v.auto_spend_cap, v.vision_model, v.image_model ?? "", v.image_quality ?? null],
+         v.pipeline_mode, v.auto_spend_cap, v.vision_model, v.image_model ?? "", v.image_quality ?? null,
+         v.max_gpu_shots],
       );
     });
   } catch (err) {
