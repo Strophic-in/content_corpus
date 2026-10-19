@@ -391,3 +391,11 @@ def test_a_phone_video_inside_a_wide_frame_is_found(tmp_path):
     subprocess.run(["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "testsrc2=s=1280x720:r=24:d=2",
                     "-pix_fmt", "yuv420p", str(wide)], check=True)
     assert fm.inner_frame(wide) is None
+    # nearly square and soft inside, with a hard edge against the panels (the BBC's Limoges clip)
+    square = tmp_path / "square.mp4"
+    subprocess.run(["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "testsrc2=s=690x720:r=24:d=2",
+                    "-filter_complex", "[0]split[a][b];[a]scale=1280:720,boxblur=30:3[bg];"
+                                       "[b]boxblur=2:1[soft];[bg][soft]overlay=295:0",
+                    "-pix_fmt", "yuv420p", str(square)], check=True)
+    box = fm.inner_frame(square)
+    assert box and abs(box["w"] - 405 / 1280) < 0.01 and abs(box["x"] + box["w"] / 2 - 0.5) < 0.03

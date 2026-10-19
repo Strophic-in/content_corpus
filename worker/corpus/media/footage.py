@@ -104,13 +104,19 @@ def inner_frame(src: Path, samples: int = 4) -> dict | None:
     peak = max(cols)
     if peak <= 0:
         return None
-    sharp = [x for x in range(160) if cols[x] >= 0.35 * peak]
+    # Blurred panels are nearly flat; the picture's edge against them is a spike, and
+    # smoky night footage is soft (live, BBC: panels 1%, footage 12-28%, edge 100%).
+    outer = sorted(cols[2:14] + cols[146:158])
+    floor = outer[len(outer) // 2]
+    sharp = [x for x in range(2, 158) if cols[x] >= max(0.05 * peak, 4 * floor)]
+    if not sharp:
+        return None
     left, right = min(sharp), max(sharp)
     inner = (right - left + 1) / 160
     side = (sum(cols[:left]) + sum(cols[right + 1:])) / max(1, 160 - (right - left + 1))
     middle = sum(cols[left:right + 1]) / (right - left + 1)
     portrait = (i.h * 9 / 16) / i.w                    # the share of the width a 9:16 picture takes
-    if not (0.6 * portrait <= inner <= 1.6 * portrait) or side > 0.3 * middle or abs((left + right) / 2 - 80) > 16:
+    if not (0.6 * portrait <= inner <= 0.85) or side > 0.2 * middle or abs((left + right) / 2 - 80) > 16:
         return None
     w = min(1.0, portrait)                             # crop exactly 9:16, centred on the sharp part
     x = max(0.0, min(1.0 - w, (left + right + 1) / 2 / 160 - w / 2))
