@@ -16,7 +16,10 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     <div className="flex flex-1 flex-col">
       <header className="sticky top-0 z-30 hidden border-b border-border bg-surface/95 backdrop-blur md:block">
         <div className="mx-auto flex h-14 w-full max-w-6xl items-center gap-4 px-4">
-          <Link href="/discover" className="font-semibold tracking-tight">Content Corpus</Link>
+          <Link href="/discover" className="flex items-center gap-2 font-semibold tracking-tight">
+            <span aria-hidden className="btn-primary grid size-7 place-items-center rounded-lg text-sm font-bold">C</span>
+            Content Corpus
+          </Link>
           <ChannelSwitcher channels={channels.map(({ id, name }) => ({ id, name }))} activeId={active.id} />
           <DesktopNav />
           <div className="ml-auto flex items-center gap-3 text-sm text-muted">

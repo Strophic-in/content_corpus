@@ -1,38 +1,45 @@
 @import "tailwindcss";
 
 :root {
-  --background: #fafafa;
+  --background: #f6f6f9;
   --surface: #ffffff;
-  --foreground: #18181b;
-  --muted: #71717a;
-  --border: #e4e4e7;
-  --accent: #4f46e5;
+  --surface-2: #f1f1f6;
+  --foreground: #14141c;
+  --muted: #6b6b7b;
+  --border: #e3e3ea;
+  --accent: #5b4cf0;
+  --accent-2: #c026d3;
   --accent-foreground: #ffffff;
   --danger: #dc2626;
   --danger-surface: #fef2f2;
   --warn: #b45309;
   --ok: #15803d;
+  --shadow: 0 1px 2px rgb(20 20 40 / 0.05), 0 8px 24px -12px rgb(20 20 40 / 0.12);
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #09090b;
-    --surface: #18181b;
-    --foreground: #f4f4f5;
-    --muted: #a1a1aa;
-    --border: #27272a;
-    --accent: #818cf8;
-    --accent-foreground: #09090b;
+    --background: #0a0a0f;
+    --surface: #13131b;
+    --surface-2: #1b1b25;
+    --foreground: #f3f3f7;
+    --muted: #9b9bad;
+    --border: #262634;
+    --accent: #8b7cff;
+    --accent-2: #e879f9;
+    --accent-foreground: #0a0a0f;
     --danger: #f87171;
     --danger-surface: #2a1215;
     --warn: #fbbf24;
     --ok: #4ade80;
+    --shadow: 0 1px 0 rgb(255 255 255 / 0.04) inset, 0 12px 32px -16px rgb(0 0 0 / 0.6);
   }
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
   --color-foreground: var(--foreground);
   --color-muted: var(--muted);
   --color-border: var(--border);
@@ -102,3 +109,24 @@ a, button, input, select, label, summary { touch-action: manipulation; }
   .skeleton, .page-in > * { animation: none; }
   .pressable:active { transform: none; }
 }
+
+/* Panels sit a little above the page; main actions carry the accent's gradient. */
+.bg-surface { box-shadow: var(--shadow); }
+.btn-primary {
+  background-image: linear-gradient(135deg, var(--accent), var(--accent-2));
+  color: #fff;
+  box-shadow: 0 6px 20px -8px color-mix(in oklab, var(--accent) 70%, transparent);
+}
+.btn-primary:hover { filter: brightness(1.08); }
+
+/* Rows of chips scroll sideways without a scrollbar in the way. */
+.no-scrollbar { scrollbar-width: none; }
+.no-scrollbar::-webkit-scrollbar { display: none; }
+
+/* A soft glow behind a stage that is happening now. */
+.stage-glow {
+  background:
+    radial-gradient(60% 40% at 50% 40%, color-mix(in oklab, var(--accent) 22%, transparent), transparent),
+    var(--surface);
+}
+

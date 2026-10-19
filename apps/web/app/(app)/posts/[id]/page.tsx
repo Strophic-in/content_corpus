@@ -12,6 +12,7 @@ import { signedUrl } from "@/lib/r2";
 import { requireUser } from "@/lib/session";
 import { IN_FLIGHT, statusBadge } from "@/lib/status";
 import { lookName } from "@/lib/looks";
+import { pipeline } from "@/lib/pipeline";
 import { template } from "@/lib/templates";
 
 import { PostForm } from "../post-form";
@@ -20,6 +21,8 @@ import {
   RepackageButton,
   ReviewActions,
 } from "./post-actions";
+import { NextStep } from "./next-step";
+import { Tracker } from "./tracker";
 import { DeleteUploadButton, UploadFootage } from "./upload";
 
 export const metadata = { title: "Post · Content Corpus" };
@@ -46,6 +49,9 @@ export default async function PostPage({ params }: { params: Promise<{ id: strin
         "select id, name, is_default from formats where channel_id = $1 order by is_default desc, name",
         [post.channel_id])).rows as { id: string; name: string; is_default: boolean }[])
     : (await workspace(user.id)).formats;
+  const liveOn = (await asUser(user.id, async (db) => (await db.query(
+    "select platform from publish_attempts where post_id = $1 and state = 'live' order by platform", [post.id])).rows))
+    .map((r) => (r.platform === "youtube" ? "YouTube" : "Instagram"));
   const live = scripts.find((s) => ["awaiting_approval", "approved", "draft"].includes(s.state));
   const older = scripts.filter((s) => s !== live);
   const badge = statusBadge(post.status);
@@ -65,22 +71,20 @@ export default async function PostPage({ params }: { params: Promise<{ id: strin
         // just finished: its caption and cover are on the way
         post.packaging)
         && <AutoRefresh everyMs={4000} />}
-      <div className="flex flex-wrap items-start gap-3">
-        <div className="min-w-0 flex-1">
-          <Link href={`/calendar?m=${post.slot_date.slice(0, 7)}`} className="text-sm text-muted hover:text-foreground">
-            ← {post.slot_date}
-          </Link>
-          <h1 className="mt-1 text-2xl font-semibold tracking-tight">{post.topic}</h1>
-          {post.template_id && (
-            <p className="mt-0.5 text-xs text-muted">
-              {t.display_name}
-              {lookName(post.look_id) && <> · look: {lookName(post.look_id)}{post.look_why ? ` (${post.look_why})` : ""}</>}
-            </p>
-          )}
-          {post.brief && <p className="mt-1 max-w-3xl text-sm whitespace-pre-line text-muted">{post.brief}</p>}
+      <header className="flex flex-col gap-2">
+        <Link href="/library" className="w-fit text-sm text-muted hover:text-foreground">← Library</Link>
+        <div className="flex flex-wrap items-start gap-3">
+          <h1 className="min-w-0 flex-1 text-2xl leading-tight font-semibold tracking-tight sm:text-3xl">{post.topic}</h1>
+          <span className={`shrink-0 rounded-full px-3 py-1 text-sm font-medium ${badge.className}`}>{badge.label}</span>
         </div>
-        <span className={`rounded-md px-2 py-1 text-sm font-medium ${badge.className}`}>{badge.label}</span>
-      </div>
+        <p className="flex flex-wrap gap-x-3 gap-y-1 text-sm text-muted">
+          <span>{new Intl.DateTimeFormat("en-IN", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" })
+            .format(new Date(`${post.slot_date}T00:00:00Z`))}{post.publish_time ? ` · ${post.publish_time}` : ""}</span>
+          {post.template_id && <span>{t.display_name}</span>}
+          {lookName(post.look_id) && <span title={post.look_why ?? undefined}>Look: {lookName(post.look_id)}</span>}
+          {post.final_duration_s && <span>{Math.round(Number(post.final_duration_s))} s</span>}
+        </p>
+      </header>
 
       {post.status === "failed" && post.error?.message && (
         <div role="alert" className="rounded-xl border border-danger bg-danger-surface px-4 py-3 text-sm text-danger">
@@ -91,17 +95,32 @@ export default async function PostPage({ params }: { params: Promise<{ id: strin
         </div>
       )}
 
-      <div className="flex flex-wrap gap-2">
-        {canGenerate && <GenerateButton postId={post.id} regenerate={Boolean(live)} />}
-        {post.status === "scripting" && (
-          <p className="text-sm text-muted">Writing the script — this page updates by itself.</p>
-        )}
-      </div>
+      <section className="grid gap-5 md:grid-cols-[minmax(0,17rem)_minmax(0,1fr)] lg:grid-cols-[minmax(0,19rem)_minmax(0,1fr)]">
+        <Preview post={post} />
+        <div className="flex min-w-0 flex-col gap-4">
+          <NextStep postId={post.id} status={post.status} autopilot={post.autopilot || post.go_ahead}
+                    scriptId={live?.state === "awaiting_approval" ? live.id : null} publishTime={post.publish_time}
+                    failedAtAssembly={post.error?.stage === "assemble"} />
+          <div className="rounded-2xl border border-border bg-surface p-4">
+            <h2 className="mb-3 text-sm font-semibold">Progress</h2>
+            <Tracker steps={pipeline({
+              status: post.status, research_state: post.research_state, slides,
+              narrated: post.audio_source === "kokoro",
+              shots: { total: shots.length, uploaded: shots.filter((x) => x.rendered).length,
+                       voiced: shots.filter((x) => x.voiced).length },
+              packaged: Boolean(post.package), go_ahead: post.go_ahead, error_stage: post.error?.stage ?? null,
+              live_on: liveOn, publish_time: post.publish_time,
+            })} />
+          </div>
+          {canGenerate && live && (
+            <div className="flex items-center gap-3 text-sm text-muted">
+              Not right? <GenerateButton postId={post.id} regenerate subtle />
+            </div>
+          )}
+        </div>
+      </section>
 
-      {live ? (slides ? <SlidesCard script={live} /> : <ScriptCard script={live} audio={post.audio_source} />)
-        : post.status === "draft" && (
-        <p className="text-sm text-muted">No script yet. Press “Write script” to draft one from the topic and brief.</p>
-      )}
+      {live && (slides ? <SlidesCard script={live} /> : <ScriptCard script={live} audio={post.audio_source} />)}
 
       {live?.state === "awaiting_approval" && <ReviewActions scriptId={live.id} />}
 
@@ -210,7 +229,7 @@ function FootagePanel({ postId, assets, uploads }: { postId: string; assets: Ass
     : a.rights === "needs_review" ? "only informs the script — you chose an AI version, so it is never shown"
     : `${a.kind === "video" ? `${Number(a.seconds ?? 0).toFixed(0)} s, ` : ""}${a.w}×${a.h}`;
   return (
-    <section className="flex flex-col gap-3 rounded-xl border border-border bg-surface p-5 text-sm">
+    <section id="publish" className="flex scroll-mt-6 flex-col gap-3 rounded-xl border border-border bg-surface p-5 text-sm">
       <div>
         <h2 className="font-medium">Footage</h2>
         <p className="text-muted">The idea&apos;s own picture or video, as you chose — shown with credit, or an AI version
@@ -636,3 +655,31 @@ function ScriptCard({ script, audio }: { script: ScriptRow; audio: PostRow["audi
     </section>
   );
 }
+
+
+const MAKING: Record<string, string> = {
+  draft: "Not started", scripting: "Writing the script…", awaiting_approval: "Script ready for you",
+  approved: "Approved", queued_for_render: "Waiting for a GPU…", rendering: "Rendering…", rendered: "Putting it together…",
+  post_processing: "Putting it together…", failed: "Stopped", cancelled: "Cancelled",
+};
+
+function Preview({ post }: { post: PostRow }) {
+  const busy = IN_FLIGHT.has(post.status) || post.status === "rendered";
+  if (post.final_key)
+    return (
+      <video src={`/media/post/${post.id}`} poster={post.package ? `/media/post/${post.id}?cover=1` : undefined}
+             controls playsInline preload="metadata"
+             className="aspect-[9/16] w-full max-w-xs justify-self-center rounded-2xl border border-border bg-black object-cover md:max-w-none" />
+    );
+  return (
+    <div className={`relative grid aspect-[9/16] w-full max-w-xs place-items-center justify-self-center overflow-hidden rounded-2xl border border-border md:max-w-none ${
+      busy ? "skeleton" : "bg-surface"}`}>
+      <div className="flex flex-col items-center gap-2 p-6 text-center">
+        {busy && <span aria-hidden className="size-3 animate-ping rounded-full bg-accent" />}
+        <p className="text-sm font-medium">{MAKING[post.status] ?? "In progress"}</p>
+        <p className="text-xs text-muted">The reel appears here when it&apos;s made.</p>
+      </div>
+    </div>
+  );
+}
+

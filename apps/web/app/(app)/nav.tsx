@@ -26,7 +26,7 @@ export const TABS: Tab[] = [
 ];
 
 function isActive(path: string, href: string) {
-  return path === href || path.startsWith(href + "/") || (href === "/calendar" && path.startsWith("/posts"));
+  return path === href || path.startsWith(href + "/") || (href === "/library" && path.startsWith("/posts"));
 }
 
 /** The tab just tapped, lit at once (before its page arrives); cleared once the

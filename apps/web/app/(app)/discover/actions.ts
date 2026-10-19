@@ -35,7 +35,7 @@ export async function requestIdeas(target: { categoryId: string } | { channelId:
 export async function decideIdea(ideaId: string, accept: boolean, date: string | null, time: string | null,
                                  reason: string | null, platforms: string[] | null,
                                  media: "none" | "original" | "ai" = "none", formatId: string | null = null,
-                                 ): Promise<ActionState & { postId?: string }> {
+                                 autopilot = false): Promise<ActionState & { postId?: string }> {
   const user = await requireUser();
   if (accept && !(date && /^\d{4}-\d{2}-\d{2}$/.test(date) && time && /^\d{2}:\d{2}(:\d{2})?$/.test(time)))
     return { ok: false, error: "Pick a date and time." };
@@ -52,8 +52,12 @@ export async function decideIdea(ideaId: string, accept: boolean, date: string |
          platforms?.filter((p) => p === "youtube" || p === "instagram") ?? null,
          accept && ["original", "ai"].includes(media) ? media : "none", accept ? formatId : null],
       );
-      return r.rows[0]?.post_id as string | undefined;
+      const id = r.rows[0]?.post_id as string | undefined;
+      // Autopilot: written, approved, rendered and posted at the picked time, no stops.
+      if (accept && autopilot && id) await db.query("select api.autopilot($1, true)", [id]);
+      return id;
     });
+    if (accept && autopilot) await wakeWorker();
     // The browser keeps visited pages for 30 s (next.config staleTimes): without this a
     // decided card could come back on the next visit to the deck.
     refresh();

@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { useActionState, useEffect, useState, useTransition } from "react";
 
 import {
-  approveScript, cancelPublish, deletePost, generateScript, rejectScript, requestPackage, requestPublish, requestRender,
+  cancelPublish, deletePost, generateScript, rejectScript, requestPackage, requestPublish, requestRender,
   setAssetRights,
   type ActionState,
 } from "../../actions";
@@ -40,7 +40,8 @@ function ErrorNote({ state }: { state: ActionState }) {
   ) : null;
 }
 
-export function GenerateButton({ postId, regenerate }: { postId: string; regenerate: boolean }) {
+export function GenerateButton({ postId, regenerate, subtle = false }: { postId: string; regenerate: boolean;
+                                                                       subtle?: boolean }) {
   const [state, setState] = useState<ActionState>(null);
   const [pending, start] = useTransition();
   return (
@@ -48,7 +49,8 @@ export function GenerateButton({ postId, regenerate }: { postId: string; regener
       <button
         disabled={pending}
         onClick={() => start(async () => setState(await generateScript(postId)))}
-        className="w-fit rounded-md bg-accent px-4 py-2 text-sm font-medium text-accent-foreground disabled:opacity-60"
+        className={subtle ? "w-fit font-medium text-accent hover:underline disabled:opacity-60"
+          : "w-fit rounded-md bg-accent px-4 py-2 text-sm font-medium text-accent-foreground disabled:opacity-60"}
       >
         {pending ? "Starting…" : regenerate ? "Write a new version" : "Write script"}
       </button>
@@ -91,8 +93,6 @@ export function RenderButton({ postId, retry, label }: { postId: string; retry: 
 }
 
 export function ReviewActions({ scriptId }: { scriptId: string }) {
-  const [approveState, setApproveState] = useState<ActionState>(null);
-  const [approving, start] = useTransition();
   const [rejectState, rejectAction, rejecting] = useActionState<ActionState, FormData>(
     rejectScript.bind(null, scriptId),
     null,
@@ -100,26 +100,19 @@ export function ReviewActions({ scriptId }: { scriptId: string }) {
   return (
     <section className="flex flex-col gap-4 rounded-xl border border-warn/40 bg-surface p-5">
       <div>
-        <h2 className="font-medium">Your review</h2>
-        <p className="text-sm text-muted">Approving fixes this version for rendering; nothing renders without it.</p>
+        <h2 className="font-medium">Ask for changes</h2>
+        <p className="text-sm text-muted">Happy with it? Approve it at the top. Otherwise say what to change and a new
+          version is written.</p>
       </div>
-      <button
-        disabled={approving || rejecting}
-        onClick={() => start(async () => setApproveState(await approveScript(scriptId)))}
-        className="w-fit rounded-md bg-ok px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
-      >
-        {approving ? "Approving…" : "Approve script"}
-      </button>
-      <ErrorNote state={approveState} />
-      <form action={rejectAction} className="flex flex-col gap-2 border-t border-border pt-4">
+      <form action={rejectAction} className="flex flex-col gap-2">
         <label className="flex flex-col gap-1 text-sm">
-          Or reject, with a note for the next version
+          What should change?
           <textarea name="note" rows={2} maxLength={1000} placeholder="e.g. the hook is slow; make the founder funnier"
                     className="rounded-md border border-border bg-background px-3 py-2 outline-none focus:border-accent" />
         </label>
-        <button disabled={approving || rejecting}
+        <button disabled={rejecting}
                 className="w-fit rounded-md border border-border px-4 py-2 text-sm font-medium disabled:opacity-60">
-          {rejecting ? "Rejecting…" : "Reject"}
+          {rejecting ? "Sending…" : "Write it again with this"}
         </button>
         <ErrorNote state={rejectState} />
       </form>

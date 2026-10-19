@@ -182,6 +182,14 @@ export function Deck({ picker, daily, cards, looking, channel, categories, forma
   const [chosen, setChosen] = useState<string[]>(platforms.map((p) => p.id));
   const [media, setMedia] = useState<"none" | "original" | "ai">("none");
   const [formatId, setFormatId] = useState<string>("");
+  // Autopilot is remembered on this device: whoever turns it on usually wants it on.
+  const [autopilot, setAutopilotState] = useState<boolean>(() => {
+    try { return typeof window !== "undefined" && localStorage.getItem("corpus.autopilot") !== "0"; } catch { return true; }
+  });
+  const setAutopilot = (on: boolean) => {
+    setAutopilotState(on);
+    try { localStorage.setItem("corpus.autopilot", on ? "1" : "0"); } catch { /* private window */ }
+  };
   const [skip, setSkip] = useState<{ card: IdeaCard; timer: ReturnType<typeof setTimeout> } | null>(null);
   const skipRef = useRef<typeof skip>(null);       // the same, for handlers (no side effects in updaters)
   const [notice, setNotice] = useState<{ text: string; href?: string; error?: boolean } | null>(null);
@@ -266,16 +274,20 @@ export function Deck({ picker, daily, cards, looking, channel, categories, forma
     if (!sheet) return;
     const card = sheet;
     start(async () => {
-      const r = await decideIdea(card.id, true, slot.date, slot.time, null, chosen, media, formatId || null);
+      const r = await decideIdea(card.id, true, slot.date, slot.time, null, chosen, media, formatId || null,
+                                 autopilot);
       if (!r.ok) {
         setNotice({ text: r.error ?? "Couldn't schedule it.", error: true });
         return;
       }
       setSheet(null);
       setMedia("none");
-      setNotice({ text: `Scheduled · ${when(slot.date, slot.time)}`, href: r.postId ? `/posts/${r.postId}` : undefined });
+      setNotice({
+        text: autopilot ? `On autopilot · posts ${when(slot.date, slot.time)}` : `Added to ${when(slot.date, slot.time)} · waiting for you`,
+        href: r.postId ? `/posts/${r.postId}` : undefined,
+      });
       setSlot((s) => ({ ...s, date: addDay(s.date) }));
-      setTimeout(() => setNotice(null), 4000);
+      setTimeout(() => setNotice(null), 7000);
     });
   }
 
@@ -335,7 +347,7 @@ export function Deck({ picker, daily, cards, looking, channel, categories, forma
       {daily}
 
       {categories.length > 1 && queue.length > 0 && (
-        <div className="-mx-4 flex gap-1.5 overflow-x-auto px-4 pb-1 text-xs">
+        <div className="no-scrollbar -mx-4 flex gap-1.5 overflow-x-auto px-4 pb-1 text-xs">
           <button onClick={() => setFilter(null)}
                   className={`shrink-0 rounded-full border px-3 py-1 ${filter === null ? "border-accent text-accent" : "border-border text-muted"}`}>
             All · {queue.length}
@@ -366,7 +378,7 @@ export function Deck({ picker, daily, cards, looking, channel, categories, forma
             <article key={card.id} style={style}
                      onPointerDown={isTop ? onPointerDown : undefined} onPointerMove={isTop ? onPointerMove : undefined}
                      onPointerUp={isTop ? onPointerUp : undefined} onPointerCancel={isTop ? onPointerUp : undefined}
-                     className={`flex flex-col gap-3 overflow-hidden rounded-3xl border border-border bg-surface p-5 shadow-xl ${isTop ? "relative min-h-[min(58vh,520px)] cursor-grab active:cursor-grabbing" : "pointer-events-none absolute inset-0"}`}>
+                     className={`flex flex-col gap-3 overflow-hidden rounded-3xl border border-border bg-surface p-5 shadow-xl ${isTop ? "relative min-h-[min(48vh,440px)] cursor-grab active:cursor-grabbing" : "pointer-events-none absolute inset-0"}`}>
               <CardBody card={card} active={isTop} muted={muted} stamp={isTop ? x / THRESHOLD : 0} />
             </article>
           );
@@ -384,7 +396,7 @@ export function Deck({ picker, daily, cards, looking, channel, categories, forma
                        { duration: 260, easing: "cubic-bezier(.4,0,1,1)", fill: "forwards" },
                      ).onfinish = () => setFlying((all) => all.filter((c) => c.key !== f.key));
                    }}
-                   className="pointer-events-none absolute inset-x-0 top-0 z-30 flex min-h-[min(58vh,520px)] flex-col gap-3 overflow-hidden rounded-3xl border border-border bg-surface p-5 shadow-xl">
+                   className="pointer-events-none absolute inset-x-0 top-0 z-30 flex min-h-[min(48vh,440px)] flex-col gap-3 overflow-hidden rounded-3xl border border-border bg-surface p-5 shadow-xl">
             <CardBody card={f.card} active={false} muted stamp={f.dir} />
           </article>
         ))}
@@ -442,7 +454,7 @@ export function Deck({ picker, daily, cards, looking, channel, categories, forma
         <div role={notice.error ? "alert" : "status"}
              className={`anim-toast fixed inset-x-3 bottom-24 z-50 mx-auto flex max-w-md items-center gap-3 rounded-2xl border p-3 text-sm shadow-2xl md:bottom-6 ${notice.error ? "border-danger bg-danger-surface text-danger" : "border-border bg-surface"}`}>
           <span className="flex-1">{notice.text}</span>
-          {notice.href && <Link href={notice.href} className="font-medium text-accent">Open</Link>}
+          {notice.href && <Link href={notice.href} className="shrink-0 rounded-full bg-accent/15 px-3 py-1 font-medium text-accent">Watch it →</Link>}
           <button aria-label="Dismiss" onClick={() => setNotice(null)} className="text-muted">✕</button>
         </div>
       )}
@@ -518,12 +530,24 @@ export function Deck({ picker, daily, cards, looking, channel, categories, forma
                 </fieldset>
               );
             })()}
+            <label className={`mt-4 flex cursor-pointer items-start gap-3 rounded-xl border p-3 text-sm ${autopilot
+              ? "border-accent bg-accent/10" : "border-border"}`}>
+              <input type="checkbox" checked={autopilot} onChange={(e) => setAutopilot(e.target.checked)}
+                     className="mt-0.5 size-4 shrink-0 accent-accent" />
+              <span>
+                <span className="font-medium">Autopilot</span>
+                <span className="block text-xs text-muted">
+                  {autopilot ? "It's written, approved, rendered and posted at this time — you can watch it on its page."
+                    : "It waits for you: write and approve the script, render, then post."}
+                </span>
+              </span>
+            </label>
             <p className="mt-2 text-xs text-muted">Times are in {channel.timezone}.</p>
             <div className="mt-5 flex gap-3">
               <button onClick={cancelSheet} className="flex-1 rounded-xl border border-border py-3 text-sm font-medium">Back</button>
               <button onClick={schedule} disabled={pending}
-                      className="flex-1 rounded-xl bg-accent py-3 text-sm font-semibold text-accent-foreground disabled:opacity-60">
-                {pending ? "Scheduling…" : "Schedule"}
+                      className="btn-primary flex-1 rounded-xl py-3 text-sm font-semibold disabled:opacity-60">
+                {pending ? "Scheduling…" : autopilot ? "Make & post it" : "Add to calendar"}
               </button>
             </div>
           </div>

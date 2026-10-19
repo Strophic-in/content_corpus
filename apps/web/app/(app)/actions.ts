@@ -123,6 +123,21 @@ export async function requestRender(postId: string): Promise<ActionState> {
   return { ok: true };
 }
 
+/** Autopilot for one post: written, approved, rendered and posted at its time, no stops. */
+export async function setAutopilot(postId: string, on: boolean): Promise<ActionState> {
+  const user = await requireUser();
+  let what = "";
+  try {
+    what = await asUser(user.id, async (db) =>
+      (await db.query("select api.autopilot($1, $2) as r", [postId, on])).rows[0]?.r as string);
+  } catch (err) {
+    return { ok: false, error: friendly(err) };
+  }
+  if (on) await wakeWorker();
+  refresh();
+  return { ok: true, message: on ? `Autopilot on — ${what}.` : "Autopilot off — it waits for you." };
+}
+
 /** Write a finished reel's title, caption, first comment and cover again. */
 export async function requestPackage(postId: string): Promise<ActionState> {
   const user = await requireUser();

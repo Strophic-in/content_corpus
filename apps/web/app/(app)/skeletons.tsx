@@ -156,13 +156,19 @@ export function FormSkeleton({ blocks = 4 }: { blocks?: number }) {
 export function PostSkeleton() {
   return (
     <Loading>
-      <div className="flex flex-col gap-2"><Bone className="h-4 w-24" /><Bone className="h-8 w-3/4" /><Bone className="h-5 w-32 rounded-full" /></div>
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_20rem]">
-        <div className="flex flex-col gap-3 rounded-2xl border border-border bg-surface p-5">
-          <Bone className="h-5 w-40" />
-          {Array.from({ length: 6 }, (_, i) => <Bone key={i} className="h-3 w-full" />)}
+      <div className="flex flex-col gap-2"><Bone className="h-4 w-20" /><Bone className="h-8 w-3/4" /><Bone className="h-4 w-56" /></div>
+      <div className="grid gap-5 md:grid-cols-[minmax(0,17rem)_minmax(0,1fr)] lg:grid-cols-[minmax(0,19rem)_minmax(0,1fr)]">
+        <Bone className="aspect-[9/16] w-full max-w-xs justify-self-center rounded-2xl md:max-w-none" />
+        <div className="flex flex-col gap-4">
+          <div className="flex flex-col gap-3 rounded-2xl border border-border bg-surface p-4">
+            <Bone className="h-5 w-40" /><Bone className="h-3 w-2/3" /><Bone className="h-9 w-36 rounded-full" />
+          </div>
+          <div className="flex flex-col gap-3 rounded-2xl border border-border bg-surface p-4">
+            {Array.from({ length: 6 }, (_, i) => (
+              <div key={i} className="flex items-center gap-3"><Bone className="size-7 rounded-full" /><Bone className="h-4 w-48" /></div>
+            ))}
+          </div>
         </div>
-        <Bone className="aspect-[9/16] w-full max-w-xs rounded-2xl" />
       </div>
     </Loading>
   );

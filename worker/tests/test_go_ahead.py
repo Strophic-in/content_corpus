@@ -74,3 +74,14 @@ def test_without_a_go_ahead_nothing_renders_on_its_own_and_a_finished_post_refus
         as_user(owner, other, "select api.go_ahead(%s)", (pid,))
     owner.execute('delete from "user" where id = %s', (other,))
     owner.execute("delete from jobs where post_id = %s", (pid,))
+
+
+def test_autopilot_takes_a_draft_all_the_way_and_off_hands_it_back(s3, owner, user):
+    pid = _draft(owner, user)
+    assert as_user(owner, user, "select api.autopilot(%s, true) as r", (pid,))["r"] == "writing the script"
+    p = owner.execute("select status, go_ahead, pipeline_mode from posts where id = %s", (pid,)).fetchone()
+    assert (p["status"], p["go_ahead"], p["pipeline_mode"]) == ("scripting", True, "auto")
+    assert as_user(owner, user, "select api.autopilot(%s, false) as r", (pid,))["r"] == "off"
+    p = owner.execute("select go_ahead, pipeline_mode from posts where id = %s", (pid,)).fetchone()
+    assert (p["go_ahead"], p["pipeline_mode"]) == (False, "manual")
+    owner.execute("delete from jobs where post_id = %s", (pid,))
