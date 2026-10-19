@@ -290,7 +290,7 @@ export function CategoriesSection({ channelId, categories, formats }: {
 }) {
   const [state, action, adding] = useActionState<ActionState, FormData>(createCategory.bind(null, channelId), null);
   return (
-    <section className="flex flex-col gap-3">
+    <section id="categories" className="flex scroll-mt-6 flex-col gap-3">
       <div>
         <h2 className="font-medium">Categories</h2>
         <p className="text-sm text-muted">
