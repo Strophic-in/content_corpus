@@ -479,9 +479,16 @@ export function Deck({ picker, daily, cards, looking, channel, categories, forma
             </div>
             {formats.length > 1 && (
               <label className="mt-3 flex flex-col gap-1 text-sm">Make it as
+                <span className="text-xs text-muted">A reel, carousel or picture post — in one of your styles</span>
                 <select value={formatId} onChange={(e) => setFormatId(e.target.value)}
                         className="rounded-xl border border-border bg-background px-3 py-2.5 outline-none focus:border-accent">
-                  {formats.map((f) => <option key={f.id} value={f.id}>{f.name} · {f.kind}</option>)}
+                  {/* grouped by what it makes: a format is a style of reel, carousel or picture post */}
+                  {[...new Set(formats.map((f) => f.kind))].map((kind) => (
+                    <optgroup key={kind} label={kind === "Reel / Short" ? "Reels / Shorts" : kind === "Carousel" ? "Carousels"
+                      : kind === "Picture post" ? "Picture posts" : kind}>
+                      {formats.filter((f) => f.kind === kind).map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
+                    </optgroup>
+                  ))}
                 </select>
                 {sheet.formatWhy && formatId === sheet.format?.id &&
                   <span className="text-xs text-muted">The agent&apos;s pick: {sheet.formatWhy}</span>}
