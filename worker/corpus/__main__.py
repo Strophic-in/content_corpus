@@ -6,7 +6,7 @@ import logging
 
 from .config import settings
 from . import upkeep
-from .handlers import (analyze_asset, assemble, attach_media, build_segment, check_sources, fetch_asset,
+from .handlers import (analyze_asset, assemble, attach_media, auto_pick, build_segment, check_sources, fetch_asset,
                        make_ai_image, narrate, package_post, plan_shots, prepare_shot, publish_post, refresh_models,
                        render_post,
                        render_slides, research_post, suggest_ideas, write_script)
@@ -32,6 +32,7 @@ HANDLERS = {
     # and downloads never hold up scripts, segments or assembly.
     "ideas": {
         "suggest_ideas": suggest_ideas.HANDLER,
+        "auto_pick": auto_pick.HANDLER,                       # the day's post when the owner picked none
         "idea_from_video": suggest_ideas.HANDLER,           # Explore YouTube → "Make an idea"
         "attach_media": attach_media.HANDLER,
         "check_sources": check_sources.CHECK_HANDLER,

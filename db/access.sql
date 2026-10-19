@@ -151,10 +151,12 @@ grant delete on formats to corpus_web;
 -- Channels: the profile is the owner's to edit; the default is switched by
 -- api.set_default_channel.
 grant insert (user_id, name, niche, audience, voice, language, timezone, default_publish_time,
-              ideas_daily, ideas_daily_at, video_look)
+              ideas_daily, ideas_daily_at, video_look, daily_auto_post, daily_pick_at,
+              daily_auto_count)
   on channels to corpus_web;
 grant update (name, niche, audience, voice, language, timezone, default_publish_time,
-              ideas_daily, ideas_daily_at, updated_at, video_look)
+              ideas_daily, ideas_daily_at, updated_at, video_look, daily_auto_post, daily_pick_at,
+              daily_auto_count)
   on channels to corpus_web;
 grant delete on channels to corpus_web;
 

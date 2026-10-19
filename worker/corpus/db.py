@@ -124,9 +124,11 @@ def enqueue(c: Connection, *, user_id: str, lane: str, kind: str, dedupe_key: st
 
 
 def schedule_daily_ideas() -> int:
-    """Queue each channel's daily idea batch for today if it is not queued yet."""
+    """Queue each channel's daily idea batch, and its automatic pick of the day's top
+    story, for today if they are not queued yet."""
     with conn() as c:
-        return c.execute("select private.schedule_daily_ideas() as n").fetchone()["n"]
+        return (c.execute("select private.schedule_daily_ideas() as n").fetchone()["n"]
+                + c.execute("select private.schedule_daily_pick() as n").fetchone()["n"])
 
 
 def log_event(c: Connection, post_id, from_state: str | None, to_state: str, actor: str,

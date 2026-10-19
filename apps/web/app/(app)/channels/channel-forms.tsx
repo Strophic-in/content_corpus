@@ -16,6 +16,7 @@ function Feedback({ state }: { state: ActionState }) {
 type ChannelData = {
   id: string; name: string; niche: string; audience: string; voice: string; language: string; timezone: string;
   default_publish_time: string; ideas_daily: boolean; ideas_daily_at: string; video_look?: string;
+  daily_auto_post?: boolean; daily_pick_at?: string; daily_auto_count?: number;
 };
 export type LookOption = { look_id: string; name: string; best_for: string[] };
 
@@ -61,9 +62,28 @@ export function ChannelForm({ channel, looks = [] }: { channel?: ChannelData; lo
         <span className="text-xs text-muted">How generated shots look: photoreal, documentary, 3D, cartoon, anime, retro,
           black and white… Real footage always stays as filmed. Sensitive stories never get a playful look.</span>
       </label>
-      <label className="flex items-center gap-2 text-sm sm:col-span-2">
-        <input name="ideas_daily" type="checkbox" defaultChecked={c?.ideas_daily ?? true} className="size-4 accent-[var(--accent)]" />
-        Find new ideas automatically every day
+      <label className="flex items-start gap-2 text-sm sm:col-span-2">
+        <input name="daily_auto_post" type="checkbox" defaultChecked={c?.daily_auto_post ?? false}
+               className="mt-0.5 size-4 accent-[var(--accent)]" />
+        <span>Post the day&apos;s top stories automatically when I don&apos;t pick enough
+          <span className="block text-xs text-muted">At the time below, Jev picks the day&apos;s best stories across your
+            categories — as many as it takes to reach the posts per day below — and they&apos;re made and posted on
+            autopilot from your posting time, an hour and a half apart. No idea batch, so no idea-writing tokens. Posts
+            you pick yourself in Discover count towards the day.</span></span>
+      </label>
+      <label className="flex flex-col gap-1 text-sm">Posts per day
+        <input name="daily_auto_count" type="number" min={1} max={10} step={1} required
+               defaultValue={c?.daily_auto_count ?? 1} className={input} />
+      </label>
+      <label className="flex flex-col gap-1 text-sm">Pick the day&apos;s story at
+        <input name="daily_pick_at" type="time" step={60} required defaultValue={c?.daily_pick_at ?? "13:30"} className={input} />
+        <span className="text-xs text-muted">Leave a few hours before the posting time for it to be made.</span>
+      </label>
+      <label className="flex items-start gap-2 text-sm sm:col-span-2">
+        <input name="ideas_daily" type="checkbox" defaultChecked={c?.ideas_daily ?? false} className="mt-0.5 size-4 accent-[var(--accent)]" />
+        <span>Also write a batch of new ideas every morning
+          <span className="block text-xs text-muted">Off: ideas are written only when you press &quot;More ideas&quot; in
+            Discover.</span></span>
       </label>
       <div className="flex flex-col gap-2 sm:col-span-2">
         <Feedback state={state} />

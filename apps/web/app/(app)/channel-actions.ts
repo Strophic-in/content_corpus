@@ -39,6 +39,9 @@ const ChannelInput = z.object({
   default_publish_time: z.string().regex(/^\d{2}:\d{2}(:\d{2})?$/, "Pick a time."),
   ideas_daily_at: z.string().regex(/^\d{2}:\d{2}(:\d{2})?$/, "Pick a time."),
   ideas_daily: z.string().optional().transform((v) => v === "on"),
+  daily_auto_post: z.string().optional().transform((v) => v === "on"),
+  daily_pick_at: z.string().regex(/^\d{2}:\d{2}(:\d{2})?$/, "Pick a time.").default("13:30"),
+  daily_auto_count: z.coerce.number().int().min(1, "At least one post a day.").max(10).default(1),
   video_look: z.string().regex(/^[a-z0-9_]{3,40}$/, "Pick a video look.").default("auto"),
 });
 
@@ -52,10 +55,11 @@ export async function createChannel(_: ActionState, form: FormData): Promise<Act
     id = await asUser(user.id, async (db) => {
       const r = await db.query(
         `insert into channels (user_id, name, niche, audience, voice, language, timezone, default_publish_time,
-                               ideas_daily, ideas_daily_at, video_look)
-         values ($1, $2, $3, $4, $5, $6, $7, $8::time, $9, $10::time) returning id`,
+                               ideas_daily, ideas_daily_at, video_look, daily_auto_post, daily_pick_at,
+                               daily_auto_count)
+         values ($1, $2, $3, $4, $5, $6, $7, $8::time, $9, $10::time, $11, $12, $13::time, $14) returning id`,
         [user.id, v.name, v.niche, v.audience, v.voice, v.language, v.timezone, v.default_publish_time,
-         v.ideas_daily, v.ideas_daily_at, v.video_look],
+         v.ideas_daily, v.ideas_daily_at, v.video_look, v.daily_auto_post, v.daily_pick_at, v.daily_auto_count],
       );
       await starterFormats(db, user.id, r.rows[0].id);
       return r.rows[0].id as string;
@@ -76,10 +80,10 @@ export async function updateChannel(channelId: string, _: ActionState, form: For
     await asUser(user.id, (db) => db.query(
       `update channels set name = $2, niche = $3, audience = $4, voice = $5, language = $6, timezone = $7,
               default_publish_time = $8::time, ideas_daily = $9, ideas_daily_at = $10::time, video_look = $11,
-              updated_at = now()
+              daily_auto_post = $12, daily_pick_at = $13::time, daily_auto_count = $14, updated_at = now()
         where id = $1`,
       [channelId, v.name, v.niche, v.audience, v.voice, v.language, v.timezone, v.default_publish_time,
-       v.ideas_daily, v.ideas_daily_at, v.video_look]));
+       v.ideas_daily, v.ideas_daily_at, v.video_look, v.daily_auto_post, v.daily_pick_at, v.daily_auto_count]));
   } catch (err) {
     return { ok: false, error: friendly(err) };
   }

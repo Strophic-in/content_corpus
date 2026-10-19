@@ -116,15 +116,23 @@ export default async function ChannelDeckPage({ params }: { params: Promise<{ ch
                or payload->>'category_id' in (select id::text from categories where channel_id = $1::uuid)
                or payload->>'idea_id' in (select id::text from ideas where channel_id = $1::uuid and status = 'new'))`,
       [channelId])).rows[0].n as number;
-    // The next free day at the channel's usual time: the schedule sheet's suggestion.
-    const next = (await db.query(
-      `select to_char(d, 'YYYY-MM-DD') as day from generate_series(
-                (now() at time zone $2)::date + 1, (now() at time zone $2)::date + 60, interval '1 day') d
-        where not exists (select 1 from posts p where p.channel_id = $1 and p.slot_date = d::date)
-        limit 1`, [channelId, channel.timezone])).rows[0]?.day as string | undefined;
+    // An idea picked today goes out today (owner, 2026-10-19): at the channel's usual
+    // time, or two hours from now when that is under 90 minutes away or past (then
+    // tomorrow at the usual time, if two hours from now is already tomorrow).
+    const slot = (await db.query(
+      `with t as (select now() at time zone $1 as now_local, ($1)::text as tz)
+       select case when (now_local::date + $2::time) - now_local >= interval '90 minutes'
+                   then to_char(now_local, 'YYYY-MM-DD')
+                   when (now_local + interval '2 hours')::date = now_local::date then to_char(now_local, 'YYYY-MM-DD')
+                   else to_char(now_local + interval '1 day', 'YYYY-MM-DD') end as day,
+              case when (now_local::date + $2::time) - now_local >= interval '90 minutes' then to_char($2::time, 'HH24:MI')
+                   when (now_local + interval '2 hours')::date = now_local::date
+                     then to_char(date_trunc('hour', now_local + interval '2 hours 59 minutes'), 'HH24:MI')
+                   else to_char($2::time, 'HH24:MI') end as time
+         from t`, [channel.timezone, channel.default_publish_time])).rows[0] as { day: string; time: string };
     const today = (await db.query("select to_char(now() at time zone $1, 'YYYY-MM-DD') as d",
                                   [channel.timezone])).rows[0].d as string;
-    return { channel, categories, ideas, formats, accounts, looking, next, today };
+    return { channel, categories, ideas, formats, accounts, looking, slot, today };
   });
   if (!data) notFound();
   const { channel, categories } = data;
@@ -150,7 +158,7 @@ export default async function ChannelDeckPage({ params }: { params: Promise<{ ch
         categories={categories}
         formats={formats}
         platforms={data.accounts.map((a) => ({ id: a.platform, label: names[a.platform] }))}
-        suggestion={{ date: data.next ?? data.today, time: channel.default_publish_time, min: data.today }}
+        suggestion={{ date: data.slot.day, time: data.slot.time, min: data.today }}
       />
     </div>
   );

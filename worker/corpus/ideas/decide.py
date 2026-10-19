@@ -73,6 +73,23 @@ IDEA_QUESTIONS = {
 }
 
 
+def rank_scored(jev: Jev, cands: list[Item], category: dict, audience: str = "") -> list[tuple[float, Item]]:
+    """Each item Jev could judge with its score (fit, trending, genuine, pull), best
+    first; items that plainly don't fit the category are left out."""
+    cat = f"{category['name']}: {category.get('brief') or 'whatever suits the channel'}"
+    today = datetime.now(timezone.utc).strftime("%d %B %Y")
+    who = audience or "a general audience on short-video apps"
+    answers = jev.many([({"item": _item_text(it), "category": cat, "today": today, "audience": who}, RANK_QUESTIONS)
+                        for it in cands])
+    out = []
+    for it, a in zip(cands, answers):
+        if a is None or score(a.get("fits")) < MIN_FIT:
+            continue
+        out.append((score(a.get("fits")) + 0.8 * score(a.get("trending")) + 1.5 * yes(a.get("genuine"))
+                    + 1.5 * score(a.get("pull")), it))
+    return sorted(out, key=lambda x: x[0], reverse=True)
+
+
 def rank(jev: Jev, cands: list[Item], category: dict, keep: int = KEEP, audience: str = "") -> tuple[list[Item], dict]:
     """(the best `keep` items, best first; what was decided). Items Jev couldn't
     judge keep their place after the judged ones."""
