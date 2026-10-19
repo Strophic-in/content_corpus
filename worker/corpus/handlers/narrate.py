@@ -48,22 +48,31 @@ def run(ctx: JobContext) -> dict:
                              where p.id = %s""", (s["post_id"],)).fetchone()
         if s["state"] != "approved" or post["audio_source"] != "kokoro":
             return {"skipped": "not an approved narrated script"}
-        st = c.execute("""select narrator_voice, narrator_speed, voice_mode, voices_enabled, voice_styles_enabled,
-                                 fixed_voice, fixed_voice_style
+        st = c.execute("""select narrator_voice, narrator_speed, voice_mode, voices_enabled, fixed_voice, script_model
                             from app_settings where user_id = %s""", (post["user_id"],)).fetchone() or {}
         shots = c.execute("""select id, idx, narration, narration_key, narration_words, source, audio_mode
                                from shots where script_id = %s order by idx""", (script_id,)).fetchall()
     if not shots:
         raise Permanent("no shots to narrate", stage="input")
-    voice_id, style_id = _voice_for(post, st, shots)
-    v, style = voices.catalog()[voice_id], voices.styles()[style_id]
+    v = voices.catalog()[_voice_for(post, st, shots)]
     voice = v.id
-    # The style sets the pace; the owner's speed setting (1.1 by default) scales it.
-    speed = max(0.8, min(1.3, style.speed * float(st.get("narrator_speed") or 1.1) / 1.1))
-    key = vault.secret(post["user_id"], "openai") if v.engine == "openai" else None
-    if v.engine == "openai" and not key:
+    speed = float(st.get("narrator_speed") or 1.1)
+    api_key = vault.secret(post["user_id"], "openai") if v.engine == "openai" else None
+    if v.engine == "openai" and not api_key:
         raise Permanent("This post's voice is an OpenAI voice — add your OpenAI key in Settings, or switch "
                         "OpenAI voices off in Settings → Voices.", stage="config")
+    # An AI voice is told how to sound, written from the script itself; kept on the
+    # post (voice_style) so a retry reads every line the same way.
+    instructions = post["voice_style"] or ""
+    if v.engine == "openai" and not instructions:
+        said = "\n".join((sh["narration"] or "").strip() for sh in shots if (sh["narration"] or "").strip())
+        instructions, usage = (voices.direction(api_key, st["script_model"], said, post["language"])
+                               if st.get("script_model") else (voices.DEFAULT_DIRECTION, None))
+        if usage is not None:
+            costs.record_llm(usage, user_id=post["user_id"], post_id=post["id"], channel_id=post["channel_id"],
+                             category_id=post["category_id"], job_id=ctx.job.get("id"), note="voice direction")
+        with db.conn() as c:
+            c.execute("update posts set voice_style = %s where id = %s", (instructions, post["id"]))
     spoken = 0.0
     prefix = storage.post_prefix(post["user_id"], post["id"])
 
@@ -82,7 +91,7 @@ def run(ctx: JobContext) -> dict:
                 storage.get_file(sh["narration_key"], wav)
             else:
                 if v.engine == "openai":
-                    seconds = SPEAK_OPENAI(key, v.voice, style.instructions, text, wav)
+                    seconds = SPEAK_OPENAI(api_key, v.voice, instructions, text, wav)
                     spoken += seconds
                 else:
                     seconds = SPEAK(text, v.voice, speed, wav)
@@ -112,25 +121,26 @@ def run(ctx: JobContext) -> dict:
                          job_id=ctx.job.get("id"))
     with db.conn() as c:
         db.log_event(c, post["id"], "approved", "approved", f"worker:{settings().worker_id}",
-                     "narration recorded", {"voice": voice, "style": style.style_id, "shots": done,
+                     "narration recorded", {"voice": voice, "shots": done,
                                             "seconds": round(total, 2)})
     auto.request_render(post["id"])              # Automatic mode: on to the GPU
     return {"voice": voice, "shots_voiced": done, "seconds": round(total, 2)}
 
 
-def _voice_for(post: dict, st: dict, shots: list) -> tuple[str, str]:
-    """The post's voice and style: kept from an earlier attempt, else chosen now (Jev
-    picks from the voices and styles switched on) and kept on the post."""
-    if post["voice_id"] in voices.catalog() and post["voice_style"] in voices.styles():
-        return post["voice_id"], post["voice_style"]
+def _voice_for(post: dict, st: dict, shots: list) -> str:
+    """The post's voice: kept from an earlier attempt, else chosen now (Jev picks from
+    the voices switched on) and kept on the post."""
+    if post["voice_id"] in voices.catalog():
+        return post["voice_id"]
     said = " ".join((sh["narration"] or "") for sh in shots)[:1200]
-    voice_id, style_id, why = voices.choose(
+    voice_id, why = voices.choose(
         jev.for_user(post["user_id"]), st, language=post["language"], story=f"{post['topic']}. {said}",
         category=post["category"] or "", template=post["template_id"] or "")
     with db.conn() as c:
-        c.execute("update posts set voice_id = %s, voice_style = %s, voice_why = %s where id = %s",
-                  (voice_id, style_id, why, post["id"]))
-    return voice_id, style_id
+        c.execute("update posts set voice_id = %s, voice_style = null, voice_why = %s where id = %s",
+                  (voice_id, why, post["id"]))
+    post["voice_style"] = None
+    return voice_id
 
 
 def on_give_up(ctx: JobContext, err: dict) -> None:

@@ -1,18 +1,16 @@
-"""Narrator voices and voice styles, and Jev's pick of both for a post.
+"""Narrator voices, and Jev's pick of one for a post.
 
-  prompts/voices/catalog.json     every voice: engine (kokoro: free, on this CPU,
-                                  speed only · openai: gpt-4o-mini-tts, follows a
-                                  style's instructions, English and Hindi), who it
-                                  sounds like, what it suits
-  prompts/voice_styles/<id>.json  ready-made deliveries — breaking news, calm
-                                  explainer, documentary, somber, energetic,
-                                  storyteller, conversational, Hindi news anchor:
-                                  instructions (openai) and a pace (both)
+prompts/voices/catalog.json lists every voice: engine kokoro (free, on this CPU,
+English American and British, a few Hindi) or openai (gpt-4o-mini-tts: speaks English
+and Hindi well, follows directions, billed to the owner's key, about ₹1 a reel).
 
-The owner switches voices and styles on in Settings → Voices. For each narrated post
-(narrate.py) Jev picks, from those, the voice that fits the channel's language and
-the story, and the style — never a playful one for a tragedy. "Fixed" mode: always
-the owner's one voice. The pick is kept on the post (voice_id, voice_style, voice_why).
+Free first: an English post is read by a free voice; a Hindi post by an AI voice (the
+free Hindi voices are the fallback). The owner switches voices on in Settings →
+Voices; Jev picks one of those for the story (it reads each voice's description — it
+cannot hear them). An AI voice is also told how to sound: a short direction written
+from the script itself (direction()), so the tone follows the content — urgent for
+breaking news, calm for science, slow and respectful for a tragedy. A free voice
+only takes the owner's speed.
 """
 
 from __future__ import annotations
@@ -20,17 +18,19 @@ from __future__ import annotations
 import functools
 import json
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
-from .jev import Jev, yes
 from .config import settings
+from .jev import Jev
 
 log = logging.getLogger("corpus.voices")
 
 TTS_MODEL = "gpt-4o-mini-tts"
 USD_PER_MINUTE = 0.015            # gpt-4o-mini-tts, about
 SURE = 0.4
+DEFAULT_DIRECTION = ("Voice: a clear, natural narrator for a short news video. Tone: confident and engaging. "
+                     "Pacing: brisk but easy to follow.")
 
 
 @dataclass(frozen=True)
@@ -46,43 +46,11 @@ class Voice:
     best_for: tuple[str, ...]
 
 
-@dataclass(frozen=True)
-class Style:
-    style_id: str
-    name: str
-    description: str
-    instructions: str
-    speed: float
-    playful: bool = False
-    sensitive: bool = False
-    languages: tuple[str, ...] = field(default=())
-    best_for: tuple[str, ...] = field(default=())
-    group: str = ""
-    dark: bool = False            # horror and the like: never for a real tragedy
-    expressive: bool = False      # needs acting: only the directable (OpenAI) voices can do it
-    voice_hint: str = ""          # what kind of voice suits it ("deep, low, breathy")
-
-
 @functools.lru_cache(maxsize=1)
 def catalog() -> dict[str, Voice]:
     raw = json.loads((settings().prompts_dir / "voices" / "catalog.json").read_text(encoding="utf-8"))
-    out = {}
-    for v in raw["voices"]:
-        out[v["id"]] = Voice(v["id"], v["engine"], v["voice"], v["name"], v["gender"], v["accent"],
-                             tuple(v["languages"]), v["tone"], tuple(v["best_for"]))
-    return out
-
-
-@functools.lru_cache(maxsize=1)
-def styles() -> dict[str, Style]:
-    out = {}
-    for f in sorted((settings().prompts_dir / "voice_styles").glob("*.json")):
-        s = json.loads(f.read_text(encoding="utf-8"))
-        out[s["style_id"]] = Style(s["style_id"], s["name"], s["description"], s["instructions"], float(s["speed"]),
-                                   bool(s.get("playful")), bool(s.get("sensitive")), tuple(s.get("languages") or ()),
-                                   tuple(s.get("best_for") or ()), s.get("group", ""), bool(s.get("dark")),
-                                   bool(s.get("expressive")), s.get("voice_hint", ""))
-    return out
+    return {v["id"]: Voice(v["id"], v["engine"], v["voice"], v["name"], v["gender"], v["accent"],
+                           tuple(v["languages"]), v["tone"], tuple(v["best_for"])) for v in raw["voices"]}
 
 
 def language_code(language: str | None) -> str:
@@ -90,87 +58,65 @@ def language_code(language: str | None) -> str:
     return "hi" if (language or "").strip().lower() in ("hindi", "hi", "हिंदी", "हिन्दी") else "en"
 
 
-def _usable(st: dict, lang: str) -> tuple[list[Voice], list[Style]]:
-    cat, sty = catalog(), styles()
-    vs = [cat[v] for v in (st.get("voices_enabled") or []) if v in cat and lang in cat[v].languages]
-    ss = [sty[s] for s in (st.get("voice_styles_enabled") or []) if s in sty
-          and (not sty[s].languages or lang in sty[s].languages)]
-    if not vs:            # nothing switched on speaks it: any voice that does
-        vs = [v for v in cat.values() if lang in v.languages][:1]
-    if not ss:
-        ss = [sty["hindi_anchor" if lang == "hi" else "calm_explainer"]]
-    return vs, ss
-
-
-def _default_style(ss: list[Style], lang: str) -> Style:
-    want = "hindi_anchor" if lang == "hi" else "calm_explainer"
-    return next((s for s in ss if s.style_id == want), ss[0])
-
-
-SENSITIVE = {"sensitive": {"type": "noul", "instructions": "Is `story` about deaths, a disaster, violence, a crime "
-                                                           "with victims, or another tragedy?"}}
+def _pool(st: dict, lang: str) -> list[Voice]:
+    """The voices switched on that speak `lang`, the preferred engine only: free for
+    English, AI for Hindi — the other engine when none of the preferred is on."""
+    cat = catalog()
+    on = [cat[v] for v in (st.get("voices_enabled") or []) if v in cat and lang in cat[v].languages]
+    want = "openai" if lang == "hi" else "kokoro"
+    preferred = [v for v in on if v.engine == want]
+    if preferred or on:
+        return preferred or on
+    return [v for v in cat.values() if lang in v.languages and v.engine == want][:1] or \
+        [v for v in cat.values() if lang in v.languages][:1]
 
 
 def choose(judge: Jev | None, st: dict, *, language: str | None, story: str, category: str = "",
-           template: str = "") -> tuple[str, str, str]:
-    """(voice id, style id, why) for a post."""
+           template: str = "") -> tuple[str, str]:
+    """(voice id, why) for a post."""
     lang = language_code(language)
-    vs, ss = _usable(st, lang)
+    pool = _pool(st, lang)
     fixed = catalog().get(st.get("fixed_voice") or "")
     if st.get("voice_mode") == "fixed" and fixed and lang in fixed.languages:
-        style = styles().get(st.get("fixed_voice_style") or "") or _default_style(ss, lang)
-        return fixed.id, style.style_id, "your voice"
+        return fixed.id, "your voice"
     own = fixed or catalog().get(f"kokoro:{st.get('narrator_voice') or ''}")
-    first = own if own and lang in own.languages else vs[0]
-    if judge is None or (len(vs) < 2 and len(ss) < 2):
-        return first.id, _default_style(ss, lang).style_id, "your voice" if first is own else "the first voice switched on"
-    # Jev can't hear a voice: it reads each one's description. So the style is picked
-    # first (how the story should be read), then the voice that suits that style.
-    state = {"story": story[:1500], "category": category or "news", "format": template or "short video"}
-    q = dict(SENSITIVE)
-    if len(ss) > 1:
-        q["style"] = {"type": "choice", "instructions": "How should `story` be read aloud, for this `category`?",
-                      "criteria": {f"s{i}": f"{x.name} ({x.group}): {x.description} Best for {', '.join(x.best_for)}."
-                                   for i, x in enumerate(ss)}}
+    first = own if own in pool else pool[0]
+    if judge is None or len(pool) < 2:
+        return first.id, "your voice" if first is own else "the first voice switched on"
+    q = {"voice": {"type": "choice", "instructions": "Which narrator voice suits `story` best, for this `category`?",
+                   "criteria": {f"v{i}": f"{v.name}: {v.gender}, {v.accent} accent; {v.tone}. "
+                                         f"Best for {', '.join(v.best_for)}." for i, v in enumerate(pool)}}}
     try:
-        a = judge.ask(state, q)
+        a = judge.ask({"story": story[:1500], "category": category or "news", "format": template or "short video"}, q)
+        pick = a.get("voice") or {}
+        ch, conf = str(pick.get("choice") or ""), float(pick.get("confidence") or 0)
+        if ch.startswith("v") and ch[1:].isdigit() and int(ch[1:]) < len(pool) and conf >= SURE:
+            return pool[int(ch[1:])].id, f"Jev's pick ({round(conf * 100)}% sure)"
     except Exception as e:  # noqa: BLE001 - a voice is still needed
-        log.warning("voice style choice: %s", e)
-        return first.id, _default_style(ss, lang).style_id, "your voice" if first is own else "the first voice switched on"
-    style, sconf = _pick(a.get("style"), "s", ss)
-    style = style if style and sconf >= SURE else _default_style(ss, lang)
-    if yes(a.get("sensitive"), 0.0) >= 0.6:       # a real tragedy: never playful, never horror
-        if style.playful or style.dark:
-            style = next((x for x in ss if x.sensitive), None) or next(
-                (x for x in ss if not x.playful and not x.dark), _default_style(ss, lang))
-    # A style that needs acting goes to the voices that can act it, when any are on.
-    actors = [v for v in vs if v.engine == "openai"]
-    pool = actors if style.expressive and actors else vs
-    voice, vconf = (pool[0], 1.0) if len(pool) < 2 else (None, 0.0)
-    if len(pool) > 1:
-        try:
-            b = judge.ask({**state, "style": f"{style.name}: {style.description} It suits a voice that is "
-                                              f"{style.voice_hint or 'clear'}."},
-                          {"voice": {"type": "choice", "instructions": "Which narrator voice reads `story` best in "
-                                                                       "`style`?",
-                                     "criteria": {f"v{i}": f"{v.name}: {v.gender}, {v.accent} accent; {v.tone}. "
-                                                           f"Best for {', '.join(v.best_for)}."
-                                                  for i, v in enumerate(pool)}}})
-            voice, vconf = _pick(b.get("voice"), "v", pool)
-        except Exception as e:  # noqa: BLE001
-            log.warning("voice choice: %s", e)
-    if not voice or vconf < SURE:
-        voice = first if first in pool else pool[0]
-    return voice.id, style.style_id, f"Jev's pick ({round(100 * min(vconf or 1, sconf or 1))}% sure)"
+        log.warning("voice choice: %s", e)
+    return first.id, "your voice" if first is own else "the first voice switched on"
 
 
-def _pick(answer: dict | None, prefix: str, items: list):
-    if not answer or len(items) < 2:
-        return (items[0] if items else None), 1.0
-    ch = str(answer.get("choice") or "")
-    if ch.startswith(prefix) and ch[1:].isdigit() and int(ch[1:]) < len(items):
-        return items[int(ch[1:])], float(answer.get("confidence") or 0)
-    return None, 0.0
+DIRECTION_PROMPT = """You direct a narrator for a short vertical video. Read the script and write how it should be
+spoken, in 2-3 short sentences: "Voice: …. Tone: …. Pacing: …." Match the content: urgent and crisp for breaking
+news, warm and curious for science, slow, low and respectful for deaths or disasters, playful for light or funny
+stories, gripping for crime or mystery. The language of the script is {language}; say so if it is not English
+("Speak in natural Hindi …"). Never ask for an imitation of a real person. Reply with the direction only."""
+
+
+def direction(api_key: str, model: str, script: str, language: str | None) -> tuple[str, object | None]:
+    """How an AI voice should read `script` (and the model call's usage, for the ledger)."""
+    from openai import OpenAI
+
+    try:
+        client = OpenAI(api_key=api_key, timeout=45, max_retries=1)
+        r = client.responses.create(model=model, instructions=DIRECTION_PROMPT.format(language=language or "English"),
+                                    input=script[:3000])
+        from .script.llm import Usage
+        return ((r.output_text or "").strip()[:600] or DEFAULT_DIRECTION), Usage.of(r)
+    except Exception as e:  # noqa: BLE001 - a plain direction still reads well
+        log.warning("voice direction: %s", e)
+        return DEFAULT_DIRECTION, None
 
 
 def speak_openai(api_key: str, voice: str, instructions: str, text: str, out: Path) -> float:

@@ -84,8 +84,9 @@ export default async function PostPage({ params }: { params: Promise<{ id: strin
             .format(new Date(`${post.slot_date}T00:00:00Z`))}{post.publish_time ? ` · ${post.publish_time}` : ""}</span>
           {post.template_id && <span>{t.display_name}</span>}
           {lookName(post.look_id) && <span title={post.look_why ?? undefined}>Look: {lookName(post.look_id)}</span>}
-          {voiceLabel(post.voice_id, post.voice_style) &&
-            <span title={post.voice_why ?? undefined}>Voice: {voiceLabel(post.voice_id, post.voice_style)}</span>}
+          {voiceLabel(post.voice_id) &&
+            <span title={[post.voice_why, post.voice_style].filter(Boolean).join(" — ") || undefined}>
+              Voice: {voiceLabel(post.voice_id)}</span>}
           {styleName("caption", post.caption_preset) && <span>Captions: {styleName("caption", post.caption_preset)}</span>}
           {styleName("thumb", (post.package as { thumb_style?: string } | null)?.thumb_style) &&
             <span>Cover: {styleName("thumb", (post.package as { thumb_style?: string } | null)?.thumb_style)}</span>}
