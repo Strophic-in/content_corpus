@@ -286,3 +286,15 @@ def test_a_real_events_own_video_is_kept_as_a_clip(public_dns, monkeypatch, owne
     assert a["kind"] == "video" and a["fetch_from"]["item"]["page_url"] == "https://news.test/a"
     assert a["fetch_from"]["item"]["page_index"] == 1
     owner.execute("delete from jobs where post_id = %s", (post["id"],))
+
+
+def test_a_videos_frame_comes_from_a_templated_thumbnail_or_the_video(monkeypatch, tmp_path):
+    from corpus.ideas import media
+    assert finder._thumb_url("https://ichef.bbci.co.uk/images/ic/$recipe/p0ph9g1b.jpg") \
+        == "https://ichef.bbci.co.uk/images/ic/976x549/p0ph9g1b.jpg"
+    clip = tmp_path / "c.mp4"
+    subprocess.run(["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "testsrc2=s=1280x720:r=24:d=2",
+                    "-pix_fmt", "yuv420p", str(clip)], check=True)
+    monkeypatch.setattr(media, "page_video", lambda url, index, work, q=None: clip)
+    frame = finder._video_frame({"page": "https://news.test/v", "index": 1})
+    assert frame and Image.open(io.BytesIO(frame)).size[0] > 0

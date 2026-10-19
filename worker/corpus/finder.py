@@ -36,6 +36,7 @@ from __future__ import annotations
 import io
 import logging
 import re
+from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 
 import httpx
@@ -309,7 +310,7 @@ def videos(judge: Jev, client: httpx.Client, story: str, articles: list[Article]
             by_id[v["id"]] = (a, v)
     picked = []
     for a, v in list(by_id.values())[:6]:
-        frame = _download(client, v["thumbnail"]) if v["thumbnail"] else _video_frame(v)
+        frame = (_download(client, _thumb_url(v["thumbnail"])) if v["thumbnail"] else None) or _video_frame(v)
         if not frame:
             continue
         try:
@@ -326,6 +327,11 @@ def videos(judge: Jev, client: httpx.Client, story: str, articles: list[Article]
                        "license": "third_party", "shows": round(shows, 2), "usable": 1.0, "before": 0.0})
     picked.sort(key=lambda c: c["shows"], reverse=True)
     return picked[:VIDEO_KEEP]
+
+
+def _thumb_url(url: str) -> str:
+    """The BBC's thumbnails are templates (…/images/ic/$recipe/p0ph9g1b.jpg): ask for a size."""
+    return url.replace("$recipe", "976x549")
 
 
 def _video_frame(v: dict) -> bytes | None:
