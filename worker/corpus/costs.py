@@ -114,6 +114,21 @@ def record_llm(usage, *, user_id: str, kind: str = "llm", post_id=None, channel_
         log.exception("could not record a model call's cost")
 
 
+def record_tts(*, user_id: str, seconds: float, model: str, post_id=None, channel_id=None, category_id=None,
+               job_id=None) -> None:
+    """Narration spoken by an OpenAI voice (gpt-4o-mini-tts): priced by the minute of audio."""
+    from .voices import USD_PER_MINUTE
+    try:
+        with db.conn() as c:
+            _insert(c, user_id=user_id, channel_id=channel_id, category_id=category_id, post_id=post_id,
+                    job_id=job_id, kind="tts", provider="openai", model=model,
+                    quantity={"seconds": round(seconds, 2)},
+                    usd_micros=round(seconds / 60 * USD_PER_MINUTE * 1_000_000), fx_usd_inr=fx_usd_inr(c, user_id),
+                    note="narration")
+    except Exception:  # noqa: BLE001 - the ledger must never fail the work it records
+        log.exception("could not record a narration's cost")
+
+
 def record_gpu(*, user_id: str, post_id, job_id, pod_id: int, gpu: str | None, seconds: float,
                rate_paise_h: int | None, confirmed: bool = True, note: str | None = None) -> None:
     """One pod's billed span: from its resume/deploy until it was paused or terminated."""

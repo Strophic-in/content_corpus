@@ -19,7 +19,7 @@ from pathlib import Path
 
 from psycopg.types.json import Jsonb
 
-from .. import auto, db, storage
+from .. import auto, costs, db, jev, storage, vault, voices
 from ..config import settings
 from ..gpu import ltx25
 from ..media import assemble as media
@@ -29,6 +29,7 @@ from ..script.llm import MAX_CLIP_SECONDS, MAX_SHOT_SECONDS
 from .plan_shots import footage_frames
 
 SPEAK = tts.speak                    # swapped by tests
+SPEAK_OPENAI = voices.speak_openai   # swapped by tests
 WORD_TIMINGS = media.whisper_words   # swapped by tests
 PAUSE_SECONDS = 0.35                 # after each line; ltx25.frames_for's default pad
 
@@ -39,18 +40,31 @@ def run(ctx: JobContext) -> dict:
         s = c.execute("select id, post_id, state from scripts where id = %s", (script_id,)).fetchone()
         if s is None:
             raise Permanent("script was deleted", stage="input")
-        post = c.execute("select id, user_id, audio_source from posts where id = %s",
-                         (s["post_id"],)).fetchone()
+        post = c.execute("""select p.id, p.user_id, p.channel_id, p.category_id, p.audio_source, p.topic, p.brief,
+                                   p.voice_id, p.voice_style, ch.language, k.name as category,
+                                   (select f.template_id from formats f where f.id = p.format_id) as template_id
+                              from posts p left join channels ch on ch.id = p.channel_id
+                              left join categories k on k.id = p.category_id
+                             where p.id = %s""", (s["post_id"],)).fetchone()
         if s["state"] != "approved" or post["audio_source"] != "kokoro":
             return {"skipped": "not an approved narrated script"}
-        st = c.execute("select narrator_voice, narrator_speed from app_settings where user_id = %s",
-                       (post["user_id"],)).fetchone() or {}
+        st = c.execute("""select narrator_voice, narrator_speed, voice_mode, voices_enabled, voice_styles_enabled,
+                                 fixed_voice, fixed_voice_style
+                            from app_settings where user_id = %s""", (post["user_id"],)).fetchone() or {}
         shots = c.execute("""select id, idx, narration, narration_key, narration_words, source, audio_mode
                                from shots where script_id = %s order by idx""", (script_id,)).fetchall()
     if not shots:
         raise Permanent("no shots to narrate", stage="input")
-    voice = st.get("narrator_voice") or "am_michael"
-    speed = float(st.get("narrator_speed") or 1.1)
+    voice_id, style_id = _voice_for(post, st, shots)
+    v, style = voices.catalog()[voice_id], voices.styles()[style_id]
+    voice = v.id
+    # The style sets the pace; the owner's speed setting (1.1 by default) scales it.
+    speed = max(0.8, min(1.3, style.speed * float(st.get("narrator_speed") or 1.1) / 1.1))
+    key = vault.secret(post["user_id"], "openai") if v.engine == "openai" else None
+    if v.engine == "openai" and not key:
+        raise Permanent("This post's voice is an OpenAI voice — add your OpenAI key in Settings, or switch "
+                        "OpenAI voices off in Settings → Voices.", stage="config")
+    spoken = 0.0
     prefix = storage.post_prefix(post["user_id"], post["id"])
 
     done, total = 0, 0.0
@@ -67,7 +81,11 @@ def run(ctx: JobContext) -> dict:
             if sh["narration_key"]:          # voiced by an earlier attempt; only timings missing
                 storage.get_file(sh["narration_key"], wav)
             else:
-                seconds = SPEAK(text, voice, speed, wav)
+                if v.engine == "openai":
+                    seconds = SPEAK_OPENAI(key, v.voice, style.instructions, text, wav)
+                    spoken += seconds
+                else:
+                    seconds = SPEAK(text, v.voice, speed, wav)
                 # A generated shot is one LTX take (≤ MAX_SHOT_SECONDS); footage can run longer.
                 cap = MAX_SHOT_SECONDS if sh["source"] == "generate" else MAX_CLIP_SECONDS
                 if seconds + PAUSE_SECONDS > cap:
@@ -88,11 +106,31 @@ def run(ctx: JobContext) -> dict:
             words = media.narration_words(wav, text, WORD_TIMINGS)
             with db.conn() as c:
                 c.execute("update shots set narration_words = %s where id = %s", (Jsonb(words), sh["id"]))
+    if spoken:
+        costs.record_tts(user_id=post["user_id"], post_id=post["id"], channel_id=post["channel_id"],
+                         category_id=post["category_id"], seconds=spoken, model=voices.TTS_MODEL,
+                         job_id=ctx.job.get("id"))
     with db.conn() as c:
         db.log_event(c, post["id"], "approved", "approved", f"worker:{settings().worker_id}",
-                     "narration recorded", {"voice": voice, "shots": done, "seconds": round(total, 2)})
+                     "narration recorded", {"voice": voice, "style": style.style_id, "shots": done,
+                                            "seconds": round(total, 2)})
     auto.request_render(post["id"])              # Automatic mode: on to the GPU
     return {"voice": voice, "shots_voiced": done, "seconds": round(total, 2)}
+
+
+def _voice_for(post: dict, st: dict, shots: list) -> tuple[str, str]:
+    """The post's voice and style: kept from an earlier attempt, else chosen now (Jev
+    picks from the voices and styles switched on) and kept on the post."""
+    if post["voice_id"] in voices.catalog() and post["voice_style"] in voices.styles():
+        return post["voice_id"], post["voice_style"]
+    said = " ".join((sh["narration"] or "") for sh in shots)[:1200]
+    voice_id, style_id, why = voices.choose(
+        jev.for_user(post["user_id"]), st, language=post["language"], story=f"{post['topic']}. {said}",
+        category=post["category"] or "", template=post["template_id"] or "")
+    with db.conn() as c:
+        c.execute("update posts set voice_id = %s, voice_style = %s, voice_why = %s where id = %s",
+                  (voice_id, style_id, why, post["id"]))
+    return voice_id, style_id
 
 
 def on_give_up(ctx: JobContext, err: dict) -> None:

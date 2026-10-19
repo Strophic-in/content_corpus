@@ -59,7 +59,7 @@ def speak(text: str, voice: str, speed: float, out: Path) -> float:
     import numpy as np
     import soundfile as sf
 
-    lang = "en-gb" if voice.startswith("b") else "en-us"
+    lang = "hi" if voice.startswith("h") else "en-gb" if voice.startswith("b") else "en-us"
     audio, sr = _kokoro().create(text, voice=voice, speed=float(speed), lang=lang)
     audio = np.asarray(audio, dtype=np.float32)
     out.parent.mkdir(parents=True, exist_ok=True)

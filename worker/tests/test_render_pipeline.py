@@ -138,7 +138,7 @@ def test_narration_sets_shot_lengths_and_unlocks_render(s3, owner, user):
     assert {(k["kind"], k["state"]) for k in kinds} == {("narration", "stored")}
     ev = owner.execute("select detail from post_events where post_id = %s and reason = 'narration recorded'",
                        (pid,)).fetchone()
-    assert ev["detail"]["voice"] == "bm_george"
+    assert ev["detail"]["voice"] == "kokoro:bm_george"
 
     job = as_user(owner, user, "select * from api.request_render(%s)", (pid,))
     assert (job["lane"], job["kind"], job["state"]) == ("gpu", "render_post", "queued")
