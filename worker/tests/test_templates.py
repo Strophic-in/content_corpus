@@ -219,6 +219,18 @@ def test_a_split_screen_with_a_rank_and_headline_keeps_every_frame(clip, tmp_pat
     assert "#2" in events[0] and "Ladakh in winter" in events[1]
 
 
+def test_a_voice_longer_than_its_picture_slows_the_picture_to_hold_it(clip, tmp_path):
+    nar = tmp_path / "nar.wav"
+    ff("-f", "lavfi", "-i", "sine=f=300:d=1.9", str(nar))          # 1.9 s of voice over a 2 s picture
+    out = assemble.build_segment(clip, tmp_path / "v.mp4", tmp_path / "a.wav", narration=nar)
+    assert out["seconds"] == pytest.approx(2.25, abs=0.05)         # 1.9 + lead-in + tail: 12% slower
+    assert assemble.probe_duration(tmp_path / "a.wav") == pytest.approx(out["seconds"], abs=0.05)
+    long = tmp_path / "long.wav"
+    ff("-f", "lavfi", "-i", "sine=f=300:d=4", str(long))
+    assert assemble.build_segment(clip, tmp_path / "v2.mp4", tmp_path / "a2.wav",
+                                  narration=long)["seconds"] == pytest.approx(2.3, abs=0.05)   # capped
+
+
 def test_transitions_blend_and_a_loop_keeps_its_length(clip, tmp_path):
     lk = templates.look("kinetic_typography")
     segs = []

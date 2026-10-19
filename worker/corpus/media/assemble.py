@@ -326,6 +326,14 @@ def has_audio(p: Path) -> bool:
     return bool(r.stdout.strip())
 
 
+def speed_up(wav: Path, factor: float) -> float:
+    """Play `wav` `factor` times faster, pitch kept (atempo); its new length in seconds."""
+    tmp = wav.with_name(wav.stem + ".fast.wav")
+    _run(["ffmpeg", "-y", "-v", "error", "-i", str(wav), "-filter:a", f"atempo={factor:.4f}", str(tmp)])
+    tmp.replace(wav)
+    return probe_duration(wav)
+
+
 def _frames(p: Path) -> int:
     r = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-count_packets",
                         "-show_entries", "stream=nb_read_packets", "-of", "csv=p=0", str(p)],
@@ -361,6 +369,16 @@ def build_segment(clip: Path, out_video: Path, out_audio: Path, *, narration: Pa
     if split:       # the panel holds a headline at its top: captions go lower, clear of the app's own buttons
         style = dataclasses.replace(style, position_y=max(style.position_y, 0.79))
     seconds = probe_duration(clip)
+    # A line a little longer than its picture: the picture plays slower to hold it
+    # (narrate allows up to PICTURE_STRETCH), and its own sound with it.
+    slow = 1.0
+    if narration is not None:
+        from ..script.llm import PICTURE_STRETCH
+
+        need = probe_duration(narration) + LEAD_IN + 0.2
+        slow = min(PICTURE_STRETCH, need / seconds) if need > seconds else 1.0
+        seconds *= slow
+    stretch = f"setpts={slow:.4f}*PTS," if slow > 1.0 else ""
     with tempfile.TemporaryDirectory() as tmp:
         work = Path(tmp)
         inputs = ["-i", str(clip.resolve())]
@@ -370,15 +388,15 @@ def build_segment(clip: Path, out_video: Path, out_audio: Path, *, narration: Pa
             chain.append(f"[v{len(chain)}]{f}[v{len(chain) + 1}]")
 
         if split:
-            first = ("[0:v]scale=1080:960:force_original_aspect_ratio=increase:flags=lanczos,crop=1080:960,setsar=1,"
-                     f"fps=24,pad=1080:1920:0:0:color={_hex(look.panel_color)}[v0]")
+            first = (f"[0:v]{stretch}scale=1080:960:force_original_aspect_ratio=increase:flags=lanczos,crop=1080:960,"
+                     f"setsar=1,fps=24,pad=1080:1920:0:0:color={_hex(look.panel_color)}[v0]")
             if panel is not None:
                 inputs += ["-loop", "1", "-framerate", "24", "-i", str(panel.resolve())]
                 first += (";[1:v]scale=1080:960:force_original_aspect_ratio=increase:flags=lanczos,crop=1080:960,"
                           "setsar=1[pan]")
                 add("[pan]overlay=0:960:shortest=1")
         else:
-            first = "[0:v]scale=1080:-2:flags=lanczos,crop=1080:1920,setsar=1,fps=24[v0]"
+            first = f"[0:v]{stretch}scale=1080:-2:flags=lanczos,crop=1080:1920,setsar=1,fps=24[v0]"
         if grade:
             add(grade)
         mode = look.captions if look is not None else "karaoke"
@@ -426,7 +444,8 @@ def build_segment(clip: Path, out_video: Path, out_audio: Path, *, narration: Pa
     stereo = f"aresample={RATE},aformat=sample_fmts=fltp:channel_layouts=stereo"
     inputs = (["-i", str(clip)] if has_audio(clip)
               else ["-f", "lavfi", "-i", f"anullsrc=r={RATE}:cl=stereo"])
-    graph = f"[0:a]{stereo},volume={SFX_GAIN if narration else 1.0}[bed];"
+    tempo = f"atempo={1 / slow:.4f}," if slow > 1.0 and has_audio(clip) else ""
+    graph = f"[0:a]{tempo}{stereo},volume={SFX_GAIN if narration else 1.0}[bed];"
     if narration:
         inputs += ["-i", str(narration)]
         ms = int(LEAD_IN * 1000)

@@ -25,7 +25,7 @@ from ..gpu import ltx25
 from ..media import assemble as media
 from ..media import tts
 from ..runner import Handler, JobContext, Permanent
-from ..script.llm import MAX_CLIP_SECONDS, MAX_SHOT_SECONDS
+from ..script.llm import MAX_CLIP_SECONDS, MAX_SHOT_SECONDS, PICTURE_STRETCH, VOICE_SPEEDUP
 from .plan_shots import footage_frames
 
 SPEAK = tts.speak                    # swapped by tests
@@ -95,19 +95,25 @@ def run(ctx: JobContext) -> dict:
                     spoken += seconds
                 else:
                     seconds = SPEAK(text, v.voice, speed, wav)
-                # A generated shot is one LTX take (≤ MAX_SHOT_SECONDS); footage can run longer.
-                cap = MAX_SHOT_SECONDS if sh["source"] == "generate" else MAX_CLIP_SECONDS
+                # A generated shot is one LTX take (≤ MAX_SHOT_SECONDS), which the segment
+                # may play up to PICTURE_STRETCH slower; footage can run longer.
+                cap = MAX_SHOT_SECONDS * PICTURE_STRETCH if sh["source"] == "generate" else MAX_CLIP_SECONDS
                 if seconds + PAUSE_SECONDS > cap:
-                    # The shot would end mid-sentence: its picture cannot be longer.
-                    raise Permanent(f"Shot {sh['idx'] + 1}'s narration takes {seconds:.1f}s to say, but this "
-                                    f"shot holds at most {cap}s. Write the script again; "
-                                    f"new scripts keep every line short enough.", stage="narration_too_long")
+                    factor = (seconds + PAUSE_SECONDS) / cap
+                    if factor > VOICE_SPEEDUP:
+                        # The shot would end mid-sentence: its picture cannot be longer.
+                        raise Permanent(f"Shot {sh['idx'] + 1}'s narration takes {seconds:.1f}s to say; a shot "
+                                        f"holds about {cap - PAUSE_SECONDS:.0f}s of voice. Write the script again "
+                                        f"(new scripts keep every line short enough), or shorten that line.",
+                                        stage="narration_too_long")
+                    seconds = media.speed_up(wav, factor)     # a touch quicker: up to 8%, not noticeable
                 key = f"{prefix}/narration/{script_id}/{sh['idx']}.wav"
                 storage.put_file(key, wav, kind="narration", user_id=post["user_id"], post_id=post["id"],
                                  shot_id=sh["id"], content_type="audio/wav")
                 with db.conn() as c:
-                    frames = (ltx25.frames_for(seconds) if sh["source"] == "generate"
-                              else footage_frames(seconds + PAUSE_SECONDS))
+                    # The GPU renders at most MAX_SHOT_SECONDS; a longer line slows that picture down.
+                    frames = (min(ltx25.frames_for(seconds), ltx25.frames_for(MAX_SHOT_SECONDS - PAUSE_SECONDS))
+                              if sh["source"] == "generate" else footage_frames(seconds + PAUSE_SECONDS))
                     c.execute("""update shots set narration_key = %s, narration_seconds = %s, num_frames = %s
                                   where id = %s""", (key, round(seconds, 3), frames, sh["id"]))
                 done += 1

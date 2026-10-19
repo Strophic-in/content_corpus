@@ -164,6 +164,52 @@ def test_a_line_too_long_for_one_shot_fails_the_post_clearly(s3, owner, user, mo
                          (pid,)).fetchone()["n"] == 0  # nothing stored for the line that cannot fit
 
 
+def test_a_line_a_little_over_8s_fits_and_try_again_resumes_the_voice(s3, owner, user, monkeypatch):
+    pid, sid = approved_narrated_post(owner, user)
+    first = owner.execute("select id, source from shots where script_id = %s and idx = 0", (sid,)).fetchone()
+    owner.execute("update shots set source = 'generate' where id = %s", (first["id"],))
+    line0 = {"n": 12.0}
+
+    def speak(text, voice, speed, out):
+        n = line0["n"] if out.name == "0.wav" else 0.3 * len(text.split())
+        sf.write(out, np.zeros(int(24000 * n), dtype=np.float32), 24000)
+        return n
+
+    monkeypatch.setattr(narrate, "SPEAK", speak)
+    cpu().tick()                                                   # 12 s: too long even sped up
+    assert owner.execute("select status from posts where id = %s", (pid,)).fetchone()["status"] == "failed"
+
+    # Try again (the post page's button) restarts the voice instead of doing nothing.
+    line0["n"] = 8.6                                               # over 8 s: the picture slows to hold it
+    assert as_user(owner, user, "select api.go_ahead(%s) as r", (pid,))["r"] == "will render when its shots are ready"
+    p = owner.execute("select status, error, go_ahead from posts where id = %s", (pid,)).fetchone()
+    assert p["status"] == "approved" and p["error"] is None and p["go_ahead"]
+    assert owner.execute("select state from jobs where dedupe_key = %s", (f"narrate:{sid}",)).fetchone()["state"] == "queued"
+    assert cpu().tick()                                            # narrate again
+    sh = owner.execute("select narration_seconds, num_frames from shots where id = %s", (first["id"],)).fetchone()
+    assert float(sh["narration_seconds"]) == pytest.approx(8.6) and sh["num_frames"] == 193   # the GPU's 8 s
+    assert owner.execute("select status from posts where id = %s", (pid,)).fetchone()["status"] == "queued_for_render"
+    owner.execute("delete from jobs where post_id = %s", (pid,))
+
+
+def test_a_line_just_past_the_stretch_is_read_a_touch_faster(s3, owner, user, monkeypatch):
+    pid, sid = approved_narrated_post(owner, user)
+    owner.execute("update shots set source = 'generate' where script_id = %s and idx = 0", (sid,))
+
+    def speak(text, voice, speed, out):
+        n = 9.5 if out.name == "0.wav" else 0.3 * len(text.split())
+        sf.write(out, np.zeros(int(24000 * n), dtype=np.float32), 24000)
+        return n
+
+    monkeypatch.setattr(narrate, "SPEAK", speak)
+    assert cpu().tick()
+    secs = float(owner.execute("select narration_seconds from shots where script_id = %s and idx = 0",
+                               (sid,)).fetchone()["narration_seconds"])
+    assert 8.8 < secs < 8.95                                       # 9.5 s read ~7% faster
+    assert owner.execute("select status from posts where id = %s", (pid,)).fetchone()["status"] != "failed"
+    owner.execute("delete from jobs where post_id = %s", (pid,))
+
+
 def test_narrate_is_resumable(s3, owner, user, monkeypatch):
     pid, sid = approved_narrated_post(owner, user)
     calls = []

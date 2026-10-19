@@ -18,6 +18,9 @@ from pydantic import BaseModel
 # RTX 5090 renders at our size: longer shots needed the PRO 6000 at a higher rate
 # (owner's choice, 2026-10-18 — a longer thought becomes two shots).
 MIN_SHOT_SECONDS, MAX_SHOT_SECONDS = 3, 8
+# A narrated line a little longer than that still fits: the 8 s picture is played
+# up to 15% slower (about 9.2 s), and the voice up to 8% faster beyond that.
+PICTURE_STRETCH, VOICE_SPEEDUP = 1.15, 1.08
 # Spoken pace that fits a shot without rushing: ~2.5 words per second for
 # on-screen characters.
 MAX_WORDS_PER_SECOND = 2.8
