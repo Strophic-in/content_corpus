@@ -275,3 +275,65 @@ def page_image(client: httpx.Client, url: str) -> str | None:
         return None
     meta = sites.page_links(page.content.decode("utf-8", "replace"), page.url).meta
     return meta.get("og:image:secure_url") or meta.get("og:image") or meta.get("twitter:image")
+
+
+# ── the videos in a news page (yt-dlp: BBC, NDTV, CNN… and plain <video> embeds) ──
+
+PAGE_VIDEO_SECONDS = 300          # a news clip, not a programme
+PAGE_VIDEO_BYTES = 400_000_000
+
+
+def _ytdlp_opts(**more) -> dict:
+    return {"quiet": True, "no_warnings": True, "socket_timeout": 25, "noprogress": True,
+            "http_headers": {"User-Agent": net.BROWSER_UA}, **more}
+
+
+def page_videos(url: str, most: int = 4) -> list[dict]:
+    """The videos a news article carries, without downloading them:
+    [{page, index, id, title, seconds, thumbnail}]. `index` is the video's place in
+    the page (0: the page is the video). Pages with none, or a site yt-dlp can't read,
+    give []. Only pages already read as public articles are asked (research_post)."""
+    import yt_dlp
+
+    try:
+        with yt_dlp.YoutubeDL(_ytdlp_opts(skip_download=True, playlistend=8)) as y:
+            info = y.extract_info(url, download=False)
+    except Exception:  # noqa: BLE001 - no video here, or a site yt-dlp doesn't know
+        return []
+    if not info:
+        return []
+    many = bool(info.get("entries"))
+    out = []
+    for i, e in enumerate(info.get("entries") or [info], 1):
+        if not e or e.get("is_live"):
+            continue
+        seconds = float(e.get("duration") or 0)
+        if seconds > PAGE_VIDEO_SECONDS:
+            continue
+        if not any(f.get("vcodec") not in (None, "none") for f in (e.get("formats") or [e])):
+            continue
+        out.append({"page": url, "index": i if many else 0, "id": str(e.get("id") or f"{url}#{i}"),
+                    "title": (e.get("title") or "")[:200], "seconds": seconds, "thumbnail": e.get("thumbnail")})
+    return out[:most]
+
+
+def page_video(url: str, index: int, work: Path, q: Quality = FULL) -> Path:
+    """One of a page's videos (page_videos' `index`), as an H.264 MP4 at q."""
+    import yt_dlp
+
+    opts = _ytdlp_opts(outtmpl=str(work / "page_video.%(ext)s"), merge_output_format="mp4",
+                       format=f"bv*[height<={q.side}]+ba/b[height<={q.side}]/bv*+ba/b",
+                       max_filesize=PAGE_VIDEO_BYTES, noplaylist=index == 0)
+    if index:
+        opts["playlist_items"] = str(index)
+    try:
+        with yt_dlp.YoutubeDL(opts) as y:
+            y.extract_info(url, download=True)
+    except Exception as e:  # noqa: BLE001
+        raise MediaError(f"couldn't download the page's video: {str(e)[:200]}") from e
+    got = sorted(work.glob("page_video.*"), key=lambda f: f.stat().st_size, reverse=True)
+    got = [f for f in got if f.suffix not in (".part", ".ytdl", ".json")]
+    if not got:
+        raise MediaError("the page's video didn't download")
+    return _preview(got[0], work, q)
+

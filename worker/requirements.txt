@@ -11,3 +11,5 @@ faster-whisper>=1.0
 fonttools>=4.50
 beautifulsoup4>=4.12
 Pillow>=10.4
+# The videos in news pages (BBC, NDTV, CNN, …): the real footage of an event.
+yt-dlp>=2026.8.19

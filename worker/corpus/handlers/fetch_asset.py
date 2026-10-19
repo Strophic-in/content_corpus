@@ -92,6 +92,8 @@ def _original(client: httpx.Client, kind: str, item: dict, work: Path) -> Path:
             return media.direct_video(client, item["video_url"], work, media.FULL)
         if item.get("hls_url"):
             return media.hls_video(client, item["hls_url"], work, media.FULL)
+        if item.get("page_url"):                   # a news page's own video (the finder)
+            return media.page_video(item["page_url"], int(item.get("page_index") or 0), work, media.FULL)
         raise media.MediaError("no way to fetch this video again")
     url = item.get("image_url") or (item.get("link") if item.get("media_hint") == "image" else None) \
         or media.page_image(client, item.get("link") or item.get("url") or "") or item.get("thumbnail")

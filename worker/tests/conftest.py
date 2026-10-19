@@ -29,3 +29,11 @@ def _no_real_copywriter(monkeypatch):
             raise RuntimeError("no copywriter in tests")
 
     monkeypatch.setattr(packaging, "COPYWRITER", Offline)
+
+
+@pytest.fixture(autouse=True)
+def _no_page_videos(monkeypatch):
+    """No test asks real news pages for their videos (yt-dlp); test_looks_finder gives its own."""
+    from corpus.ideas import media
+
+    monkeypatch.setattr(media, "page_videos", lambda url, most=4: [])

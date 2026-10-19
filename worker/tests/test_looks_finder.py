@@ -255,3 +255,34 @@ def test_a_before_after_post_is_known_by_its_format(owner, user):
     assert research_post._before_after({"format_id": fid}) is True
     assert research_post._before_after({"format_id": None}) is False
     assert "Limoges Town Hall" in finder._place_queries("Limoges Town Hall Spire: Before vs Now")
+
+
+class VideoJev(PhotoJev):
+    def ask(self, state, questions, images=None):
+        if "video_title" in state:
+            spire = "spire" in state["video_title"].lower()
+            return {"shows": {"score": 3.0 if spire else 1.2}, "graphic": {"noul": 0.02}}
+        return super().ask(state, questions, images)
+
+
+def test_a_real_events_own_video_is_kept_as_a_clip(public_dns, monkeypatch, owner, user):
+    from corpus.ideas import media
+    pages = {"https://news.test/a": [
+        {"page": "https://news.test/a", "index": 1, "id": "v1", "title": "Watch: spire collapses in flames",
+         "seconds": 30.0, "thumbnail": "https://news.test/event.jpg"},
+        {"page": "https://news.test/a", "index": 2, "id": "v2", "title": "Weather for the weekend", "seconds": 60.0,
+         "thumbnail": "https://news.test/event.jpg"}]}
+    monkeypatch.setattr(media, "page_videos", lambda url, most=4: pages.get(url, []))
+    arts = [Article("https://news.test/a", "news.test", "Spire falls", "text", images=[{"url": "https://news.test/event.jpg"}])]
+    picked, _ = finder.find(VideoJev(), _finder_routes(), "Town hall spire falls in a fire", arts)
+    clips = [p for p in picked if p.get("kind") == "video"]
+    assert [c["video_id"] for c in clips] == ["v1"] and picked[0]["kind"] == "video"   # the clip first
+    # stored as a video asset that fetch_asset downloads from the page
+    slot = date(2040, 1, 1) + timedelta(days=uuid.uuid4().int % 3000)
+    post = owner.execute("insert into posts (user_id, topic, slot_date) values (%s, 'v', %s) returning id, user_id",
+                         (user, slot)).fetchone()
+    assert finder.add_to_post(post, clips) == 1 and finder.add_to_post(post, clips) == 0
+    a = owner.execute("select kind, fetch_from from assets where post_id = %s", (post["id"],)).fetchone()
+    assert a["kind"] == "video" and a["fetch_from"]["item"]["page_url"] == "https://news.test/a"
+    assert a["fetch_from"]["item"]["page_index"] == 1
+    owner.execute("delete from jobs where post_id = %s", (post["id"],))

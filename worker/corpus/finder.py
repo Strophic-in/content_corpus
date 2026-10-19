@@ -21,6 +21,11 @@ Jev says of each picture whether it shows the story's place or thing before the 
 (intact, undamaged, earlier), and up to BEFORE_KEEP of those are kept besides the
 event's own pictures, marked so the script writer opens on one as BEFORE.
 
+A real event's own video counts most: the videos in the articles read (yt-dlp knows
+the BBC's, NDTV's, CNN's…) are judged by Jev from a frame and their title, and the
+best VIDEO_KEEP join the post as clips (live: the BBC's 30 s of Limoges town hall's
+spire collapsing, where the reel had only an AI illustration of it).
+
 Never: a post whose owner asked for an AI version of its media, graphic pictures,
 watermarked ones, or more than KEEP (+ BEFORE_KEEP). Videos come from the idea itself (Reddit and
 the social feeds); article pages rarely offer a usable video file.
@@ -37,6 +42,7 @@ import httpx
 from psycopg.types.json import Jsonb
 
 from . import db, net
+from .ideas import media
 from .jev import Jev, score, yes
 from .research import Article, sig_tokens
 
@@ -44,6 +50,8 @@ log = logging.getLogger("corpus.finder")
 
 KEEP = 4
 BEFORE_KEEP = 2
+VIDEO_KEEP = 2
+VIDEO_PAGES = 5
 MAX_CANDIDATES = 14
 IMAGE_BYTES = 8_000_000
 COMMONS = "https://commons.wikimedia.org/w/api.php"
@@ -66,6 +74,15 @@ PHOTO_QUESTIONS = {
     "graphic": {"type": "noul", "instructions": "Does `photo` show gore, blood, injured or dead people, or other "
                                                "graphic content?"},
 }
+VIDEO_QUESTIONS = {
+    "shows": {"type": "score", "instructions": "How closely does the news video titled `video_title` (one frame of "
+                                               "it is `frame`) show `story`?",
+              "criteria": ["Unrelated to the story", "The general topic, not this story",
+                           "The place, people or things of this story", "The event of this story itself"]},
+    "graphic": {"type": "noul", "instructions": "Does `frame` show gore, blood, injured or dead people, or other "
+                                               "graphic content?"},
+}
+
 BEFORE_QUESTION = {
     "before": {"type": "noul", "instructions": "Does `photo` show the place, building or thing at the centre of `story` "
                                               "as it was BEFORE the event - intact, undamaged, or at an earlier time - "
@@ -266,12 +283,62 @@ def find(judge: Jev, client: httpx.Client, story: str, articles: list[Article],
             continue
         picked.append({**c, "shows": round(shows, 2), "usable": round(usable, 2), "before": round(before, 2)})
     picked.sort(key=lambda c: (c["origin"] == "article", c["shows"] + c["usable"]), reverse=True)
+    clips: list[dict] = []
+    if real >= 0.5:
+        try:
+            clips = videos(judge, client, story, articles)
+        except Exception as e:  # noqa: BLE001 - the photos still go
+            log.warning("finder: videos: %s", e)
     if not want_before:
-        return picked[:KEEP], real
+        return clips + picked[:KEEP], real
     # The place as it was, first (best-shown first), then the event's own pictures.
     befores = sorted((c for c in picked if c["before"] >= 0.6), key=lambda c: c["shows"], reverse=True)[:BEFORE_KEEP]
     rest = [c for c in picked if c not in befores][:KEEP]
-    return befores + rest, real
+    return befores + clips + rest, real
+
+
+def videos(judge: Jev, client: httpx.Client, story: str, articles: list[Article]) -> list[dict]:
+    """The best videos in the articles read for a real event, judged by Jev from a frame
+    and their title; one copy of each (a clip often sits on two pages)."""
+    pages = [a for a in articles if a.ok][:VIDEO_PAGES]
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        found = list(pool.map(lambda a: [(a, v) for v in media.page_videos(a.url)], pages))
+    by_id: dict[str, tuple[Article, dict]] = {}
+    for a, v in (x for lst in found for x in lst):
+        if v["id"] not in by_id or (v["thumbnail"] and not by_id[v["id"]][1]["thumbnail"]):
+            by_id[v["id"]] = (a, v)
+    picked = []
+    for a, v in list(by_id.values())[:6]:
+        frame = _download(client, v["thumbnail"]) if v["thumbnail"] else _video_frame(v)
+        if not frame:
+            continue
+        try:
+            ans = judge.ask({"story": story[:1200], "video_title": v["title"], "frame": "frame-1"}, VIDEO_QUESTIONS,
+                            images={"frame-1": frame})
+        except Exception as e:  # noqa: BLE001
+            log.warning("finder: jev on a video: %s", e)
+            continue
+        shows = score(ans.get("shows"))
+        if yes(ans.get("graphic"), 1.0) >= 0.3 or shows < 1.6:
+            continue
+        picked.append({"kind": "video", "url": v["page"], "page": v["page"], "index": v["index"], "video_id": v["id"],
+                       "title": v["title"], "seconds": v["seconds"], "origin": "article", "credit": a.site,
+                       "license": "third_party", "shows": round(shows, 2), "usable": 1.0, "before": 0.0})
+    picked.sort(key=lambda c: c["shows"], reverse=True)
+    return picked[:VIDEO_KEEP]
+
+
+def _video_frame(v: dict) -> bytes | None:
+    """A frame of a page's video that has no thumbnail: a small copy, its poster."""
+    import tempfile
+
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            clip = media.page_video(v["page"], v["index"], Path(tmp), media.PREVIEW)
+            return media.poster(clip, Path(tmp) / "poster.jpg").read_bytes()
+    except Exception as e:  # noqa: BLE001
+        log.warning("finder: a frame of %s: %s", v["page"], e)
+        return None
 
 
 def _ask_images(judge: Jev, story: str, jobs: list[tuple[dict, bytes]], want_before: bool = False) -> list[dict | None]:
@@ -288,23 +355,29 @@ def _ask_images(judge: Jev, story: str, jobs: list[tuple[dict, bytes]], want_bef
 
 
 def add_to_post(post: dict, picked: list[dict]) -> int:
-    """The chosen pictures as the post's assets (approved, credited), queued to fetch."""
+    """The chosen pictures and videos as the post's assets (approved, credited), queued to fetch."""
     added = 0
     with db.tx() as c:
-        have = {(r["fetch_from"] or {}).get("item", {}).get("image_url")
-                for r in c.execute("select fetch_from from assets where post_id = %s", (post["id"],)).fetchall()}
+        have = set()
+        for r in c.execute("select fetch_from from assets where post_id = %s", (post["id"],)).fetchall():
+            item = (r["fetch_from"] or {}).get("item", {})
+            have.add(item.get("image_url") or item.get("video_id"))
         n = c.execute("select coalesce(max(n), 0) as n from assets where post_id = %s", (post["id"],)).fetchone()["n"]
         for p in picked:
-            if p["url"] in have:
+            video = p.get("kind") == "video"
+            if (p["video_id"] if video else p["url"]) in have:
                 continue
             n += 1
+            item = ({"page_url": p["page"], "page_index": p["index"], "video_id": p["video_id"], "media_hint": "video",
+                     "link": p["page"], "title": p.get("title", "")} if video
+                    else {"image_url": p["url"], "media_hint": "image", "link": p.get("page")})
             aid = c.execute(
                 """insert into assets (user_id, post_id, n, kind, origin, source_url, credit, license, rights, fetch_from)
-                   values (%s, %s, %s, 'image', %s, %s, %s, %s, 'approved', %s) returning id""",
-                (post["user_id"], post["id"], n, p["origin"], p.get("page"), p["credit"], p["license"],
-                 Jsonb({"item": {"image_url": p["url"], "media_hint": "image", "link": p.get("page")},
-                        "found": {"shows": p["shows"], "usable": p["usable"],
-                                  "before": p.get("before", 0.0)}}))).fetchone()["id"]
+                   values (%s, %s, %s, %s, %s, %s, %s, %s, 'approved', %s) returning id""",
+                (post["user_id"], post["id"], n, "video" if video else "image", p["origin"], p.get("page"),
+                 p["credit"], p["license"],
+                 Jsonb({"item": item, "found": {"shows": p["shows"], "usable": p["usable"],
+                                                "before": p.get("before", 0.0)}}))).fetchone()["id"]
             db.enqueue(c, user_id=post["user_id"], lane="ideas", kind="fetch_asset", dedupe_key=f"fetch_asset:{aid}",
                        payload={"asset_id": str(aid)}, post_id=post["id"], priority=30, max_attempts=2,
                        lease_seconds=900)
