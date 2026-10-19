@@ -1,34 +1,34 @@
-"""The asset finder: real photos for a story, chosen by Jev, before the script.
+"""The asset finder: a post's real pictures and videos, collected before its script.
 
-Runs at the end of research_post (ideas lane: it fetches URLs), when the owner has
-a Jev key:
+Every post collects its assets first (owner, 2026-10-19: a reel about the Jio IPO
+had no Jio logo, no article, only abstract generated shots). collect() runs at the
+end of research_post (ideas lane: it fetches URLs) and adds, as approved, credited
+assets that write_script waits for:
 
-  1. Is the story a real event that was photographed or filmed (an incident, a
-     protest, a flood, a match, a launch) — or a concept, an invention, a forecast,
-     an explainer? Only a real event looks for news photos; anything else keeps to
-     open-licence pictures that show its subject, or none (its shots are generated).
-  2. Candidates: the photos of the articles read for the story (their lead picture
-     and large in-article pictures), and open-licence pictures from Wikimedia
-     Commons and Openverse (searched by the story's own words).
-  3. Jev looks at each one (image input) — does it show this story, is it a usable
-     photograph, is there a watermark or a channel logo, is it graphic — and the
-     best few join the post as assets (approved: owner's rule of 2026-10-18 for real
-     events), credited on screen and in the caption, then fetched and analysed like
-     any footage. write_script waits for them.
+  1. Who and what the story names (entities.py): a company's logo — drawn on a clean
+     card, shown as a still because the video model can't draw logos — and a
+     person's or place's photo, from Wikipedia and Wikidata.
+  2. The report itself: a headline card (media/headline_card.py) — the outlet, its
+     headline, the date and its lead photo — for each of up to HEADLINE_CARDS
+     outlets read.
+  3. Photos (find): the articles' own pictures (lead picture and large in-article
+     pictures) and open-licence pictures from Wikimedia Commons and Openverse
+     (searched by the story's own words). Jev looks at each one (image input) — does
+     it show this story, is it a usable photograph, is there a watermark or a
+     channel logo, is it graphic — and the best KEEP join the post.
+  4. Videos: the videos in the articles read (yt-dlp knows the BBC's, NDTV's,
+     CNN's…), judged by Jev from a frame and their title; the best VIDEO_KEEP join
+     the post as clips (live: the BBC's 30 s of Limoges town hall's spire collapsing,
+     where the reel had only an AI illustration of it).
 
 A before/after post (the Before vs. After template) also wants the place as it was:
 Jev says of each picture whether it shows the story's place or thing before the event
 (intact, undamaged, earlier), and up to BEFORE_KEEP of those are kept besides the
 event's own pictures, marked so the script writer opens on one as BEFORE.
 
-A real event's own video counts most: the videos in the articles read (yt-dlp knows
-the BBC's, NDTV's, CNN's…) are judged by Jev from a frame and their title, and the
-best VIDEO_KEEP join the post as clips (live: the BBC's 30 s of Limoges town hall's
-spire collapsing, where the reel had only an AI illustration of it).
-
 Never: a post whose owner asked for an AI version of its media, graphic pictures,
-watermarked ones, or more than KEEP (+ BEFORE_KEEP). Videos come from the idea itself (Reddit and
-the social feeds); article pages rarely offer a usable video file.
+watermarked ones, or more than the limits above. The owner adds their own besides
+(uploads and links, on the post page).
 """
 
 from __future__ import annotations
@@ -42,8 +42,9 @@ from concurrent.futures import ThreadPoolExecutor
 import httpx
 from psycopg.types.json import Jsonb
 
-from . import db, net
+from . import db, entities, net, storage
 from .ideas import media
+from .media import headline_card
 from .jev import Jev, score, yes
 from .research import Article, sig_tokens
 
@@ -53,17 +54,15 @@ KEEP = 4
 BEFORE_KEEP = 2
 VIDEO_KEEP = 2
 VIDEO_PAGES = 5
+LOGO_KEEP = 3
+PEOPLE_KEEP = 2
+HEADLINE_CARDS = 2
 MAX_CANDIDATES = 14
 IMAGE_BYTES = 8_000_000
 COMMONS = "https://commons.wikimedia.org/w/api.php"
 WIKIPEDIA = "https://en.wikipedia.org/w/api.php"
 OPENVERSE = "https://api.openverse.org/v1/images/"
 UA = "ContentCorpus/1.0 (asset finder; https://content-corpus.strophic.in)"
-
-REAL_EVENT = {"real_event": {"type": "noul", "instructions":
-              "Is `story` about a specific real event that was photographed or filmed — an incident, accident, "
-              "protest, disaster, match, speech, ceremony or launch — rather than a concept, invention, study, "
-              "forecast or general explainer?"}}
 
 PHOTO_QUESTIONS = {
     "shows": {"type": "score", "instructions": "How closely does `photo` show `story`?",
@@ -234,12 +233,11 @@ def _download(client: httpx.Client, url: str) -> bytes | None:
 
 
 def find(judge: Jev, client: httpx.Client, story: str, articles: list[Article],
-         title: str = "", want_before: bool = False, topic: str = "") -> tuple[list[dict], float]:
-    """(the pictures worth adding to the post, best first, with their Jev scores;
-    how sure Jev is that the story is a real, filmed event). want_before: a
-    before/after post — pictures of the place before the event are kept too."""
-    real = yes((judge.ask({"story": story[:1500]}, REAL_EVENT)).get("real_event"))
-    cands = article_photos(articles) if real >= 0.5 else []
+         title: str = "", want_before: bool = False, topic: str = "") -> list[dict]:
+    """The pictures and videos worth adding to the post, best first, with their Jev
+    scores. want_before: a before/after post — pictures of the place before the
+    event are kept too."""
+    cands = article_photos(articles)
     q = _query(title or story.split(".")[0])
     for src in (commons, openverse):
         try:
@@ -285,21 +283,20 @@ def find(judge: Jev, client: httpx.Client, story: str, articles: list[Article],
         picked.append({**c, "shows": round(shows, 2), "usable": round(usable, 2), "before": round(before, 2)})
     picked.sort(key=lambda c: (c["origin"] == "article", c["shows"] + c["usable"]), reverse=True)
     clips: list[dict] = []
-    if real >= 0.5:
-        try:
-            clips = videos(judge, client, story, articles)
-        except Exception as e:  # noqa: BLE001 - the photos still go
-            log.warning("finder: videos: %s", e)
+    try:
+        clips = videos(judge, client, story, articles)
+    except Exception as e:  # noqa: BLE001 - the photos still go
+        log.warning("finder: videos: %s", e)
     if not want_before:
-        return clips + picked[:KEEP], real
+        return clips + picked[:KEEP]
     # The place as it was, first (best-shown first), then the event's own pictures.
     befores = sorted((c for c in picked if c["before"] >= 0.6), key=lambda c: c["shows"], reverse=True)[:BEFORE_KEEP]
     rest = [c for c in picked if c not in befores][:KEEP]
-    return befores + clips + rest, real
+    return befores + clips + rest
 
 
 def videos(judge: Jev, client: httpx.Client, story: str, articles: list[Article]) -> list[dict]:
-    """The best videos in the articles read for a real event, judged by Jev from a frame
+    """The best videos in the articles read for the story, judged by Jev from a frame
     and their title; one copy of each (a clip often sits on two pages)."""
     pages = [a for a in articles if a.ok][:VIDEO_PAGES]
     with ThreadPoolExecutor(max_workers=4) as pool:
@@ -382,10 +379,116 @@ def add_to_post(post: dict, picked: list[dict]) -> int:
                    values (%s, %s, %s, %s, %s, %s, %s, %s, 'approved', %s) returning id""",
                 (post["user_id"], post["id"], n, "video" if video else "image", p["origin"], p.get("page"),
                  p["credit"], p["license"],
-                 Jsonb({"item": item, "found": {"shows": p["shows"], "usable": p["usable"],
-                                                "before": p.get("before", 0.0)}}))).fetchone()["id"]
+                 Jsonb({"item": item, "found": {"shows": p.get("shows", 3.0), "usable": p.get("usable", 1.0),
+                                                "before": p.get("before", 0.0), "role": p.get("role", "photo"),
+                                                "entity": p.get("entity", "")}}))).fetchone()["id"]
             db.enqueue(c, user_id=post["user_id"], lane="ideas", kind="fetch_asset", dedupe_key=f"fetch_asset:{aid}",
                        payload={"asset_id": str(aid)}, post_id=post["id"], priority=30, max_attempts=2,
                        lease_seconds=900)
             added += 1
     return added
+
+
+# ── the whole collection ──────────────────────────────────────────────────────
+
+def _have(post_id) -> set[tuple[str, str]]:
+    """(role, what) of the post's collected assets: a second run adds nothing twice."""
+    with db.conn() as c:
+        rows = c.execute("""select fetch_from->'found'->>'role' as role, fetch_from->'found'->>'entity' as entity
+                              from assets where post_id = %s""", (post_id,)).fetchall()
+    return {(r["role"] or "", r["entity"] or "") for r in rows}
+
+
+def add_made(post: dict, path: Path, *, origin: str, credit: str, license: str, found: dict) -> None:
+    """A picture made here (a logo card, a headline card) as the post's asset: stored as an
+    upload, so fetch_asset normalises it and analyze_asset logs it like any other."""
+    with db.tx() as c:
+        n = c.execute("select coalesce(max(n), 0) + 1 as n from assets where post_id = %s", (post["id"],)).fetchone()["n"]
+        aid = c.execute(
+            """insert into assets (user_id, post_id, n, kind, origin, credit, license, rights, fetch_from)
+               values (%s, %s, %s, 'image', %s, %s, %s, 'approved', '{}') returning id""",
+            (post["user_id"], post["id"], n, origin, credit[:120], license)).fetchone()["id"]
+        raw = f"{storage.post_prefix(post['user_id'], post['id'])}/uploads/{aid}.jpg"
+        c.execute("update assets set fetch_from = %s where id = %s",
+                  (Jsonb({"upload_key": raw, "found": {**found, "shows": 3.0, "usable": 1.0}}), aid))
+    storage.put_file(raw, path, kind="asset", user_id=post["user_id"], post_id=post["id"], content_type="image/jpeg")
+    with db.tx() as c:
+        db.enqueue(c, user_id=post["user_id"], lane="ideas", kind="fetch_asset", dedupe_key=f"fetch_asset:{aid}",
+                   payload={"asset_id": str(aid)}, post_id=post["id"], priority=30, max_attempts=2,
+                   lease_seconds=900)
+
+
+def _names(post: dict, client: httpx.Client, ents: list, have: set, log) -> int:
+    """Logos and photos of the story's named companies, people and places."""
+    import tempfile
+
+    added, logos, people = 0, 0, 0
+    photos: list[dict] = []
+    for e in sorted(ents, key=lambda e: not e.central):
+        hit = entities.lookup(client, e)
+        if not hit or (hit["role"], hit["entity"]) in have:
+            continue
+        have.add((hit["role"], hit["entity"]))
+        if hit["role"] == "logo":
+            if logos >= LOGO_KEEP:
+                continue
+            try:
+                raw = net.get(client, hit["url"], max_bytes=IMAGE_BYTES, accept=("image/",),
+                              headers={"User-Agent": UA}).content
+                with tempfile.TemporaryDirectory() as tmp:
+                    card = entities.logo_card(raw, Path(tmp) / "logo.jpg")
+                    add_made(post, card, origin="wikidata", credit=hit["credit"], license=hit["license"],
+                             found={"role": "logo", "entity": hit["entity"]})
+                logos += 1
+                added += 1
+            except Exception as ex:  # noqa: BLE001 - the other names still go
+                log(f"logo of {hit['entity']}: {type(ex).__name__}: {ex}")
+        elif people < PEOPLE_KEEP:
+            photos.append(hit)
+            people += 1
+    return added + add_to_post(post, photos)
+
+
+def _headlines(post: dict, client: httpx.Client, articles: list[Article], have: set, log) -> int:
+    import tempfile
+
+    added = 0
+    for a in [a for a in articles if a.ok and a.title][:HEADLINE_CARDS]:
+        if ("headline", a.url) in have:
+            continue
+        photo = None
+        if a.images:
+            try:
+                photo = net.get(client, a.images[0]["url"], max_bytes=IMAGE_BYTES, accept=("image/",),
+                                headers={"User-Agent": net.user_agent(a.images[0]["url"])}).content
+            except Exception:  # noqa: BLE001 - a card without its photo still reads
+                photo = None
+        outlet = a.outlet or a.site
+        with tempfile.TemporaryDirectory() as tmp:
+            card = headline_card.render(Path(tmp) / "headline.jpg", headline=a.title, outlet=outlet,
+                                        published=a.published, photo=photo)
+            if card is None:
+                continue
+            add_made(post, card, origin="article", credit=outlet, license="third_party",
+                     found={"role": "headline", "entity": a.url, "outlet": outlet})
+        have.add(("headline", a.url))
+        added += 1
+    return added
+
+
+def collect(post: dict, judge: Jev | None, client: httpx.Client, articles: list[Article], *, story: str,
+            title: str, topic: str, want_before: bool, names: list, log) -> dict:
+    """Everything above, for one post; each part on its own (one failing never stops
+    the rest). `names`: the story's named entities (entities.extract), or []."""
+    have = _have(post["id"])
+    got = {"names": 0, "headlines": 0, "found": 0}
+    for part, run in (("names", lambda: _names(post, client, names, have, log)),
+                      ("headlines", lambda: _headlines(post, client, articles, have, log)),
+                      ("found", lambda: add_to_post(post, find(judge, client, story, articles, title=title,
+                                                               want_before=want_before, topic=topic))
+                       if judge is not None else 0)):
+        try:
+            got[part] = run()
+        except Exception as e:  # noqa: BLE001 - the script goes ahead with what there is
+            log(f"collect {part}: {type(e).__name__}: {e}")
+    return got

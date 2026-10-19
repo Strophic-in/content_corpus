@@ -80,6 +80,7 @@ export type AssetRow = {
   rights: "needs_review" | "approved" | "rejected"; state: "uploading" | "pending" | "ready" | "failed";
   w: number | null; h: number | null; seconds: string | null; error: string | null; summary: string | null;
   made_from: string | null; has_file: boolean; file_name: string | null; license: string;
+  source_url: string | null; role: string | null; entity: string | null; outlet: string | null;
 };
 export type ResearchInfo = { articles?: { url: string; site: string; title: string; from_idea: boolean }[];
                               unreadable?: { url: string }[] } | null;
@@ -140,8 +141,10 @@ export async function postDetail(userId: string, id: string) {
     const assets = (
       await db.query(
         `select id, n, kind, origin, credit, rights, state, w, h, seconds::text, error, made_from,
-                key is not null as has_file, file_name, license,
-                coalesce(analysis->>'summary', analysis->'card'->>'summary') as summary
+                key is not null as has_file, file_name, license, source_url,
+                coalesce(analysis->>'summary', analysis->'card'->>'summary') as summary,
+                fetch_from->'found'->>'role' as role, fetch_from->'found'->>'entity' as entity,
+                fetch_from->'found'->>'outlet' as outlet
            from assets where post_id = $1 order by n`,
         [id],
       )

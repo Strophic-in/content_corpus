@@ -128,13 +128,10 @@ def _jpeg(color) -> bytes:
 class PhotoJev(jev.Jev):
     """Judges a picture by its colour: red = the event, green = generic, blue = watermarked."""
 
-    def __init__(self, real=0.9):
+    def __init__(self):
         super().__init__("k", client=httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(500))))
-        self.real = real
 
     def ask(self, state, questions, images=None):
-        if "real_event" in questions:
-            return {"real_event": {"noul": self.real}}
         r, g, b = Image.open(io.BytesIO(next(iter(images.values())))).getpixel((10, 10))
         shows = 3.0 if r > 200 else 1.0 if g > 200 else 2.5
         return {"shows": {"score": shows}, "usable": {"noul": 0.9}, "watermark": {"noul": 0.9 if b > 200 else 0.05},
@@ -156,15 +153,16 @@ def _finder_routes():
     })
 
 
-def test_the_finder_keeps_real_event_photos_jev_trusts(public_dns):
+def test_the_finder_keeps_the_photos_jev_trusts_for_any_story(public_dns):
     arts = [Article("https://news.test/a", "news.test", "Flood in Patna", "text",
                     images=[{"url": "https://news.test/event.jpg"}, {"url": "https://news.test/marked.jpg"}])]
-    picked, real = finder.find(PhotoJev(), _finder_routes(), "Flood in Patna as the Ganga rises", arts)
-    assert real == 0.9 and [p["url"] for p in picked] == ["https://news.test/event.jpg"]   # generic and marked dropped
+    picked = finder.find(PhotoJev(), _finder_routes(), "Flood in Patna as the Ganga rises", arts)
+    assert [p["url"] for p in picked] == ["https://news.test/event.jpg"]   # generic and marked dropped
     assert picked[0]["credit"] == "news.test"
-    # a concept, not an event: no news photos are even considered
-    picked, real = finder.find(PhotoJev(real=0.1), _finder_routes(), "How floods form", arts)
-    assert real == 0.1 and all(p["origin"] != "article" for p in picked)
+    # An explainer or a business story collects its reports' photos too (2026-10-19: no more
+    # "real events only" — a reel about an IPO had nothing real in it).
+    picked = finder.find(PhotoJev(), _finder_routes(), "How floods form", arts)
+    assert [p["url"] for p in picked] == ["https://news.test/event.jpg"]
 
 
 def test_picked_photos_become_approved_credited_assets(owner, user):
@@ -187,8 +185,6 @@ class BeforeJev(PhotoJev):
     """Red: the event itself. Grey: the place as it was (a library photo of the building)."""
 
     def ask(self, state, questions, images=None):
-        if "real_event" in questions:
-            return {"real_event": {"noul": 0.95}}
         r, g, b = Image.open(io.BytesIO(next(iter(images.values())))).getpixel((10, 10))
         grey = abs(r - g) < 10 and abs(g - b) < 10
         out = {"shows": {"score": 1.7 if grey else 3.0}, "usable": {"noul": 0.9}, "watermark": {"noul": 0.02},
@@ -211,14 +207,14 @@ def test_a_before_after_post_gets_the_place_as_it_was_first(public_dns):
     })
     arts = [Article("https://news.test/a", "news.test", "Town hall spire falls", "text",
                     images=[{"url": "https://news.test/event.jpg"}])]
-    picked, _ = finder.find(BeforeJev(), routes, "Limoges town hall spire falls in a fire", arts,
-                            title="Limoges town hall spire falls", want_before=True)
+    picked = finder.find(BeforeJev(), routes, "Limoges town hall spire falls in a fire", arts,
+                         title="Limoges town hall spire falls", want_before=True)
     assert [p["url"] for p in picked] == ["https://upload.wikimedia.test/hall.jpg", "https://news.test/event.jpg"]
     assert picked[0]["before"] == 0.9 and picked[1]["before"] == 0.05
     # Any other post: no "before" asked, and a library picture that only shows the place
     # (1.7) is not enough.
-    picked, _ = finder.find(BeforeJev(), routes, "Limoges town hall spire falls in a fire", arts,
-                            title="Limoges town hall spire falls")
+    picked = finder.find(BeforeJev(), routes, "Limoges town hall spire falls in a fire", arts,
+                         title="Limoges town hall spire falls")
     assert [p["url"] for p in picked] == ["https://news.test/event.jpg"] and picked[0]["before"] == 0.0
 
 
@@ -265,7 +261,7 @@ class VideoJev(PhotoJev):
         return super().ask(state, questions, images)
 
 
-def test_a_real_events_own_video_is_kept_as_a_clip(public_dns, monkeypatch, owner, user):
+def test_a_reports_own_video_is_kept_as_a_clip(public_dns, monkeypatch, owner, user):
     from corpus.ideas import media
     pages = {"https://news.test/a": [
         {"page": "https://news.test/a", "index": 1, "id": "v1", "title": "Watch: spire collapses in flames",
@@ -274,7 +270,7 @@ def test_a_real_events_own_video_is_kept_as_a_clip(public_dns, monkeypatch, owne
          "thumbnail": "https://news.test/event.jpg"}]}
     monkeypatch.setattr(media, "page_videos", lambda url, most=4: pages.get(url, []))
     arts = [Article("https://news.test/a", "news.test", "Spire falls", "text", images=[{"url": "https://news.test/event.jpg"}])]
-    picked, _ = finder.find(VideoJev(), _finder_routes(), "Town hall spire falls in a fire", arts)
+    picked = finder.find(VideoJev(), _finder_routes(), "Town hall spire falls in a fire", arts)
     clips = [p for p in picked if p.get("kind") == "video"]
     assert [c["video_id"] for c in clips] == ["v1"] and picked[0]["kind"] == "video"   # the clip first
     # stored as a video asset that fetch_asset downloads from the page

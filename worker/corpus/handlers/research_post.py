@@ -1,11 +1,15 @@
-"""ideas/research_post — read an accepted idea's story in full before its script.
+"""ideas/research_post — read a post's story in full and collect its assets, before its script.
 
-Queued by the database when an idea is accepted (private.research_accepted_idea).
-Reads the articles the idea came from — for a social post, the article it links
-to; never the social post's own page — and up to EXTRA_REPORTS other outlets'
-reports of the same story from a news search, so the script isn't written from
-one source. The texts land in posts.research; write_script waits for them
-(research_state 'pending') and then writes from them.
+Queued by the database when an idea is accepted (private.research_accepted_idea) or
+a post is made by hand (api.collect_assets). Reads the articles the idea came from —
+for a social post, the article it links to; never the social post's own page — and
+up to EXTRA_REPORTS other outlets' reports of the same story from a news search, so
+the script isn't written from one source. The texts land in posts.research.
+
+Then it collects the post's assets (finder.collect): the logos and photos of who
+and what the story names, a headline card of each report, and the reports' own
+photos and videos. write_script waits for all of it (research_state 'pending', then
+the assets being fetched) and writes with them.
 """
 
 from __future__ import annotations
@@ -16,7 +20,7 @@ from urllib.parse import urlparse
 import httpx
 from psycopg.types.json import Jsonb
 
-from .. import db, finder, jev, research
+from .. import costs, db, entities, finder, jev, research, vault
 from ..ideas import sites
 from ..runner import Handler, JobContext
 
@@ -46,7 +50,7 @@ def _article_urls(items: list[dict]) -> list[str]:
 def run(ctx: JobContext) -> dict:
     log = lambda m: print(f"[research_post] {m}", flush=True)  # noqa: E731
     with db.conn() as c:
-        post = c.execute("""select id, user_id, channel_id, category_id, format_id, topic, research_state,
+        post = c.execute("""select id, user_id, channel_id, category_id, format_id, topic, brief, research_state,
                                    media_choice
                               from posts where id = %s""",
                          (ctx.payload["post_id"],)).fetchone()
@@ -85,16 +89,13 @@ def run(ctx: JobContext) -> dict:
                 sites_read.add(site)
         if skipped:
             log(f"left out {skipped} search result(s) about other stories")
-        # Real photos for the story, chosen by Jev (not when the owner asked for an AI version).
-        found = 0
-        if judge is not None and post.get("media_choice") != "ai":
-            try:
-                picked, real = finder.find(judge, client, story, articles, title=headline,
-                                           want_before=_before_after(post), topic=post["topic"])
-                found = finder.add_to_post(post, picked)
-                log(f"asset finder: real event {real:.0%}; added {found} picture(s)")
-            except Exception as e:  # noqa: BLE001 - the script goes ahead with what there is
-                log(f"asset finder skipped: {type(e).__name__}: {e}")
+        # The post's assets (not when the owner asked for an AI version of its media).
+        got = {}
+        if post.get("media_choice") != "ai":
+            names = _names(post, articles, headline, ctx, log)
+            got = finder.collect(post, judge, client, [a for a in articles if a.ok], story=story, title=headline,
+                                 topic=post["topic"], want_before=_before_after(post), names=names, log=log)
+            log(f"collected: {got} (names: {', '.join(e.name for e in names) or 'none'})")
     if judge is not None:
         judge.record("Jev: same story, real photos", user_id=post["user_id"], post_id=post["id"],
                      channel_id=post["channel_id"], category_id=post["category_id"], job_id=ctx.job.get("id"))
@@ -107,7 +108,7 @@ def run(ctx: JobContext) -> dict:
                           "read_at": datetime.now(timezone.utc).isoformat()}),
                    "ready" if good else "none", post["id"]))
     log(f"{post['topic'][:60]}: read {len(good)} of {len(articles)} pages")
-    return {"read": len(good), "tried": len(articles), "sites": sorted({a.site for a in good}), "pictures": found}
+    return {"read": len(good), "tried": len(articles), "sites": sorted({a.site for a in good}), "collected": got}
 
 
 def on_give_up(ctx: JobContext, err: dict) -> None:
@@ -125,3 +126,23 @@ def _before_after(post: dict) -> bool:
         return False
     row = db.one("select template_id from formats where id = %s", (post["format_id"],))
     return bool(row) and row["template_id"] == "before_after_comparison"
+
+
+def _names(post: dict, articles: list, headline: str, ctx: JobContext, log) -> list:
+    """The story's named companies, people and places, by the script model (the owner's
+    OpenAI key); [] without one."""
+    key = vault.secret(post["user_id"], "openai")
+    model = (db.one("select script_model from app_settings where user_id = %s", (post["user_id"],)) or {}) \
+        .get("script_model")
+    if not key or not model:
+        return []
+    text = "\n\n".join([headline, post["topic"], post.get("brief") or ""]
+                        + [a.text[:2500] for a in articles if a.ok][:2])
+    try:
+        names, usage = entities.extract(key, model, text)
+    except Exception as e:  # noqa: BLE001 - the rest of the collection still runs
+        log(f"names: {type(e).__name__}: {e}")
+        return []
+    costs.record_llm(usage, user_id=post["user_id"], post_id=post["id"], channel_id=post["channel_id"],
+                     category_id=post["category_id"], job_id=ctx.job.get("id"), note="named in the story")
+    return names

@@ -24,6 +24,7 @@ import {
   ReviewActions,
 } from "./post-actions";
 import { NextStep } from "./next-step";
+import { AddLink, CollectAgain } from "./asset-tools";
 import { Tracker } from "./tracker";
 import { DeleteUploadButton, UploadFootage } from "./upload";
 
@@ -69,7 +70,7 @@ export default async function PostPage({ params }: { params: Promise<{ id: strin
       {(IN_FLIGHT.has(post.status) || post.status === "rendered" ||
         (post.status === "approved" && !slides && (shots.length === 0 ||
           (post.audio_source === "kokoro" && shots.some((s) => !s.voiced)))) ||
-        assets.some((a) => a.state === "pending") ||
+        assets.some((a) => a.state === "pending") || post.research_state === "pending" ||
         // just finished: its caption and cover are on the way
         post.packaging)
         && <AutoRefresh everyMs={4000} />}
@@ -113,6 +114,8 @@ export default async function PostPage({ params }: { params: Promise<{ id: strin
             <h2 className="mb-3 text-sm font-semibold">Progress</h2>
             <Tracker steps={pipeline({
               status: post.status, research_state: post.research_state, slides,
+              assets: { total: assets.filter((a) => a.rights !== "rejected" && a.state !== "failed").length,
+                        pending: assets.filter((a) => a.state === "pending" || a.state === "uploading").length },
               narrated: post.audio_source === "kokoro",
               shots: { total: shots.length, uploaded: shots.filter((x) => x.rendered).length,
                        voiced: shots.filter((x) => x.voiced).length },
@@ -135,7 +138,8 @@ export default async function PostPage({ params }: { params: Promise<{ id: strin
       {post.research_state && <SourcesPanel state={post.research_state} research={research} />}
 
       {(assets.length > 0 || UPLOADABLE.has(post.status)) &&
-        <FootagePanel postId={post.id} assets={assets} uploads={UPLOADABLE.has(post.status)} />}
+        <AssetsPanel postId={post.id} assets={assets} uploads={UPLOADABLE.has(post.status)}
+                     collecting={post.research_state === "pending"} collected={post.research_state !== null} />}
 
       {post.approved_script_id && (slides ? <SlidesPanel post={post} /> : <RenderPanel post={post} shots={shots} />)}
 
@@ -228,43 +232,85 @@ function StatsPanel({ stats }: { stats: StatRow[] }) {
   );
 }
 
-function FootagePanel({ postId, assets, uploads }: { postId: string; assets: AssetRow[]; uploads: boolean }) {
-  const twinOf = (a: AssetRow) => assets.find((x) => x.id === a.made_from);
+// What an asset is, in a word, and what it shows.
+function assetLabel(a: AssetRow, twin?: AssetRow): { tag: string; title: string } {
+  if (a.made_from) return { tag: "AI version", title: `of #${twin?.n ?? "?"}` };
+  if (a.origin === "upload") return { tag: "Yours", title: a.file_name || (a.kind === "video" ? "Video" : "Picture") };
+  if (a.origin === "link") return { tag: a.kind === "video" ? "Your video" : "Your link", title: a.credit };
+  if (a.role === "logo") return { tag: "Logo", title: a.entity || a.credit };
+  if (a.role === "headline") return { tag: "Report", title: a.outlet || a.credit };
+  if (a.role === "person") return { tag: "Person", title: a.entity || a.credit };
+  if (a.role === "place") return { tag: "Place", title: a.entity || a.credit };
+  return { tag: a.kind === "video" ? "Video" : "Photo", title: a.credit || a.origin };
+}
+
+function AssetsPanel({ postId, assets, uploads, collecting, collected }: {
+  postId: string; assets: AssetRow[]; uploads: boolean; collecting: boolean; collected: boolean;
+}) {
   const status = (a: AssetRow) => a.state === "uploading" ? "uploading…"
-    : a.state === "pending"
-      ? (a.made_from ? "being drawn…" : a.origin === "upload" ? "checking and watching it…" : "fetching and watching it…")
+    : a.state === "pending" ? (a.made_from ? "being drawn…" : "fetching and watching it…")
     : a.state === "failed" ? `couldn't be ${a.made_from ? "drawn" : "fetched"}${a.error ? ` — ${a.error}` : ""}`
-    : a.rights === "needs_review" ? "only informs the script — you chose an AI version, so it is never shown"
-    : `${a.kind === "video" ? `${Number(a.seconds ?? 0).toFixed(0)} s, ` : ""}${a.w}×${a.h}`;
+    : a.rights === "needs_review" ? "informs the script only — you chose an AI version"
+    : a.rights === "rejected" ? "not used"
+    : a.kind === "video" ? `${Number(a.seconds ?? 0).toFixed(0)} s video` : "ready";
   return (
-    <section id="publish" className="flex scroll-mt-6 flex-col gap-3 rounded-xl border border-border bg-surface p-5 text-sm">
-      <div>
-        <h2 className="font-medium">Footage</h2>
-        <p className="text-muted">The idea&apos;s own picture or video, as you chose — shown with credit, or an AI version
-          made from it — and anything you upload. The script waits until it is ready.</p>
+    <section className="flex flex-col gap-4 rounded-xl border border-border bg-surface p-5 text-sm">
+      <div className="flex items-start gap-3">
+        <div className="min-w-0 flex-1">
+          <h2 className="flex items-center gap-2 font-medium">
+            Assets
+            {collecting && <span aria-hidden className="size-2 animate-pulse rounded-full bg-accent" />}
+          </h2>
+          <p className="text-muted">{collecting
+            ? "Collecting: the logos of who the story names, a card of each report, its photos and videos. Add your own meanwhile — the script waits for all of it."
+            : "Real pictures and video the script uses first — free to show, and fewer shots for the GPU to make. Switch off any you don't want."}</p>
+        </div>
+        {uploads && !collecting && <CollectAgain postId={postId} first={!collected} />}
       </div>
-      <ul className="flex flex-col divide-y divide-border">
-        {assets.map((a) => (
-          <li key={a.id} className="flex items-start gap-3 py-2">
-            {a.has_file && (a.kind === "image"
-              // eslint-disable-next-line @next/next/no-img-element -- a private, signed media link
-              ? <img src={`/media/asset/${a.id}`} alt="" className="h-24 w-16 shrink-0 rounded-md bg-background object-cover" />
-              : <video src={`/media/asset/${a.id}`} muted playsInline preload="metadata" controls
-                       className="h-24 w-16 shrink-0 rounded-md bg-black object-cover" />)}
-            <span className="min-w-0 flex-1">
-              <span className={`font-medium ${a.rights === "rejected" ? "text-muted line-through" : ""}`}>
-                #{a.n} · {a.made_from ? `AI version of #${twinOf(a)?.n ?? "?"}` : a.kind === "video" ? "Video" : "Picture"}
-                {" · "}{a.origin === "upload" ? `your upload${a.file_name ? ` (${a.file_name})` : ""}` : a.credit || a.origin}
-              </span>
-              <span className="block text-xs text-muted">{status(a)}</span>
-              {a.summary && <span className="block text-xs text-muted">{a.summary}</span>}
-            </span>
-            {a.origin === "upload" ? (a.state !== "uploading" && <DeleteUploadButton assetId={a.id} />)
-              : a.state !== "pending" && <AssetRightsButton assetId={a.id} allowed={a.rights === "approved"} />}
-          </li>
-        ))}
-      </ul>
-      {uploads && <UploadFootage postId={postId} />}
+      {assets.length > 0 ? (
+        <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+          {assets.map((a) => {
+            const { tag, title } = assetLabel(a, assets.find((x) => x.id === a.made_from));
+            const off = a.rights === "rejected" || a.state === "failed";
+            return (
+              <li key={a.id} className={`flex flex-col overflow-hidden rounded-lg border border-border bg-background ${off ? "opacity-55" : ""}`}>
+                <div className="relative aspect-[9/12] bg-black/40">
+                  {a.has_file ? (a.kind === "image"
+                    // eslint-disable-next-line @next/next/no-img-element -- a private, signed media link
+                    ? <img src={`/media/asset/${a.id}`} alt="" loading="lazy" className="size-full object-cover" />
+                    : <video src={`/media/asset/${a.id}`} muted playsInline preload="metadata" controls
+                             className="size-full object-cover" />)
+                    : <span className="grid size-full place-items-center text-xs text-muted">
+                        {a.state === "failed" ? "—" : <span className="size-2 animate-pulse rounded-full bg-accent" />}
+                      </span>}
+                  <span className="absolute top-1.5 left-1.5 rounded-md bg-black/70 px-1.5 py-0.5 text-[11px] font-semibold text-white">
+                    #{a.n} · {tag}
+                  </span>
+                </div>
+                <div className="flex flex-1 flex-col gap-1 p-2">
+                  <span className={`truncate text-xs font-medium ${a.rights === "rejected" ? "line-through" : ""}`} title={title}>
+                    {title}
+                  </span>
+                  <span className="line-clamp-2 text-[11px] text-muted" title={a.summary ?? undefined}>{status(a)}</span>
+                  <span className="mt-auto flex justify-end pt-1">
+                    {a.origin === "upload" ? (a.state !== "uploading" && <DeleteUploadButton assetId={a.id} />)
+                      : a.state !== "pending" && a.state !== "failed" &&
+                        <AssetRightsButton assetId={a.id} allowed={a.rights === "approved"} />}
+                  </span>
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      ) : !collecting && (
+        <p className="text-xs text-muted">None yet{collected ? " — nothing usable was found for this story." : "."}</p>
+      )}
+      {uploads && (
+        <div className="flex flex-col gap-3 border-t border-border pt-4">
+          <AddLink postId={postId} />
+          <UploadFootage postId={postId} />
+        </div>
+      )}
     </section>
   );
 }

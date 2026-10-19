@@ -72,6 +72,10 @@ def test_an_accepted_ideas_sources_are_read_before_its_script(s3, owner, user, m
     monkeypatch.setattr(research_post, "SEARCH", lambda client, q, count=12: [
         feeds.Item("news.test", "dup", "", "https://news.test/a"),
         feeds.Item("other.test", "Council votes to ban cars", "", "https://other.test/b")])
+    collected = []                      # the asset collection itself: test_collect.py
+    monkeypatch.setattr(research_post, "_names", lambda *a: [])
+    monkeypatch.setattr(research_post.finder, "collect", lambda post, judge, client, arts, **kw: collected.append(
+        [a.site for a in arts]) or {})
     iid, _ = _idea(owner, user, [{"title": "Council bans cars", "url": "https://mastodon.test/@x/1",
                                   "platform": "mastodon", "link": "https://news.test/a"}])
     as_user(owner, user, "select api.decide_idea_v2(%s, true, now() + interval '1 day')", (iid,))
@@ -89,6 +93,7 @@ def test_an_accepted_ideas_sources_are_read_before_its_script(s3, owner, user, m
     assert r["research_state"] == "ready"
     got = {a["site"]: a for a in r["research"]["articles"]}
     assert set(got) == {"news.test", "other.test"} and got["news.test"]["from_idea"] and not got["other.test"]["from_idea"]
+    assert collected == [["news.test", "other.test"]]                  # its assets collected from both reports
 
     FootageWriter.systems, seen = [], []
     real = FootageWriter.write

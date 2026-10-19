@@ -8,6 +8,7 @@ export type StepId = "sources" | "script" | "review" | "voice" | "render" | "ass
 export type PipelineInput = {
   status: string;
   research_state: "pending" | "ready" | "none" | null;
+  assets?: { total: number; pending: number };   // collected for the post, and still being fetched
   slides: boolean;                       // a carousel or picture post (no voice, no GPU)
   narrated: boolean;
   shots: { total: number; uploaded: number; voiced: number };
@@ -36,10 +37,14 @@ export function pipeline(p: PipelineInput): Step[] {
   const is = (...s: string[]) => s.includes(p.status);
   const steps: Step[] = [];
 
+  const fetching = (p.assets?.pending ?? 0) > 0;
+  const collected = p.assets?.total ?? 0;
   steps.push({
-    id: "sources", label: "Read the sources",
-    state: p.research_state === "pending" ? "active" : p.research_state ? "done" : "skipped",
-    detail: p.research_state === "pending" ? "Reading the reports and finding real photos and video" : undefined,
+    id: "sources", label: "Collect sources & assets",
+    state: p.research_state === "pending" || fetching ? "active" : p.research_state || collected ? "done" : "skipped",
+    detail: p.research_state === "pending" ? "Reading the reports; finding logos, photos and videos"
+      : fetching ? `${collected - (p.assets?.pending ?? 0)} of ${collected} assets ready`
+      : collected ? `${collected} asset${collected === 1 ? "" : "s"} collected` : undefined,
   });
   steps.push({
     id: "script", label: p.slides ? "Write the slides" : "Write the script",

@@ -153,8 +153,12 @@ def run(ctx: JobContext) -> dict:
         footage, waiting = footage_.load(c, post_id, stock=bool(vault.secret(post["user_id"], "pexels_api_key")))
     if waiting and footage_.still_worth_waiting(waiting):
         raise Defer(f"waiting for {len(waiting)} piece(s) of footage to be fetched and analysed", retry_in=45)
-    if post.get("research_state") == "pending" and footage_.still_worth_waiting([post]):
-        raise Defer("waiting for the story's sources to be read", retry_in=30)
+    if post.get("research_state") == "pending":
+        # Timed from when the collection was (last) asked for: a post made days ago and
+        # collected again today still waits for it.
+        job = db.one("select updated_at as created_at from jobs where dedupe_key = %s", (f"research_post:{post_id}",))
+        if footage_.still_worth_waiting([job or post]):
+            raise Defer("waiting for the story's sources to be read and its assets collected", retry_in=30)
     # Platform-native music is added by the owner in the app; none is none.
     music = (bool(vault.secret(post["user_id"], "freesound_api_key"))
              and look.music_source_mode == "licensed_asset")

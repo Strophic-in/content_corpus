@@ -46,6 +46,8 @@ export async function createPost(_: ActionState, form: FormData): Promise<Action
         [user.id, format_id, slot_date, publish_time, topic, brief, target_seconds],
       );
       if (!r.rows[0]) throw Object.assign(new Error("format not found"), { code: "P0002" });
+      // Its assets are collected now (logos, the reports, photos, videos), before any script.
+      await db.query("select api.collect_assets($1)", [r.rows[0].id]);
       return r.rows[0].id as string;
     });
   } catch (err) {
@@ -491,6 +493,33 @@ export async function startUpload(postId: string, name: string, bytes: number,
   } catch (err) {
     return { ok: false, error: `${name}: ${friendly(err)}` };
   }
+}
+
+/** A link the owner pastes — a picture, a video page or an article — as one of the post's assets. */
+export async function addAssetLink(postId: string, url: string, kind: "auto" | "image" | "video"): Promise<ActionState> {
+  const user = await requireUser();
+  if (!/^https?:\/\/\S+\.\S+$/i.test(url.trim())) return { ok: false, error: "Paste a full link, starting with https://" };
+  try {
+    await asUser(user.id, (db) => db.query("select api.add_asset_link($1, $2, $3)", [postId, url.trim(), kind]));
+  } catch (err) {
+    return { ok: false, error: friendly(err) };
+  }
+  await wakeWorker();
+  refresh();
+  return { ok: true };
+}
+
+/** Collect (again) the post's logos, report cards, photos and videos. */
+export async function collectAssets(postId: string): Promise<ActionState> {
+  const user = await requireUser();
+  try {
+    await asUser(user.id, (db) => db.query("select api.collect_assets($1)", [postId]));
+  } catch (err) {
+    return { ok: false, error: friendly(err) };
+  }
+  await wakeWorker();
+  refresh();
+  return { ok: true };
 }
 
 export async function deleteUpload(assetId: string): Promise<ActionState> {

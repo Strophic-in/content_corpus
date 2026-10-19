@@ -122,6 +122,23 @@ class Article:
     # The page's photos: its lead picture (og:image) and large pictures in the article
     # body, [{"url", "caption"}] — candidates for the asset finder.
     images: list[dict] = field(default_factory=list)
+    # The outlet's own name (og:site_name: "The Economic Times") and when it published
+    # (article:published_time, ISO) — for the headline card.
+    outlet: str = ""
+    published: str = ""
+
+
+def page_meta(soup: BeautifulSoup) -> tuple[str, str]:
+    """(the outlet's name, the publication time) from a page's meta tags; "" when absent."""
+    def meta(*names: str) -> str:
+        for n in names:
+            m = soup.find("meta", attrs={"property": n}) or soup.find("meta", attrs={"name": n}) \
+                or soup.find("meta", attrs={"itemprop": n})
+            if m and (m.get("content") or "").strip():
+                return m["content"].strip()
+        return ""
+    return (meta("og:site_name", "application-name")[:60],
+            meta("article:published_time", "datePublished", "pubdate", "publish-date", "date")[:40])
 
 
 _NOT_A_PHOTO = re.compile(r"logo|icon|avatar|sprite|placeholder|blank|pixel|badge|author|byline|\.svg|\.gif", re.I)
@@ -259,4 +276,6 @@ def read(client: httpx.Client, url: str, *, _hop: int = 0) -> Article:
             fuller = read(client, alt, _hop=1)
             if fuller.ok and len(fuller.text) >= len(text) + 200:
                 return Article(url, site, title or fuller.title, fuller.text[:MAX_TEXT])
-    return Article(url, site, title, text[:MAX_TEXT], ok=bool(text), images=page_images(soup, container, page.url))
+    outlet, published = page_meta(soup)
+    return Article(url, site, title, text[:MAX_TEXT], ok=bool(text), images=page_images(soup, container, page.url),
+                   outlet=outlet, published=published)
