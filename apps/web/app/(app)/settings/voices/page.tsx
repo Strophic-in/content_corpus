@@ -31,7 +31,8 @@ export default async function VoicesPage() {
         voices={voices().map((v) => ({ id: v.id, engine: v.engine, name: v.name, gender: v.gender, accent: v.accent,
                                        languages: v.languages, tone: v.tone, sample: sample("voice", v.id) }))}
         styles={voiceStyles().map((s) => ({ id: s.style_id, name: s.name, description: s.description,
-                                            hindiOnly: (s.languages ?? []).join() === "hi", sample: sample("style", s.style_id) }))}
+                                            hindiOnly: (s.languages ?? []).join() === "hi", sample: sample("style", s.style_id),
+                                            group: s.group ?? "Other", expressive: Boolean(s.expressive) }))}
         enabled={st.voices_enabled} stylesOn={st.voice_styles_enabled} mode={st.voice_mode}
         fixedVoice={st.fixed_voice} fixedStyle={st.fixed_voice_style} />
     </div>

@@ -9,7 +9,9 @@ export type BoardVoice = {
   id: string; engine: "kokoro" | "openai"; name: string; gender: string; accent: string; languages: string[];
   tone: string; sample: string | null;
 };
-export type BoardStyle = { id: string; name: string; description: string; hindiOnly: boolean; sample: string | null };
+export type BoardStyle = { id: string; name: string; description: string; hindiOnly: boolean; sample: string | null;
+                           group: string; expressive: boolean };
+const GROUP_ORDER = ["News", "Documentary & story", "Dark & dramatic", "Fun", "Energy", "Calm"];
 
 function Toggle({ on, onChange, label, busy }: { on: boolean; onChange: (v: boolean) => void; label: string; busy: boolean }) {
   return (
@@ -117,24 +119,35 @@ export function VoicesBoard({ voices, styles, enabled, stylesOn, mode, fixedVoic
         {state?.error && <p className="text-sm text-danger">{state.error}</p>}
       </section>
 
-      <section className="flex flex-col gap-3">
+      <section className="flex flex-col gap-4">
         <div>
           <h2 className="font-semibold">Styles</h2>
-          <p className="text-sm text-muted">Ready-made ways of reading a script. Directable voices follow them closely; the free voices take their pace.</p>
+          <p className="text-sm text-muted">How a script is read. Jev picks the style first, then a voice that suits it.
+            Styles marked <span className="font-medium text-accent">acted</span> need a directable voice — the free voices
+            can only change their pace. Samples are read by the voice that suits each style best.</p>
         </div>
-        <div className="grid gap-2 sm:grid-cols-2">
-          {styles.map((s) => (
+        {[...GROUP_ORDER.filter((g) => styles.some((s) => s.group === g)),
+          ...[...new Set(styles.map((s) => s.group))].filter((g) => !GROUP_ORDER.includes(g))].map((g) => (
+        <div key={g} className="flex flex-col gap-2">
+          <h3 className="text-xs font-semibold tracking-wide text-muted uppercase">{g}</h3>
+          <div className="grid gap-2 sm:grid-cols-2">
+          {styles.filter((s) => s.group === g).map((s) => (
             <div key={s.id} className={`flex items-center gap-3 rounded-xl border bg-surface p-3 ${sOn.has(s.id) ? "border-border" : "border-border opacity-60"}`}>
               <Play src={s.sample} player={player} />
               <span className="min-w-0 flex-1">
-                <span className="block text-sm font-medium">{s.name}{s.hindiOnly && <span className="ml-2 text-xs text-muted">Hindi</span>}</span>
+                <span className="block text-sm font-medium">{s.name}
+                  {s.hindiOnly && <span className="ml-2 text-xs text-muted">Hindi</span>}
+                  {s.expressive && <span className="ml-2 rounded-full bg-accent/15 px-1.5 py-0.5 text-[10px] font-medium text-accent">acted</span>}
+                </span>
                 <span className="block text-xs text-muted">{s.description}</span>
               </span>
               <Toggle on={sOn.has(s.id)} busy={busy} label={s.name}
                       onChange={(v) => flip(sOn, setSOn, s.id, v, setVoiceStyleEnabled)} />
             </div>
           ))}
+          </div>
         </div>
+        ))}
       </section>
 
       {GROUPS.map((g) => {

@@ -57,6 +57,10 @@ class Style:
     sensitive: bool = False
     languages: tuple[str, ...] = field(default=())
     best_for: tuple[str, ...] = field(default=())
+    group: str = ""
+    dark: bool = False            # horror and the like: never for a real tragedy
+    expressive: bool = False      # needs acting: only the directable (OpenAI) voices can do it
+    voice_hint: str = ""          # what kind of voice suits it ("deep, low, breathy")
 
 
 @functools.lru_cache(maxsize=1)
@@ -76,7 +80,8 @@ def styles() -> dict[str, Style]:
         s = json.loads(f.read_text(encoding="utf-8"))
         out[s["style_id"]] = Style(s["style_id"], s["name"], s["description"], s["instructions"], float(s["speed"]),
                                    bool(s.get("playful")), bool(s.get("sensitive")), tuple(s.get("languages") or ()),
-                                   tuple(s.get("best_for") or ()))
+                                   tuple(s.get("best_for") or ()), s.get("group", ""), bool(s.get("dark")),
+                                   bool(s.get("expressive")), s.get("voice_hint", ""))
     return out
 
 
@@ -119,31 +124,43 @@ def choose(judge: Jev | None, st: dict, *, language: str | None, story: str, cat
     first = own if own and lang in own.languages else vs[0]
     if judge is None or (len(vs) < 2 and len(ss) < 2):
         return first.id, _default_style(ss, lang).style_id, "your voice" if first is own else "the first voice switched on"
+    # Jev can't hear a voice: it reads each one's description. So the style is picked
+    # first (how the story should be read), then the voice that suits that style.
+    state = {"story": story[:1500], "category": category or "news", "format": template or "short video"}
     q = dict(SENSITIVE)
-    if len(vs) > 1:
-        q["voice"] = {"type": "choice", "instructions": "Which narrator voice suits `story` best, for this channel "
-                                                        "and `category`?",
-                      "criteria": {f"v{i}": f"{v.name}: {v.gender}, {v.accent} accent; {v.tone}. "
-                                            f"Best for {', '.join(v.best_for)}." for i, v in enumerate(vs)}}
     if len(ss) > 1:
-        q["style"] = {"type": "choice", "instructions": "Which way of reading `story` aloud fits it best?",
-                      "criteria": {f"s{i}": f"{s.name}: {s.description} Best for {', '.join(s.best_for)}."
-                                   for i, s in enumerate(ss)}}
+        q["style"] = {"type": "choice", "instructions": "How should `story` be read aloud, for this `category`?",
+                      "criteria": {f"s{i}": f"{x.name} ({x.group}): {x.description} Best for {', '.join(x.best_for)}."
+                                   for i, x in enumerate(ss)}}
     try:
-        a = judge.ask({"story": story[:1500], "category": category or "news", "format": template or "short video"}, q)
+        a = judge.ask(state, q)
     except Exception as e:  # noqa: BLE001 - a voice is still needed
-        log.warning("voice choice: %s", e)
+        log.warning("voice style choice: %s", e)
         return first.id, _default_style(ss, lang).style_id, "your voice" if first is own else "the first voice switched on"
-    voice, vconf = _pick(a.get("voice"), "v", vs)
     style, sconf = _pick(a.get("style"), "s", ss)
-    voice = voice if voice and vconf >= SURE else first
     style = style if style and sconf >= SURE else _default_style(ss, lang)
-    if yes(a.get("sensitive"), 0.0) >= 0.6:       # a tragedy is never read playfully
-        somber = next((s for s in ss if s.sensitive), None)
-        if somber:
-            style = somber
-        elif style.playful:
-            style = next((s for s in ss if not s.playful), style)
+    if yes(a.get("sensitive"), 0.0) >= 0.6:       # a real tragedy: never playful, never horror
+        if style.playful or style.dark:
+            style = next((x for x in ss if x.sensitive), None) or next(
+                (x for x in ss if not x.playful and not x.dark), _default_style(ss, lang))
+    # A style that needs acting goes to the voices that can act it, when any are on.
+    actors = [v for v in vs if v.engine == "openai"]
+    pool = actors if style.expressive and actors else vs
+    voice, vconf = (pool[0], 1.0) if len(pool) < 2 else (None, 0.0)
+    if len(pool) > 1:
+        try:
+            b = judge.ask({**state, "style": f"{style.name}: {style.description} It suits a voice that is "
+                                              f"{style.voice_hint or 'clear'}."},
+                          {"voice": {"type": "choice", "instructions": "Which narrator voice reads `story` best in "
+                                                                       "`style`?",
+                                     "criteria": {f"v{i}": f"{v.name}: {v.gender}, {v.accent} accent; {v.tone}. "
+                                                           f"Best for {', '.join(v.best_for)}."
+                                                  for i, v in enumerate(pool)}}})
+            voice, vconf = _pick(b.get("voice"), "v", pool)
+        except Exception as e:  # noqa: BLE001
+            log.warning("voice choice: %s", e)
+    if not voice or vconf < SURE:
+        voice = first if first in pool else pool[0]
     return voice.id, style.style_id, f"Jev's pick ({round(100 * min(vconf or 1, sconf or 1))}% sure)"
 
 

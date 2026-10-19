@@ -19,40 +19,52 @@ ON = {"voices_enabled": ["openai:marin", "openai:onyx", "kokoro:am_michael", "ko
 
 def test_the_catalog_and_styles_load_and_hindi_has_voices():
     cat, sty = voices.catalog(), voices.styles()
-    assert len(cat) >= 40 and {"breaking_news", "somber", "hindi_anchor"} <= set(sty)
+    assert len(cat) >= 40 and len(sty) >= 24 and {"breaking_news", "somber", "horror", "funny", "cringe"} <= set(sty)
+    assert all(s.group for s in sty.values()) and sty["horror"].dark and sty["funny"].playful
     assert any("hi" in v.languages and v.engine == "kokoro" for v in cat.values())
     assert all(v.id == f"{v.engine}:{v.voice}" for v in cat.values())
     assert voices.language_code("Hindi") == "hi" and voices.language_code("English") == "en"
 
 
 class VoiceJev(jev.Jev):
-    def __init__(self, voice="v1", style="s0", sensitive=0.1, sure=0.8):
+    """Answers the style question, then the voice question (two calls)."""
+
+    def __init__(self, voice="v1", style="breaking_news", sensitive=0.1, sure=0.8):
         super().__init__("k", client=httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(500))))
-        self.answer = {"voice": {"choice": voice, "confidence": sure}, "style": {"choice": style, "confidence": sure},
-                       "sensitive": {"noul": sensitive}}
-        self.asked = None
+        self.voice, self.style, self.sensitive, self.sure = voice, style, sensitive, sure
+        self.asked = []
 
     def ask(self, state, questions, images=None):
-        self.asked = questions
-        return self.answer
+        self.asked.append((state, questions))
+        if "style" in questions and "voice" not in questions:
+            names = [c.split(" (")[0] for c in questions["style"]["criteria"].values()]
+            want = voices.styles()[self.style].name
+            return {"style": {"choice": f"s{names.index(want)}", "confidence": self.sure},
+                    "sensitive": {"noul": self.sensitive}}
+        return {"voice": {"choice": self.voice, "confidence": self.sure}}
 
 
-def test_jev_picks_from_the_voices_switched_on_for_the_language():
-    # English: the enabled voices that speak it, in order (marin, onyx, michael): v1 = onyx
-    voice, style, why = voices.choose(VoiceJev("v1", "s0"), ON, language="English", story="A rocket launches")
-    enabled_styles = [s for s in ON["voice_styles_enabled"] if s != "hindi_anchor"]
-    assert voice == "openai:onyx" and style == enabled_styles[0] and why.startswith("Jev's pick")
-    # Hindi: only voices that speak it are offered (marin, onyx, alpha — not michael)
-    j = VoiceJev("v2", "s0")
-    voice, _, _ = voices.choose(j, ON, language="Hindi", story="बाढ़")
-    assert voice == "kokoro:hf_alpha" and len(j.asked["voice"]["criteria"]) == 3
+def test_jev_picks_the_style_then_a_voice_that_suits_it():
+    # A plain style: any voice speaking the language (marin, onyx, michael): v1 = onyx
+    voice, style, why = voices.choose(VoiceJev("v1", "breaking_news"), ON, language="English", story="A rocket launches")
+    assert (voice, style) == ("openai:onyx", "breaking_news") and why.startswith("Jev's pick")
+    # A style that needs acting goes only to the voices that can act (marin, onyx)
+    j = VoiceJev("v0", "horror")
+    voice, style, _ = voices.choose(j, ON, language="English", story="The haunted fort")
+    state, q = j.asked[-1]
+    assert style == "horror" and voice == "openai:marin" and len(q["voice"]["criteria"]) == 2
+    assert "Horror" in state["style"] and "deep" in state["style"]
+    # Hindi: only voices that speak it (marin, onyx, alpha)
+    j = VoiceJev("v2", "hindi_anchor")
+    voice, style, _ = voices.choose(j, ON, language="Hindi", story="बाढ़")
+    assert (voice, style) == ("kokoro:hf_alpha", "hindi_anchor") and len(j.asked[-1][1]["voice"]["criteria"]) == 3
 
 
-def test_a_tragedy_is_never_read_playfully():
-    energetic = list(voices.styles()).index("energetic")
-    _, style, _ = voices.choose(VoiceJev("v0", f"s{energetic}", sensitive=0.95), ON, language="English",
-                                story="A bridge collapse kills 12")
-    assert style == "somber"
+def test_a_tragedy_is_never_read_playfully_or_as_horror():
+    for wanted in ("funny", "horror", "cringe"):
+        _, style, _ = voices.choose(VoiceJev("v0", wanted, sensitive=0.95), ON, language="English",
+                                    story="A bridge collapse kills 12")
+        assert style == "somber", wanted
 
 
 def test_fixed_mode_and_unsure_jev_fall_back_to_the_owners_voice():

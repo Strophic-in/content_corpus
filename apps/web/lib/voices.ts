@@ -14,7 +14,7 @@ export type VoiceInfo = {
 };
 export type VoiceStyleInfo = {
   style_id: string; name: string; description: string; speed: number; playful?: boolean; sensitive?: boolean;
-  languages?: string[]; best_for: string[];
+  languages?: string[]; best_for: string[]; group?: string; expressive?: boolean; voice_hint?: string;
 };
 
 let voiceCache: VoiceInfo[] | null = null;
