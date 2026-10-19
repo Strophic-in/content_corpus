@@ -19,7 +19,7 @@ from psycopg.types.json import Jsonb
 from .. import costs, db, storage, vault
 from ..ideas import media
 from ..ideas.vision import OpenAIVision
-from ..media import assemble
+from ..media import assemble, footage
 from ..runner import Handler, JobContext
 
 # Swapped by tests.
@@ -57,6 +57,14 @@ def run(ctx: JobContext) -> dict:
                                            for t in analysis["transcript"])
                 except Exception as e:  # noqa: BLE001 - the picture still tells most of it
                     log(f"no transcript: {e}")
+            # A phone clip inside a broadcaster's widescreen frame: crop to it in every shot.
+            try:
+                frame = footage.inner_frame(path)
+                if frame:
+                    analysis["frame"] = frame
+                    log(f"phone video inside a wide frame: {frame}")
+            except Exception as e:  # noqa: BLE001 - the whole frame, then
+                log(f"no inner frame: {e}")
             seconds = max(float(a["seconds"] or 0), 1.0)
             n = SHEET_TILES * SHEET_TILES
             times = [round(k * seconds / n, 1) for k in range(n)]

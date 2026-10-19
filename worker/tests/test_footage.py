@@ -375,3 +375,19 @@ def test_every_script_prompt_asks_for_detailed_camera_aware_generated_shots():
                                                                   "analysis": {}}], stock=True)):
         text = footage_.prompt_section(fp, narrated=True)
         assert "cinematographer's shot note" in text and "50-110 words" in text and "B-roll" in text
+
+
+def test_a_phone_video_inside_a_wide_frame_is_found(tmp_path):
+    """A sharp 9:16 picture between blurred copies of itself (the BBC's way with a
+    bystander's clip) → a focus box on it; an ordinary wide video → None."""
+    from corpus.media import footage as fm
+    wrapped = tmp_path / "wrapped.mp4"
+    subprocess.run(["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "testsrc2=s=405x720:r=24:d=2",
+                    "-filter_complex", "[0]split[a][b];[a]scale=1280:720,boxblur=30:3[bg];[bg][b]overlay=437:0",
+                    "-pix_fmt", "yuv420p", str(wrapped)], check=True)
+    box = fm.inner_frame(wrapped)
+    assert box and abs(box["w"] - 405 / 1280) < 0.02 and abs(box["x"] - 437 / 1280) < 0.04
+    wide = tmp_path / "wide.mp4"
+    subprocess.run(["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "testsrc2=s=1280x720:r=24:d=2",
+                    "-pix_fmt", "yuv420p", str(wide)], check=True)
+    assert fm.inner_frame(wide) is None

@@ -67,7 +67,9 @@ def run(ctx: JobContext) -> dict:
             src = storage.get_file(asset["key"], work / "asset.mp4")
             how = footage.compose_clip(src, out, seconds=seconds, start=float(shot["clip_in"] or 0),
                                        end=float(shot["clip_out"] or 0), layout=shot["layout"],
-                                       audio=shot["audio_mode"], credit=credit, focus=ex.get("focus"),
+                                       audio=shot["audio_mode"], credit=credit,
+                                       # the shot's own focus, else the phone video inside a wide frame
+                                       focus=ex.get("focus") or (asset.get("analysis") or {}).get("frame"),
                                        timelapse=bool(ex.get("timelapse")), size=size)
         elif shot["source"] == "image":
             src = storage.get_file(asset["key"], work / "asset.jpg")

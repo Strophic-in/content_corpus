@@ -77,6 +77,46 @@ def _ff(args: list[str], cwd: Path) -> None:
         raise FootageError(f"ffmpeg: {tail or f'exit {r.returncode}'}")
 
 
+def inner_frame(src: Path, samples: int = 4) -> dict | None:
+    """The phone video inside a broadcaster's widescreen frame: a sharp, roughly 9:16
+    picture between blurred copies of itself (how the BBC and many others carry a
+    bystander's vertical clip). As a focus box (fractions), or None when the whole
+    frame is the picture. Live: the BBC's Limoges clip filled a quarter of the reel."""
+    from PIL import Image, ImageFilter
+
+    i = info(src)
+    if not i.w or not i.h or i.w <= i.h:
+        return None
+    work = src.parent
+    cols = [0.0] * 160
+    for k in range(samples):
+        at = (i.seconds or 1) * (k + 1) / (samples + 1)
+        frame = work / f"_inner{k}.png"
+        r = subprocess.run(["ffmpeg", "-y", "-v", "error", "-ss", f"{at:.2f}", "-i", str(src), "-frames:v", "1",
+                            "-vf", "scale=160:90,format=gray", str(frame)], capture_output=True, timeout=60)
+        if r.returncode != 0 or not frame.exists():
+            continue
+        edges = Image.open(frame).filter(ImageFilter.FIND_EDGES)
+        px = edges.load()
+        for x in range(1, 159):
+            cols[x] += sum(px[x, y] for y in range(10, 80))      # skip logos in the top and bottom strips
+        frame.unlink(missing_ok=True)
+    peak = max(cols)
+    if peak <= 0:
+        return None
+    sharp = [x for x in range(160) if cols[x] >= 0.35 * peak]
+    left, right = min(sharp), max(sharp)
+    inner = (right - left + 1) / 160
+    side = (sum(cols[:left]) + sum(cols[right + 1:])) / max(1, 160 - (right - left + 1))
+    middle = sum(cols[left:right + 1]) / (right - left + 1)
+    portrait = (i.h * 9 / 16) / i.w                    # the share of the width a 9:16 picture takes
+    if not (0.6 * portrait <= inner <= 1.6 * portrait) or side > 0.3 * middle or abs((left + right) / 2 - 80) > 16:
+        return None
+    w = min(1.0, portrait)                             # crop exactly 9:16, centred on the sharp part
+    x = max(0.0, min(1.0 - w, (left + right + 1) / 2 / 160 - w / 2))
+    return {"x": round(x, 4), "y": 0.0, "w": round(w, 4), "h": 1.0}
+
+
 def choose_layout(w: int, h: int) -> str:
     return "cover" if h and w / h <= COVER_MAX_ASPECT else "blur_pad"
 
