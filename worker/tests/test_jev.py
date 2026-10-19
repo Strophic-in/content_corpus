@@ -29,6 +29,8 @@ class FakeJev(jev.Jev):
     fits = {"ad": 0.2, "cricket": 2.6, "budget": 2.9, "flood": 2.4}
     trending = {"budget": 2.8, "cricket": 1.0, "flood": 2.6}
     format_for: dict = {}
+    pull: dict = {}
+    dishonest: set = set()
     fail_on: set = set()
 
     def __init__(self, key="k", client=None):
@@ -46,6 +48,10 @@ class FakeJev(jev.Jev):
             out["fits"] = {"score": next((v for w, v in self.fits.items() if w in text), 1.5)}
             out["trending"] = {"score": next((v for w, v in self.trending.items() if w in text), 1.0)}
             out["genuine"] = {"noul": 0.1 if "ad" in text.split() else 0.9}
+        if "pull" in questions:
+            out["pull"] = {"score": next((v for w, v in self.pull.items() if w in text), 1.0)}
+        if "honest" in questions:
+            out["honest"] = {"noul": 0.1 if any(w in text for w in self.dishonest) else 0.9}
         if "format" in questions:
             pick = next((v for w, v in self.format_for.items() if w in text), None)
             if pick:
@@ -75,6 +81,33 @@ def test_items_are_ranked_and_off_topic_ones_dropped():
     finally:
         FakeJev.fail_on = set()
     assert out[-1].title == "Mystery story"
+
+
+def test_what_people_would_tap_ranks_first():
+    cands = [_item("Union budget cuts income tax"), _item("Floods hit Assam"), _item("Cricket score update"),
+             _item("Ministry issues routine circular")]
+    FakeJev.pull = {"cricket": 3.0, "circular": 0.0}
+    try:
+        out, _ = decide.rank(FakeJev(), cands, {"name": "News", "brief": "India news"}, keep=4,
+                             audience="young Indians on Shorts")
+    finally:
+        FakeJev.pull = {}
+    assert out[0].title == "Cricket score update" and out[-1].title == "Ministry issues routine circular"
+    assert "Shorts and Instagram Reels" in decide.RANK_QUESTIONS["pull"]["instructions"]
+
+
+def test_the_strongest_honest_ideas_are_kept():
+    ideas = [{"title": "Council meets on Tuesday", "hook": "a routine meeting", "brief": ""},
+             {"title": "Your rent could double", "hook": "shocking claim", "brief": ""},
+             {"title": "A spire fell in four minutes", "hook": "watch it go", "brief": ""}]
+    FakeJev.pull = {"rent": 3.0, "spire": 2.6, "council": 0.4}
+    FakeJev.dishonest = {"shocking claim"}                      # the story can't back the hook
+    try:
+        out = decide.rank_ideas(FakeJev(), ideas, "news watchers")
+    finally:
+        FakeJev.pull, FakeJev.dishonest = {}, set()
+    assert [i["title"] for i in out] == ["A spire fell in four minutes", "Council meets on Tuesday",
+                                         "Your rent could double"]
 
 
 def test_jev_overrides_the_writers_format_only_when_sure():

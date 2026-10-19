@@ -67,6 +67,17 @@ CATEGORY_BLOCK = """
 {category_brief}
 Keywords: {category_keywords}"""
 
+# Owner, 2026-10-19: pick what attracts viewers, and frame it so they open it.
+PULL_NOTE = """
+
+## Pick and frame for pull
+Choose the stories most of the channel's audience would stop scrolling for: a surprise or twist,
+stakes for ordinary people (money, prices, jobs, safety, health), a famous name or place, a striking
+number, a conflict, something unusual to watch. Skip routine announcements and procedural updates.
+Write each title and hook to open a curiosity gap the video truly closes: lead with the most surprising
+concrete fact, the number, the name, or what it means for the viewer. Clickable, never misleading -
+no invented detail, no promise the story can't keep, no fake urgency."""
+
 OUTPUT_NOTE = """
 
 ## Linking ideas to the items
@@ -213,7 +224,7 @@ def run(ctx: JobContext) -> dict:
         cands, cuts = select.prefilter(items, keep=CANDIDATES)
         if judge is not None:
             try:
-                cands, ranked = decide.rank(judge, cands, cat)
+                cands, ranked = decide.rank(judge, cands, cat, audience=prof.get("audience") or "")
                 log(f"Jev ranked the items: {ranked}")
             except Exception as e:  # noqa: BLE001 - the heuristic order stands
                 log(f"Jev ranking skipped: {e}")
@@ -224,7 +235,7 @@ def run(ctx: JobContext) -> dict:
     template = fmt["idea_prompt"]
     if "{category_name}" not in template:
         template += CATEGORY_BLOCK
-    system = prompts.fill(template + performance + formats_block(fmts, per_format) + OUTPUT_NOTE, {
+    system = prompts.fill(template + performance + formats_block(fmts, per_format) + PULL_NOTE + OUTPUT_NOTE, {
         **{k: prof.get(k) or "(not set)" for k in channels.PROFILE_KEYS},
         "format_name": fmt["name"], "format_description": fmt["description"] or "(none)",
         "category_name": cat["name"],
@@ -250,6 +261,13 @@ def run(ctx: JobContext) -> dict:
     costs.record_llm(usage, note=f"idea from a YouTube video: {cat['name']}" if video else f"ideas: {cat['name']}",
                      **billed)
     cands_ideas = [i.model_dump() for i in out.ideas]
+    if judge is not None and not video and len(cands_ideas) > 1:
+        # The writer drafted a few more than needed: the strongest honest pull is kept.
+        try:
+            cands_ideas = decide.rank_ideas(judge, cands_ideas, prof.get("audience") or "")
+            log("Jev's order by pull: " + " | ".join(i["title"][:50] for i in cands_ideas))
+        except Exception as e:  # noqa: BLE001 - the writer's order stands
+            log(f"Jev idea ranking skipped: {e}")
     if not cands_ideas:
         if judge is not None:
             judge.record(f"Jev decisions: {cat['name']}", **billed)

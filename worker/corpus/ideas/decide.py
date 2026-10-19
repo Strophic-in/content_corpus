@@ -1,9 +1,14 @@
 """The idea agent's fast decisions, made by Jev (corpus/jev.py) when a key is set.
 
 rank         after the junk/staleness prefilter: each item is scored for fitting
-             the category, being trending today and being a genuine report;
+             the category, being trending today, being a genuine report and its
+             pull — how many of the channel's audience would stop scrolling and tap
+             a video about it (owner, 2026-10-19: pick what attracts viewers);
              items that plainly don't fit are dropped and the best KEEP go to the
              writer, best first. Fewer, better items: a cheaper, sharper writer call.
+rank_ideas   the writer drafts a few more ideas than the category makes; Jev scores
+             each draft's pull and whether its title and hook are honest, and the
+             strongest honest ones are kept.
 pick_format  for each idea, which of the category's formats suits it — judged on
              the idea, the media its items carry, each format's cost and how it has
              done on this channel. The writer's own pick stands when Jev is unsure.
@@ -32,6 +37,21 @@ def _item_text(it: Item) -> str:
             + (f"; {', '.join(extra)}" if extra else "") + ")")
 
 
+# What makes people stop scrolling and tap, said once for items and ideas alike.
+PULL_WHAT = ("Strong pull: a surprise or twist; high stakes for ordinary people (money, prices, jobs, safety, "
+             "health); a famous name, place or brand; a striking number; conflict or controversy; something unusual "
+             "or visual to watch; a question people want answered. Weak pull: routine announcements, procedural "
+             "updates, jargon, stories with no consequence for anyone.")
+PULL_SCALE = ["Almost nobody would tap", "A niche few would tap", "Many would stop and tap",
+              "Most would stop, tap and share it"]
+
+
+def _pull(subject: str) -> dict:
+    return {"type": "score", "criteria": PULL_SCALE,
+            "instructions": f"Picture `audience` scrolling YouTube Shorts and Instagram Reels. How many of them would "
+                            f"stop and tap a short video about {subject}? {PULL_WHAT}"}
+
+
 RANK_QUESTIONS = {
     "fits": {"type": "score", "instructions": "How well does `item` fit `category`?",
              "criteria": ["Unrelated to the category", "Loosely related", "Clearly in the category",
@@ -43,17 +63,25 @@ RANK_QUESTIONS = {
     "genuine": {"type": "noul",
                 "instructions": "Is `item` a genuine news report or post about a real event (not an ad, promotion, "
                                 "quiz, horoscope or listicle)?"},
+    "pull": _pull("the story in `item`"),
+}
+IDEA_QUESTIONS = {
+    "pull": _pull("`idea`, sold by its title and hook"),
+    "honest": {"type": "noul",
+               "instructions": "Can the story behind `idea` truthfully deliver what its title and hook promise - no "
+                               "invented detail, no exaggeration, no false urgency?"},
 }
 
 
-def rank(jev: Jev, cands: list[Item], category: dict, keep: int = KEEP) -> tuple[list[Item], dict]:
+def rank(jev: Jev, cands: list[Item], category: dict, keep: int = KEEP, audience: str = "") -> tuple[list[Item], dict]:
     """(the best `keep` items, best first; what was decided). Items Jev couldn't
     judge keep their place after the judged ones."""
     if len(cands) <= 3:
         return cands, {}
     cat = f"{category['name']}: {category.get('brief') or 'whatever suits the channel'}"
     today = datetime.now(timezone.utc).strftime("%d %B %Y")
-    answers = jev.many([({"item": _item_text(it), "category": cat, "today": today}, RANK_QUESTIONS)
+    who = audience or "a general audience on short-video apps"
+    answers = jev.many([({"item": _item_text(it), "category": cat, "today": today, "audience": who}, RANK_QUESTIONS)
                         for it in cands])
     judged, unjudged, dropped = [], [], 0
     for it, a in zip(cands, answers):
@@ -64,10 +92,31 @@ def rank(jev: Jev, cands: list[Item], category: dict, keep: int = KEEP) -> tuple
         if fit < MIN_FIT:
             dropped += 1
             continue
-        judged.append((fit + 0.8 * score(a.get("trending")) + 1.5 * yes(a.get("genuine")), it))
+        judged.append((fit + 0.8 * score(a.get("trending")) + 1.5 * yes(a.get("genuine"))
+                       + 1.5 * score(a.get("pull")), it))
     judged.sort(key=lambda x: x[0], reverse=True)
     out = [it for _, it in judged] + unjudged
     return out[:keep], {"judged": len(cands) - len(unjudged), "dropped_off_topic": dropped, "kept": min(keep, len(out))}
+
+
+def rank_ideas(jev: Jev, ideas: list[dict], audience: str = "") -> list[dict]:
+    """The written ideas, the strongest pull first; one whose title or hook the story
+    can't honestly deliver goes last. Ideas Jev couldn't judge keep their order after
+    the judged ones."""
+    if len(ideas) < 2:
+        return ideas
+    who = audience or "a general audience on short-video apps"
+    answers = jev.many([({"idea": f"Title: {i['title']}. Hook: {i['hook']}. {i.get('brief', '')}", "audience": who},
+                         IDEA_QUESTIONS) for i in ideas])
+    judged, unjudged = [], []
+    for n, (i, a) in enumerate(zip(ideas, answers)):
+        if a is None:
+            unjudged.append(i)
+            continue
+        honest = yes(a.get("honest"), 1.0)
+        judged.append((score(a.get("pull")) - (3.0 if honest < 0.5 else 0.0), -n, i))
+    judged.sort(key=lambda x: (x[0], x[1]), reverse=True)
+    return [i for *_, i in judged] + unjudged
 
 
 def _media(its: list[Item]) -> str:
