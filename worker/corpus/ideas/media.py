@@ -283,8 +283,16 @@ PAGE_VIDEO_SECONDS = 300          # a news clip, not a programme
 PAGE_VIDEO_BYTES = 400_000_000
 
 
+class _Quiet:
+    """yt-dlp prints "ERROR: Unsupported URL" for every page without a video: not news."""
+    def debug(self, msg): pass
+    def info(self, msg): pass
+    def warning(self, msg): pass
+    def error(self, msg): pass
+
+
 def _ytdlp_opts(**more) -> dict:
-    return {"quiet": True, "no_warnings": True, "socket_timeout": 25, "noprogress": True,
+    return {"quiet": True, "no_warnings": True, "socket_timeout": 25, "noprogress": True, "logger": _Quiet(),
             "http_headers": {"User-Agent": net.BROWSER_UA}, **more}
 
 

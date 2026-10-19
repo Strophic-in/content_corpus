@@ -128,7 +128,14 @@ class OpenAIVision:
             model=model,
             instructions=("You log footage for a news video editor, factually: what happens and when, any text on "
                           "screen, a broadcaster's logo or a watermark, whether identifiable people are shown, "
-                          "and anything graphic (injury, blood, a dead body). Never guess names of people."),
+                          "and anything graphic (injury, blood, a dead body). Never guess names of people. "
+                          # Live: 16 frames of a spire burning were all logged "burning", and the
+                          # moment it fell (between 10 and 12 s) went unnoticed - so the reel cut
+                          # away just before it.
+                          "Compare each frame with the one before: name the moment something changes - a "
+                          "collapse, an explosion, a fall, a crowd surging, a vehicle arriving - at the time of the "
+                          "first frame that shows it, starting with KEY: (\"KEY: the spire collapses\"). Those "
+                          "are the moments an editor builds the video around."),
             input=[{"role": "user", "content": content}], text_format=FootageAnalysis)
         out = resp.output_parsed
         if out is None:
