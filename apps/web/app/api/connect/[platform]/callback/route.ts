@@ -2,6 +2,7 @@ import { headers } from "next/headers";
 import { NextResponse, type NextRequest } from "next/server";
 
 import { auth } from "@/lib/auth";
+import { origin } from "@/lib/site";
 import { encrypt } from "@/lib/crypto";
 import { asUser } from "@/lib/db";
 import { exchange, NONCE_COOKIE, PLATFORMS, readState, type Platform } from "@/lib/oauth";
@@ -9,17 +10,17 @@ import { exchange, NONCE_COOKIE, PLATFORMS, readState, type Platform } from "@/l
 // The provider sends the owner back here after they approve (or decline).
 export async function GET(req: NextRequest, ctx: RouteContext<"/api/connect/[platform]/callback">) {
   const { platform } = await ctx.params;
-  if (!PLATFORMS.includes(platform as Platform)) return NextResponse.redirect(new URL("/channels", req.url));
+  if (!PLATFORMS.includes(platform as Platform)) return NextResponse.redirect(new URL("/channels", origin(req)));
   const p = platform as Platform;
   const session = await auth.api.getSession({ headers: await headers() });
-  if (!session) return NextResponse.redirect(new URL("/login", req.url));
+  if (!session) return NextResponse.redirect(new URL("/login", origin(req)));
 
   const q = req.nextUrl.searchParams;
   const state = readState(q.get("state"), req.cookies.get(NONCE_COOKIE)?.value, p);
   if (!state || state.u !== session.user.id) {
-    return NextResponse.redirect(new URL("/channels?connect_error=That+connection+link+expired+—+try+again.", req.url));
+    return NextResponse.redirect(new URL("/channels?connect_error=That+connection+link+expired+—+try+again.", origin(req)));
   }
-  const back = new URL(`/channels/${state.c}`, req.url);
+  const back = new URL(`/channels/${state.c}`, origin(req));
   const done = (key: string, value: string) => {
     back.searchParams.set(key, value);
     const res = NextResponse.redirect(back);

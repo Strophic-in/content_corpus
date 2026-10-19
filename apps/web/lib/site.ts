@@ -21,3 +21,9 @@ export function contactEmail(): string | undefined {
 export function siteUrl(): string {
   return (process.env.BETTER_AUTH_URL ?? "").replace(/\/$/, "");
 }
+
+/** Where to send the browser back to: the public address. Behind nginx the app sees
+ *  its own (http://0.0.0.0:3000), and a redirect built from req.url sent people there. */
+export function origin(req: { url: string }): string {
+  return siteUrl() || req.url;
+}
