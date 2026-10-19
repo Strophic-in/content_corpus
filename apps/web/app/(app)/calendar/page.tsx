@@ -6,6 +6,7 @@ import { requireUser } from "@/lib/session";
 import { statusBadge } from "@/lib/status";
 
 import { ChannelPicker } from "../nav";
+import { DropDay } from "./drop-day";
 import { PostChip } from "./post-chip";
 
 export const metadata = { title: "Calendar · Content Corpus" };
@@ -80,7 +81,7 @@ export default async function CalendarPage({ searchParams }: { searchParams: Pro
               <div className="flex min-w-0 flex-1 flex-col gap-1">
                 {dayPosts.map((post) => (
                   <PostChip key={post.id} id={post.id} topic={post.topic} time={post.publish_time} status={post.status}
-                            badge={statusBadge(post.status)} />
+                            badge={statusBadge(post.status)} day={day} today={today} />
                 ))}
                 {!isPast && (
                   <Link href={`/posts/new?date=${day}`} aria-label={`New post on ${day}`}
@@ -104,13 +105,13 @@ export default async function CalendarPage({ searchParams }: { searchParams: Pro
           const isToday = day === today;
           const isPast = day < today;
           return (
-            <div key={day} className="flex min-h-24 flex-col gap-1 bg-surface p-1.5 sm:p-2">
+            <DropDay key={day} day={day} past={isPast} className="flex min-h-24 flex-col gap-1 bg-surface p-1.5 sm:p-2">
               <span className={`text-xs tabular-nums ${isToday ? "font-semibold text-accent" : "text-muted"}`}>
                 {Number(day.slice(8))}
               </span>
               {dayPosts.map((post) => (
                 <PostChip key={post.id} id={post.id} topic={post.topic} time={post.publish_time} status={post.status}
-                          badge={statusBadge(post.status)} />
+                          badge={statusBadge(post.status)} day={day} today={today} />
               ))}
               {!isPast && (
                 <Link
@@ -121,11 +122,12 @@ export default async function CalendarPage({ searchParams }: { searchParams: Pro
                   +
                 </Link>
               )}
-            </div>
+            </DropDay>
           );
         })}
       </div>
-      <p className="text-xs text-muted">{active.name} · times are in {tz}.</p>
+      <p className="text-xs text-muted">{active.name} · times are in {tz}. <span className="hidden sm:inline">Drag a post to
+        another day to move it.</span></p>
     </div>
   );
 }

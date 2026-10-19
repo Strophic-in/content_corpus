@@ -77,6 +77,20 @@ export async function updatePost(postId: string, _: ActionState, form: FormData)
   return { ok: true, message: "Saved." };
 }
 
+/** A post to another day (the calendar's drag and drop): its time of day is kept, and
+ *  a scheduled post's publishing moves with it. */
+export async function movePost(postId: string, date: string): Promise<ActionState> {
+  const user = await requireUser();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return { ok: false, error: "Pick a day." };
+  try {
+    await asUser(user.id, (db) => db.query("select api.move_post($1, $2::date)", [postId, date]));
+  } catch (err) {
+    return { ok: false, error: friendly(err) };
+  }
+  refresh();
+  return { ok: true };
+}
+
 export async function deletePost(postId: string): Promise<ActionState> {
   const user = await requireUser();
   try {

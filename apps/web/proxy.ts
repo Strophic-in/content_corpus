@@ -24,7 +24,7 @@ export const config = {
     // Everything except auth API, uploads (the proxy would buffer a whole video; the
     // route checks the session itself), Next internals, static assets and the app
     // manifest and icons (a phone fetches those without cookies when installing the
-    // app), and robots.txt.
-    "/((?!api/auth|api/upload|_next/static|_next/image|favicon.ico|manifest.webmanifest|robots.txt|icons/|privacy|terms|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)",
+    // app), robots.txt and the sitemap.
+    "/((?!api/auth|api/upload|_next/static|_next/image|favicon.ico|manifest.webmanifest|robots.txt|sitemap.xml|icons/|privacy|terms|contact|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)",
   ],
 };

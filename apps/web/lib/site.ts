@@ -7,12 +7,13 @@ import "@/lib/env";
 
 export const POLICIES_UPDATED = "16 October 2026";
 
+// The public contact address: the contact page, the waitlist, the footer.
+export const CONTACT_EMAIL = "hafeez@strophic.in";
+
 // Where to write about privacy or data deletion. Both reviews require one; without
-// PRIVACY_CONTACT_EMAIL it is the owner's sign-in address.
-export function contactEmail(): string | undefined {
-  return process.env.PRIVACY_CONTACT_EMAIL?.trim()
-    || process.env.AUTH_ALLOWED_EMAILS?.split(",")[0]?.trim()
-    || undefined;
+// PRIVACY_CONTACT_EMAIL it is the public contact address.
+export function contactEmail(): string {
+  return process.env.PRIVACY_CONTACT_EMAIL?.trim() || CONTACT_EMAIL;
 }
 
 // The public address, e.g. https://content-corpus.strophic.in. Google matches the

@@ -3,17 +3,24 @@
 import Link from "next/link";
 import { useState, useTransition } from "react";
 
+import { movePost } from "../actions";
 import { bulkPostAction } from "../library/table-actions";
+import { DRAG_TYPE } from "./drop-day";
 
 // A post on a calendar day: tap it to open, or delete it there — anything not being
 // rendered, scheduled or posted (the database refuses those). The × asks once more.
 
 const DELETABLE = new Set(["draft", "scripting", "awaiting_approval", "approved", "failed", "cancelled", "ready",
   "needs_review"]);
+// Drag to another day (or, on a phone, "Move" and pick one): not while it is being
+// rendered or put together, nor once it is posted.
+const FIXED = new Set(["rendering", "post_processing", "published", "cancelled"]);
 
-export function PostChip({ id, topic, time, status, badge }: {
+export function PostChip({ id, topic, time, status, badge, day, today }: {
   id: string; topic: string; time: string | null; status: string; badge: { label: string; className: string };
+  day: string; today: string;
 }) {
+  const movable = !FIXED.has(status);
   const [armed, setArmed] = useState(false);
   const [gone, setGone] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -26,9 +33,23 @@ export function PostChip({ id, topic, time, status, badge }: {
     else { setArmed(false); setError(r.failed[0]?.error ?? r.message); }
   });
 
+  const moveTo = (date: string) => {
+    if (!date || date === day) return;
+    setError(null);
+    start(async () => {
+      const r = await movePost(id, date);
+      if (!r?.ok) setError(r?.error ?? "Couldn't move it.");
+    });
+  };
+
   return (
-    <div className={`group relative rounded-md transition-opacity ${pending ? "opacity-40" : ""}`}>
-      <Link href={`/posts/${id}`} className="flex flex-col gap-1 rounded-md p-1 pr-6 hover:bg-background">
+    <div className={`group relative rounded-md transition-opacity ${pending ? "opacity-40" : ""} ${movable ? "cursor-grab active:cursor-grabbing" : ""}`}
+         draggable={movable}
+         onDragStart={(e) => {
+           e.dataTransfer.setData(DRAG_TYPE, JSON.stringify({ id, from: day }));
+           e.dataTransfer.effectAllowed = "move";
+         }}>
+      <Link href={`/posts/${id}`} draggable={false} className="flex flex-col gap-1 rounded-md p-1 pr-6 hover:bg-background">
         <span className="line-clamp-2 text-xs font-medium sm:text-sm">
           {time && <span className="mr-1 text-muted tabular-nums">{time}</span>}
           {topic}
@@ -50,6 +71,16 @@ export function PostChip({ id, topic, time, status, badge }: {
                strokeLinecap="round"><path d="M6 6l12 12M18 6 6 18" /></svg>
         </button>
       ))}
+      {movable && (
+        // A phone has no drag and drop: "Move" opens the date picker.
+        <label className="mx-1 mb-1 inline-flex w-fit cursor-pointer items-center gap-1 rounded text-[11px] text-muted hover:text-accent sm:hidden">
+          <svg viewBox="0 0 24 24" aria-hidden className="size-3.5" fill="none" stroke="currentColor" strokeWidth={2}
+               strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="5" width="18" height="16" rx="2" /><path d="M3 10h18M8 3v4M16 3v4" /></svg>
+          Move
+          <input type="date" min={today} defaultValue={day} aria-label={`Move ${topic} to another day`}
+                 onChange={(e) => moveTo(e.target.value)} className="sr-only" />
+        </label>
+      )}
       {error && <span className="block px-1 text-[10px] text-danger">{error}</span>}
     </div>
   );
