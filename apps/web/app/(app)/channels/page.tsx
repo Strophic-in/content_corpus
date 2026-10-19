@@ -22,7 +22,7 @@ export default async function ChannelsPage({ searchParams }: { searchParams: Pro
         <p className="mt-1 text-sm text-muted">Each channel has its own voice, formats, ideas and connected accounts.</p>
       </div>
       {connect_error && <p role="alert" className="rounded-xl bg-danger-surface px-3 py-2 text-sm text-danger">{connect_error}</p>}
-      <div className="grid gap-3 sm:grid-cols-2">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         {channels.map((c) => {
           const mine = accounts.filter((a) => a.channel_id === c.id);
           return (

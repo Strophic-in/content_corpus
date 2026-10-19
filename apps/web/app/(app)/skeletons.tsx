@@ -50,7 +50,7 @@ export function CardsSkeleton({ cards = 4, className = "mx-auto w-full max-w-2xl
   return (
     <Loading className={className}>
       <Head action />
-      <div className="grid gap-3 sm:grid-cols-2">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         {Array.from({ length: cards }, (_, i) => (
           <div key={i} className="flex h-40 flex-col gap-3 rounded-2xl border border-border bg-surface p-4">
             <Bone className="h-5 w-1/2" />
@@ -84,7 +84,7 @@ export function DeckSkeleton() {
 
 export function VideoGridSkeleton({ cards = 6 }: { cards?: number }) {
   return (
-    <ul aria-hidden className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+    <ul aria-hidden className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
       {Array.from({ length: cards }, (_, i) => (
         <li key={i} className="flex flex-col overflow-hidden rounded-2xl border border-border bg-surface">
           <Bone className="aspect-video w-full rounded-none" />
@@ -157,7 +157,7 @@ export function PostSkeleton() {
   return (
     <Loading>
       <div className="flex flex-col gap-2"><Bone className="h-4 w-20" /><Bone className="h-8 w-3/4" /><Bone className="h-4 w-56" /></div>
-      <div className="grid gap-5 md:grid-cols-[minmax(0,17rem)_minmax(0,1fr)] lg:grid-cols-[minmax(0,19rem)_minmax(0,1fr)]">
+      <div className="grid grid-cols-1 gap-5 md:grid-cols-[minmax(0,17rem)_minmax(0,1fr)] lg:grid-cols-[minmax(0,19rem)_minmax(0,1fr)]">
         <Bone className="aspect-[9/16] w-full max-w-xs justify-self-center rounded-2xl md:max-w-none" />
         <div className="flex flex-col gap-4">
           <div className="flex flex-col gap-3 rounded-2xl border border-border bg-surface p-4">

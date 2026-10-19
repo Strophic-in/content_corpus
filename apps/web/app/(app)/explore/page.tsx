@@ -149,7 +149,7 @@ async function Results({ userId, query, categoryId }: { userId: string; query: Q
   ) : videos.length === 0 ? (
     <p className="text-sm text-muted">Nothing here{shorts ? " among Shorts" : ""}. Try another country, category or time window.</p>
   ) : (
-    <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+    <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
       {videos.map((v, i) => (
         <li key={v.id} className="flex flex-col overflow-hidden rounded-2xl border border-border bg-surface">
           <a href={`https://www.youtube.com/watch?v=${v.id}`} target="_blank" rel="noreferrer"

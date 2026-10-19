@@ -68,12 +68,12 @@ export default async function DiscoverHome() {
     <div className="mx-auto flex w-full max-w-2xl flex-col gap-5">
       {channels.some((c) => c.looking) && <AutoRefresh everyMs={5000} />}
       <div className="flex items-end justify-between gap-3">
-        <div>
+        <div className="min-w-0">
           <h1 className="text-2xl font-semibold tracking-tight">Discover</h1>
           <p className="text-sm text-muted">Pick a channel to swipe through its ideas.</p>
         </div>
-        <span className="flex gap-2">
-          <Link href="/channels" className="rounded-full border border-border px-3 py-1.5 text-sm font-medium hover:border-accent">
+        <span className="flex shrink-0 gap-2">
+          <Link href="/channels" className="whitespace-nowrap rounded-full border border-border px-3 py-1.5 text-sm font-medium hover:border-accent">
             + Channel
           </Link>
         </span>
@@ -109,7 +109,7 @@ export default async function DiscoverHome() {
       )}
       {/* Every card the same shape: name, two lines of niche, then the counts and the
           accounts pinned to the bottom, so cards in a row line up whatever they hold. */}
-      <ul className="grid auto-rows-fr gap-3 sm:grid-cols-2">
+      <ul className="grid grid-cols-1 auto-rows-fr gap-3 sm:grid-cols-2">
         {channels.map((c) => (
           <li key={c.id} className="relative">
             <form action={openChannel.bind(null, c.id)} className="h-full">

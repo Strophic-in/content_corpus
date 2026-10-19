@@ -85,7 +85,7 @@ export function SettingsForm({ settings: s }: { settings: Settings }) {
             For every channel. Each channel&apos;s voice lives in Channels; each kind of video&apos;s prompts in its Library.
           </p>
         </div>
-        <div className="grid gap-4 sm:grid-cols-2">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <label className="flex flex-col gap-1 text-sm">Narrator voice
             <select name="narrator_voice" defaultValue={s.narrator_voice} className={input}>
               {VOICES.map(([id, label]) => <option key={id} value={id}>{label}</option>)}
@@ -148,7 +148,7 @@ export function SettingsForm({ settings: s }: { settings: Settings }) {
           </p>
         </div>
         <input type="hidden" name="pipeline_mode" value={mode} />
-        <div className="grid gap-2 sm:grid-cols-2">
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
           {([["manual", "Manual", "You write, approve, render and post each one."],
              ["auto", "Automatic", "Script, render and posting at the time you picked — no more clicks. A desk-editor check holds anything doubtful for you."]] as const)
             .map(([v, label, hint]) => (
@@ -183,7 +183,7 @@ export function SettingsForm({ settings: s }: { settings: Settings }) {
 
       <section className="flex flex-col gap-4 rounded-xl border border-border bg-surface p-5">
         <h2 className="font-medium">Publishing</h2>
-        <div className="grid gap-4 sm:grid-cols-3">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
           <label className="flex flex-col gap-1 text-sm">YouTube visibility
             <select name="youtube_privacy" defaultValue={s.youtube_privacy} className={input}>
               <option value="private">Private</option>
@@ -211,7 +211,7 @@ export function RedditKeysForm({ saved }: { saved: boolean }) {
   const [state, action, pending] = useActionState<ActionState, FormData>(saveRedditKeys, null);
   return (
     <form action={action} className="flex flex-col gap-2">
-      <div className="grid gap-2 sm:grid-cols-2">
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
         <input name="client_id" autoComplete="off" spellCheck={false} placeholder="Client id" className={input} />
         <input name="client_secret" type="password" autoComplete="off" spellCheck={false} placeholder="Client secret" className={input} />
       </div>

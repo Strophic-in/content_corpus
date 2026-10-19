@@ -90,7 +90,7 @@ export function VoicesBoard({ voices, enabled, mode, fixedVoice }: {
     <div className="flex flex-col gap-6">
       <section className="flex flex-col gap-3 rounded-2xl border border-border bg-surface p-5">
         <h2 className="font-semibold">Who picks the voice</h2>
-        <div className="grid gap-2 sm:grid-cols-2">
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
           {([["auto", "Jev picks for each post", "The voice switched on below that suits the story best, in the channel's language."],
              ["fixed", "Always one voice", "The same voice on every post."]] as const).map(([id, title, note]) => (
             <button key={id} type="button" onClick={() => saveMode(id)}
@@ -121,7 +121,7 @@ export function VoicesBoard({ voices, enabled, mode, fixedVoice }: {
               <span className="text-sm text-muted">{g.note}</span>
               <span className="ml-auto text-xs text-muted">{count} of {list.length} on</span>
             </div>
-            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
               {list.map((v) => (
                 <div key={v.id} className={`flex items-center gap-3 rounded-xl border bg-surface p-3 ${on.has(v.id) ? "border-accent/40" : "border-border"}`}>
                   <Play src={v.sample} player={player} />

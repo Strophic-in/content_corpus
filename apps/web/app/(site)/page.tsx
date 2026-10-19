@@ -56,7 +56,7 @@ export default function HomePage() {
 
       <section>
         <h2 className="text-xl font-semibold tracking-tight">How it works</h2>
-        <ol className="mt-4 grid gap-3 sm:grid-cols-2">
+        <ol className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
           {STEPS.map(([title, text], i) => (
             <li key={title} className="rounded-2xl border border-border bg-surface p-5">
               <p className="text-sm text-muted">Step {i + 1}</p>
@@ -75,7 +75,7 @@ export default function HomePage() {
         </p>
         <dl className="mt-4 divide-y divide-border rounded-2xl border border-border bg-surface">
           {GOOGLE_ACCESS.map(([what, scope, why]) => (
-            <div key={what} className="grid gap-1 p-5 sm:grid-cols-[14rem_1fr] sm:gap-6">
+            <div key={what} className="grid grid-cols-1 gap-1 p-5 sm:grid-cols-[14rem_1fr] sm:gap-6">
               <dt>
                 <span className="font-medium">{what}</span>
                 <code className="mt-1 block text-xs text-muted">{scope}</code>

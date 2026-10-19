@@ -329,14 +329,14 @@ export function Deck({ picker, daily, cards, looking, channel, categories, forma
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex items-end justify-between gap-3">
+      <div className="flex flex-wrap items-end justify-between gap-3">
         <div className="min-w-0">
           <h1 className="text-2xl font-semibold tracking-tight">Discover</h1>
-          <p className="flex items-center gap-1 text-sm text-muted">
+          <p className="flex flex-wrap items-center gap-1 text-sm text-muted">
             {shown.length ? `${shown.length} idea${shown.length === 1 ? "" : "s"} for` : "For"} {picker ?? channel.name}
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="ml-auto flex items-center gap-2">
           {categories.length > 1 && (
             <select aria-label="Find ideas for" value={target} onChange={(e) => setTarget(e.target.value)}
                     className="max-w-32 rounded-md border border-border bg-background px-2 py-1.5 text-sm outline-none">

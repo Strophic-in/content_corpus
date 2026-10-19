@@ -46,7 +46,7 @@ export function NewFormatForm({ templates }: { templates: TemplateInfo[] }) {
           </button>
         ))}
       </div>
-      <ul className="grid gap-2 sm:grid-cols-2">
+      <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2">
         {shown.map((x) => (
           <li key={x.template_id}>
             <label className={`flex h-full cursor-pointer gap-3 rounded-xl border p-3 text-sm transition ${picked === x.template_id
@@ -168,7 +168,7 @@ function LookFields({ t, params }: { t: TemplateInfo; params: Record<string, unk
   const video = t.content_type === "video";
   const s = t.render.slides;
   return (
-    <section className="grid gap-3 rounded-2xl border border-border bg-surface p-4 sm:grid-cols-2">
+    <section className="grid grid-cols-1 gap-3 rounded-2xl border border-border bg-surface p-4 sm:grid-cols-2">
       <div className="sm:col-span-2">
         <h2 className="font-medium">Look</h2>
         <p className="text-xs text-muted">Leave a field on “template default” to follow {t.display_name}.</p>
@@ -249,7 +249,7 @@ export function TemplateCard({ t }: { t: TemplateInfo }) {
           // eslint-disable-next-line @next/next/no-img-element -- a small static sample
           <img src={t.poster} alt="" className="h-48 w-[108px] shrink-0 rounded-lg bg-background object-cover" />
         )}
-        <dl className="grid flex-1 gap-x-4 gap-y-2 text-xs sm:grid-cols-[7rem_1fr]">
+        <dl className="grid grid-cols-1 flex-1 gap-x-4 gap-y-2 text-xs sm:grid-cols-[7rem_1fr]">
           <dt className="text-muted">What it is</dt><dd>{t.format}</dd>
           <dt className="text-muted">Structure</dt><dd>{t.scene_structure.map(words).join(" → ")}</dd>
           <dt className="text-muted">Best for</dt><dd>{t.best_for.join(", ")}</dd>
@@ -285,7 +285,7 @@ export function FormatEditor({ format, template, defaults, placeholders, results
     <form action={action} className="flex flex-col gap-4">
       <TemplateCard t={template} />
       {results && <p className="rounded-xl bg-accent/10 px-3 py-2 text-sm text-accent">{results}</p>}
-      <section className="grid gap-3 rounded-2xl border border-border bg-surface p-4 sm:grid-cols-2">
+      <section className="grid grid-cols-1 gap-3 rounded-2xl border border-border bg-surface p-4 sm:grid-cols-2">
         <label className="flex flex-col gap-1 text-sm sm:col-span-2">Name
           <input name="name" required maxLength={60} defaultValue={format.name} className={input} />
         </label>

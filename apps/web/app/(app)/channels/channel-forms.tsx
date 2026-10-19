@@ -24,7 +24,7 @@ export function ChannelForm({ channel, looks = [] }: { channel?: ChannelData; lo
   const [state, formAction, pending] = useActionState<ActionState, FormData>(action, null);
   const c = channel;
   return (
-    <form action={formAction} className="grid gap-3 sm:grid-cols-2">
+    <form action={formAction} className="grid grid-cols-1 gap-3 sm:grid-cols-2">
       <label className="flex flex-col gap-1 text-sm sm:col-span-2">Name
         <input name="name" required maxLength={80} defaultValue={c?.name} placeholder="Cutaway" className={input} />
       </label>

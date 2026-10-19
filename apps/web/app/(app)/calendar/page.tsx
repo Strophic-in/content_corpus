@@ -63,7 +63,38 @@ export default async function CalendarPage({ searchParams }: { searchParams: Pro
         </div>
       </div>
 
-      <div className="grid grid-cols-7 gap-px overflow-hidden rounded-xl border border-border bg-border text-sm">
+      {/* A phone: the month as a list of days, each post at full width. */}
+      <ol className="flex flex-col overflow-hidden rounded-xl border border-border bg-surface text-sm sm:hidden">
+        {cells.filter((d): d is string => d !== null).map((day) => {
+          const dayPosts = byDay.get(day) ?? [];
+          const isToday = day === today;
+          const isPast = day < today;
+          if (isPast && !dayPosts.length) return null;
+          const weekday = WEEKDAYS[(new Date(`${day}T00:00:00Z`).getUTCDay() + 6) % 7];
+          return (
+            <li key={day} className={`flex gap-3 border-b border-border px-3 last:border-b-0 ${dayPosts.length ? "py-2.5" : "py-1.5"}`}>
+              <span className={`w-10 shrink-0 pt-1 text-center leading-tight ${isToday ? "text-accent" : "text-muted"}`}>
+                <span className="block text-[11px] uppercase">{weekday}</span>
+                <span className={`block text-lg tabular-nums ${isToday ? "font-semibold" : ""}`}>{Number(day.slice(8))}</span>
+              </span>
+              <div className="flex min-w-0 flex-1 flex-col gap-1">
+                {dayPosts.map((post) => (
+                  <PostChip key={post.id} id={post.id} topic={post.topic} time={post.publish_time} status={post.status}
+                            badge={statusBadge(post.status)} />
+                ))}
+                {!isPast && (
+                  <Link href={`/posts/new?date=${day}`} aria-label={`New post on ${day}`}
+                        className={`flex items-center rounded-md text-muted hover:text-accent ${dayPosts.length ? "px-1 text-xs" : "min-h-9 px-1"}`}>
+                    + New post
+                  </Link>
+                )}
+              </div>
+            </li>
+          );
+        })}
+      </ol>
+
+      <div className="hidden grid-cols-7 gap-px overflow-hidden rounded-xl border border-border bg-border text-sm sm:grid">
         {WEEKDAYS.map((d) => (
           <div key={d} className="bg-surface px-2 py-1.5 text-xs font-medium text-muted">{d}</div>
         ))}

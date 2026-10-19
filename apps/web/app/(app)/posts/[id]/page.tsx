@@ -104,7 +104,7 @@ export default async function PostPage({ params }: { params: Promise<{ id: strin
         </div>
       )}
 
-      <section className="grid gap-5 md:grid-cols-[minmax(0,17rem)_minmax(0,1fr)] lg:grid-cols-[minmax(0,19rem)_minmax(0,1fr)]">
+      <section className="grid grid-cols-1 gap-5 md:grid-cols-[minmax(0,17rem)_minmax(0,1fr)] lg:grid-cols-[minmax(0,19rem)_minmax(0,1fr)]">
         <Preview post={post} />
         <div className="flex min-w-0 flex-col gap-4">
           <NextStep postId={post.id} status={post.status} autopilot={post.autopilot || post.go_ahead}
@@ -425,7 +425,7 @@ function PackagePanel({ post }: { post: PostRow }) {
         <span className="ml-auto"><RepackageButton postId={post.id} /></span>
       </div>
       {p && (
-        <div className="grid gap-5 sm:grid-cols-[11rem_minmax(0,1fr)]">
+        <div className="grid grid-cols-1 gap-5 sm:grid-cols-[11rem_minmax(0,1fr)]">
           {/* eslint-disable-next-line @next/next/no-img-element -- a signed, redirecting media URL */}
           <img src={`/media/post/${post.id}?cover=1&v=${encodeURIComponent(p.made_at)}`} alt="The cover"
                className="aspect-[9/16] w-44 rounded-lg border border-border object-cover" />
@@ -600,7 +600,7 @@ function SlidesCard({ script }: { script: ScriptRow }) {
         <h2 className="text-lg font-semibold">{script.title}</h2>
         <span className="text-xs text-muted">v{script.version} · {script.model} · {script.slides?.length ?? 0} slides</span>
       </div>
-      <dl className="grid gap-3 text-sm sm:grid-cols-[8rem_1fr]">
+      <dl className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-[8rem_1fr]">
         <dt className="text-muted">Cover line</dt><dd>{script.hook}</dd>
         <dt className="text-muted">Caption</dt><dd className="whitespace-pre-line">{script.description}</dd>
         <dt className="text-muted">Hashtags</dt><dd>{script.hashtags.join(" ")}</dd>
@@ -677,7 +677,7 @@ function ScriptCard({ script, audio }: { script: ScriptRow; audio: PostRow["audi
           v{script.version} · {script.model} · {total}s · {AUDIO_LABEL[audio]}
         </span>
       </div>
-      <dl className="grid gap-3 text-sm sm:grid-cols-[8rem_1fr]">
+      <dl className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-[8rem_1fr]">
         <dt className="text-muted">Hook</dt><dd>{script.hook}</dd>
         <dt className="text-muted">Description</dt><dd className="whitespace-pre-line">{script.description}</dd>
         <dt className="text-muted">Hashtags</dt><dd>{script.hashtags.join(" ")}</dd>
@@ -729,7 +729,7 @@ function Preview({ post }: { post: PostRow }) {
              className="aspect-[9/16] w-full max-w-xs justify-self-center rounded-2xl border border-border bg-black object-cover md:max-w-none" />
     );
   return (
-    <div className={`relative grid aspect-[9/16] w-full max-w-xs place-items-center justify-self-center overflow-hidden rounded-2xl border border-border md:max-w-none ${
+    <div className={`relative grid h-28 w-full place-items-center justify-self-center overflow-hidden rounded-2xl border border-border md:aspect-[9/16] md:h-auto ${
       busy ? "skeleton" : "bg-surface"}`}>
       <div className="flex flex-col items-center gap-2 p-6 text-center">
         {busy && <span aria-hidden className="size-3 animate-ping rounded-full bg-accent" />}

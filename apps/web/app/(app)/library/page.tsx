@@ -68,7 +68,7 @@ export default async function LibraryPage({ searchParams }: { searchParams: Prom
     return (
       <div className="full-bleed flex flex-col gap-5">
         <div className="flex flex-wrap items-start gap-3">
-          <div className="min-w-0 flex-1">
+          <div className="min-w-0 flex-1 basis-64">
             <h1 className="text-2xl font-semibold tracking-tight">Overview</h1>
             <p className="mt-1 text-sm text-muted">Every post {picker} has made, one row each. Click a column to sort; tick rows to act on them.</p>
           </div>
@@ -83,7 +83,7 @@ export default async function LibraryPage({ searchParams }: { searchParams: Prom
     return (
       <div className="mx-auto flex max-w-3xl flex-col gap-6">
         <div className="flex flex-wrap items-start gap-3">
-          <div className="min-w-0 flex-1">
+          <div className="min-w-0 flex-1 basis-64">
             <h1 className="text-2xl font-semibold tracking-tight">Formats</h1>
             <p className="mt-1 text-sm text-muted">
               The kinds of post {picker} makes — each one a template (a reel, a carousel, a picture card…) with your
@@ -92,7 +92,7 @@ export default async function LibraryPage({ searchParams }: { searchParams: Prom
           </div>
           {tabs}
         </div>
-        <div className="grid auto-rows-fr gap-3 sm:grid-cols-2">
+        <div className="grid grid-cols-1 auto-rows-fr gap-3 sm:grid-cols-2">
           {formats.map((f) => {
             const t = template(f.template_id);
             return (
@@ -134,7 +134,7 @@ export default async function LibraryPage({ searchParams }: { searchParams: Prom
     <div className="flex flex-col gap-5">
       {busy && <AutoRefresh everyMs={8000} />}
       <div className="flex flex-wrap items-start gap-3">
-        <div className="min-w-0 flex-1">
+        <div className="min-w-0 flex-1 basis-64">
           <h1 className="text-2xl font-semibold tracking-tight">Library</h1>
           <p className="mt-1 text-sm text-muted">Everything {picker} has made, newest first. Open one to see it.</p>
         </div>

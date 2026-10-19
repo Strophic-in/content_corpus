@@ -76,7 +76,7 @@ function CategoryFields({ c, formats }: { c?: CategoryData; formats: FormatOptio
   // None stored means all of them, so a new category starts with every format ticked.
   const [ticked, setTicked] = useState<string[]>(c?.format_ids.length ? c.format_ids : formats.map((f) => f.id));
   return (
-    <div className="grid gap-3 sm:grid-cols-2">
+    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
       <label className="flex flex-col gap-1 text-sm sm:col-span-2">Name
         <input name="name" required maxLength={60} defaultValue={c?.name} placeholder="Crime & courts" className={input} />
       </label>

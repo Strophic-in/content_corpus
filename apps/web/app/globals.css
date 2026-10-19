@@ -75,6 +75,12 @@ body {
 
 /* Installed app / phone: no rubber-band bounce or tap flash around the deck. */
 html { -webkit-tap-highlight-color: transparent; overscroll-behavior-y: none; }
+/* A form field is never wider than its column: a select sizes itself to its longest
+   option, which pushed whole forms past a phone's edge. */
+@layer base {
+  select, input, textarea { max-width: 100%; min-width: 0; }
+  select { text-overflow: ellipsis; }
+}
 
 /* Loading placeholders: a soft shimmer sweeping across (skeletons.tsx). */
 .skeleton {

@@ -34,7 +34,7 @@ export default async function DashboardPage() {
         </p>
       </div>
 
-      <section className="grid gap-4 md:grid-cols-2">
+      <section className="grid grid-cols-1 gap-4 md:grid-cols-2">
         <div className="rounded-xl border border-border bg-surface p-5">
           <h2 className="text-sm font-medium text-muted">Media storage (Cloudflare R2)</h2>
           <p className="mt-2 text-2xl font-semibold tabular-nums">
