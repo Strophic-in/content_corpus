@@ -31,9 +31,10 @@ def test_the_caption_carries_sources_credits_and_hashtags():
     assert "Sources:\n• BBC News: https://www.bbc.co.uk/news/x" in yt and "Footage: BBC" in yt
     assert yt.endswith("#Limoges #France #news")
     ig = packaging.instagram_caption(PKG, [])
-    assert "Sources: BBC News (links in the first comment)" in ig and "https://" not in ig
-    assert packaging.first_comment(PKG, "instagram").endswith("BBC News: https://www.bbc.co.uk/news/x")
-    assert "https://" not in packaging.first_comment(PKG, "youtube")
+    assert "Sources: BBC News" in ig and "first comment" not in ig and "https://" not in ig
+    # The first comment tells more about the story; the sources stay in the caption.
+    for platform in ("instagram", "youtube"):
+        assert packaging.first_comment(PKG, platform) == "Should it be rebuilt exactly as it was?"
     assert packaging._tags(["#Paris Fire", "news", "#news", "#"]) == ["#ParisFire", "#news"]
 
 
@@ -55,7 +56,8 @@ def test_a_finished_reel_gets_its_package_and_cover(s3, owner, user, tmp_path, m
     pid = owner.execute("insert into posts (user_id, topic, slot_date, research) values (%s, 'spire', %s, %s) "
                         "returning id", (user, slot, Jsonb({"articles": [
                             {"url": "https://www.bbc.co.uk/news/x", "site": "bbc.co.uk", "title": "Protests in France",
-                             "text": "", "from_idea": True}]}))).fetchone()["id"]
+                             "text": "The spire was added in 1885 and had survived two wars.",
+                             "from_idea": True}]}))).fetchone()["id"]
     sid = owner.execute("""insert into scripts (post_id, version, state, title, shot_plan, style_prompt)
                            values (%s, 1, 'approved', 'Spire falls', %s, '') returning id""",
                         (pid, Jsonb([generated_shot(seconds=5, visual="v", audio="",
@@ -67,6 +69,7 @@ def test_a_finished_reel_gets_its_package_and_cover(s3, owner, user, tmp_path, m
     pkg = packaging.ensure(pid)
     assert pkg["title"] == PKG["title"] and pkg["sources"][0]["site"] == "BBC News"
     assert "The spire fell in minutes." in FakeCopywriter.seen and "BBC News - Protests in France" in FakeCopywriter.seen
+    assert "[bbc.co.uk] The spire was added in 1885" in FakeCopywriter.seen        # the first comment's context
     cover = storage.get_file(pkg["thumbnail_key"], tmp_path / "cover.jpg")
     assert Image.open(cover).size == (1080, 1920) and cover.stat().st_size < 2_000_000
     assert packaging.ensure(pid)["made_at"] == pkg["made_at"]          # kept, not written again

@@ -7,10 +7,11 @@ anew when the script changed since.
 
   title           gripping and accurate — a curiosity gap, never a false promise
   caption         a hook line, a few short lines (what happened, why it matters),
-                  a question; then the sources (YouTube: with links), the footage
-                  credits and the hashtags
-  first comment   a question that starts the conversation (Instagram: with the
-                  sources' links, since a caption's links aren't clickable there)
+                  a question; then the sources (YouTube: with links; Instagram:
+                  their names), the footage credits and the hashtags
+  first comment   more on the story than the video had time for — background, a
+                  telling detail from the reports, what happens next — ending on a
+                  question; never the sources or links (owner, 2026-10-19)
   cover           media/thumbnail.py: the strongest real photo — or the place
                   before and now — with a short bold line
 """
@@ -54,8 +55,10 @@ scrolling and tap - without misleading them. Everything you write must be true t
   viewer. Plain words; at most two emojis in total.
 - hashtags: 8-12, each starting with #, most important first (YouTube shows the first three): the place, the
   topic, the event, then broader ones (#news, #worldnews, …). No spaces inside a tag, no misleading tags.
-- first_comment: one line that starts a conversation - a pointed question or a "what would you do?" - never
-  begging for likes.
+- first_comment: 2-4 short sentences (at most 450 characters) that tell viewers more than the video had time
+  for: the background, a telling detail or number from the reports, or what happens next - only facts the
+  reports state. End with a question that starts a conversation. No links, no list of sources, no hashtags,
+  never begging for likes.
 - thumbnail_text: 2-5 words in capitals that tell the story at a glance and make people curious (for a before/now
   video, name what is gone or changed: "SPIRE GONE IN MINUTES"). True, no question marks spam, no clickbait lies.
 - kicker: one or two words for a small red label above it ("BREAKING", "BEFORE / NOW", "LIVE", "UPDATE"), or ""
@@ -141,6 +144,12 @@ def _brief(post: dict) -> str:
     src = sources(post)
     if src:
         lines += ["", "Sources: " + "; ".join(f"{s['site']} - {s['title']}" for s in src)]
+    # What the reports say, for the first comment's extra context.
+    arts = sorted((post.get("research") or {}).get("articles") or [], key=lambda a: not a.get("from_idea"))
+    texts = [(a.get("site") or "", (a.get("text") or "").strip()) for a in arts if (a.get("text") or "").strip()][:2]
+    if texts:
+        lines += ["", "What the reports say (for the first comment):"]
+        lines += [f"[{site}] {text[:1800]}" for site, text in texts]
     return "\n".join(lines)
 
 
@@ -166,7 +175,7 @@ def youtube_description(pkg: dict, credits: list[str]) -> str:
 def instagram_caption(pkg: dict, credits: list[str]) -> str:
     parts = [pkg["hook_line"], pkg["caption"]]
     if pkg.get("sources"):
-        parts.append("Sources: " + " · ".join(s["site"] for s in pkg["sources"]) + " (links in the first comment)")
+        parts.append("Sources: " + " · ".join(s["site"] for s in pkg["sources"]))
     if credits:
         parts.append("Footage: " + " · ".join(credits))
     parts.append(" ".join(pkg["hashtags"][:30]))
@@ -174,10 +183,8 @@ def instagram_caption(pkg: dict, credits: list[str]) -> str:
 
 
 def first_comment(pkg: dict, platform: str) -> str:
-    text = pkg["first_comment"].strip()
-    if platform == "instagram" and pkg.get("sources"):
-        text += "\n\nSources:\n" + "\n".join(f"{s['site']}: {s['url']}" for s in pkg["sources"])
-    return text[:2000]
+    """The comment as written: more on the story, no sources (they're in the caption)."""
+    return pkg["first_comment"].strip()[:2000]
 
 
 # ── the cover ─────────────────────────────────────────────────────────────────
