@@ -4,8 +4,9 @@ import { asUser } from "@/lib/db";
 import { requireOwner } from "@/lib/session";
 
 import { ConfigForm, MemberForm } from "./admin-forms";
+import { Messages, type Message } from "./messages";
 
-export const metadata = { title: "Members · Content Corpus" };
+export const metadata = { title: "Admin · Content Corpus" };
 
 type Member = {
   user_id: string; email: string; name: string; role: "owner" | "member"; status: string;
@@ -19,18 +20,22 @@ const inr = (paise: number) => `₹${(paise / 100).toLocaleString("en-IN", { max
 // suspend an account. Owners come from AUTH_ALLOWED_EMAILS and aren't edited here.
 export default async function AdminPage() {
   const owner = await requireOwner();
-  const { members, config } = await asUser(owner.id, async (db) => ({
+  const { members, config, messages } = await asUser(owner.id, async (db) => ({
     members: (await db.query("select * from api.admin_members()")).rows as Member[],
+    messages: (await db.query("select * from api.admin_contact_messages()")).rows.map((m) => ({
+      ...m, read_at: m.read_at ? new Date(m.read_at).toISOString() : null,
+      created_at: new Date(m.created_at).toISOString() })) as Message[],
     config: (await db.query("select * from api.admin_config()")).rows[0] as
       { signups_need_approval: boolean; member_monthly_limit_paise: number },
   }));
   const open = process.env.SIGNUPS_OPEN === "true";
   const waiting = members.filter((m) => m.status === "pending").length;
+  const unread = messages.filter((m) => !m.read_at).length;
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-6">
       <div>
         <Link href="/settings" className="text-sm text-muted hover:text-foreground">← Settings</Link>
-        <h1 className="mt-1 text-2xl font-semibold tracking-tight">Members</h1>
+        <h1 className="mt-1 text-2xl font-semibold tracking-tight">Admin</h1>
         <p className="text-sm text-muted">
           {open ? "Sign-ups are open (SIGNUPS_OPEN=true)." : "Sign-ups are closed: only AUTH_ALLOWED_EMAILS can sign in. "
             + "Set SIGNUPS_OPEN=true on the server to let others sign up."}
@@ -38,6 +43,16 @@ export default async function AdminPage() {
         </p>
       </div>
 
+      <section id="messages" className="flex scroll-mt-20 flex-col rounded-xl border border-border bg-surface">
+        <div className="flex items-baseline gap-2 border-b border-border p-5">
+          <h2 className="font-medium">Messages</h2>
+          <span className="text-sm text-muted">from the contact page</span>
+          {unread > 0 && <span className="kicker ml-auto text-accent">{unread} new</span>}
+        </div>
+        <Messages items={messages} />
+      </section>
+
+      <h2 className="mt-2 text-xl font-semibold tracking-tight">Members</h2>
       <section className="flex flex-col gap-3 rounded-xl border border-border bg-surface p-5">
         <h2 className="font-medium">New accounts</h2>
         <ConfigForm approval={config.signups_need_approval} limitRupees={config.member_monthly_limit_paise / 100} />

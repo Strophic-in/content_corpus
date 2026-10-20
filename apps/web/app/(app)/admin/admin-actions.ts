@@ -54,3 +54,16 @@ export async function setConfig(_: ActionState, form: FormData): Promise<ActionS
   refresh();
   return { ok: true, message: "Saved." };
 }
+
+/** A contact-page message marked read, or unread again. */
+export async function markMessage(id: string, read: boolean): Promise<ActionState> {
+  const owner = await requireOwner();
+  if (!z.string().uuid().safeParse(id).success) return { ok: false, error: "Unknown message." };
+  try {
+    await asUser(owner.id, (db) => db.query("select api.admin_read_contact_message($1, $2)", [id, read]));
+  } catch (err) {
+    return { ok: false, error: friendly(err) };
+  }
+  refresh();
+  return { ok: true };
+}

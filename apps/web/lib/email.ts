@@ -8,7 +8,8 @@ import "./env";
  * Best effort: without the keys, or if Resend is down, nothing is sent and the
  * app carries on (the admin page shows the same information).
  */
-export async function sendEmail(to: string | string[], subject: string, text: string): Promise<boolean> {
+export async function sendEmail(to: string | string[], subject: string, text: string,
+                                replyTo?: string): Promise<boolean> {
   const key = process.env.RESEND_API_KEY;
   const from = process.env.RESEND_FROM;
   const recipients = (Array.isArray(to) ? to : [to]).filter(Boolean);
@@ -17,7 +18,7 @@ export async function sendEmail(to: string | string[], subject: string, text: st
     const r = await fetch("https://api.resend.com/emails", {
       method: "POST",
       headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ from, to: recipients, subject, text }),
+      body: JSON.stringify({ from, to: recipients, subject, text, ...(replyTo ? { reply_to: replyTo } : {}) }),
       signal: AbortSignal.timeout(5000),
     });
     return r.ok;

@@ -38,7 +38,7 @@ export default async function SettingsPage() {
         <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
         {user.role === "owner" && (
           <span className="flex gap-4 text-sm">
-            <Link href="/admin" className="text-accent hover:underline">Members →</Link>
+            <Link href="/admin" className="text-accent hover:underline">Admin &amp; messages →</Link>
             <Link href="/health" className="text-accent hover:underline">System health →</Link>
           </span>
         )}

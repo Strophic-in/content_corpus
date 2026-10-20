@@ -7,8 +7,8 @@ export function friendly(err: unknown): string {
   if (e?.code === "23505") return "That name is already taken — pick another.";
   if (e?.code === "P0002") return "That item no longer exists.";
   // Raised by api.* functions with a message written for the owner: not now (55000),
-  // or not a valid choice (22023).
-  if ((e?.code === "55000" || e?.code === "22023") && e.message)
+  // not a valid choice (22023), or over a limit (54000).
+  if ((e?.code === "55000" || e?.code === "22023" || e?.code === "54000") && e.message)
     return e.message.charAt(0).toUpperCase() + e.message.slice(1) + ".";
   if (e?.code === "42501") {
     console.error("action refused by database permissions:", e.message);
