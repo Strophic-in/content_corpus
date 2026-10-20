@@ -116,8 +116,9 @@ export default async function DiscoverHome() {
               <button className="flex h-full w-full flex-col gap-3 rounded-2xl border border-border bg-surface p-4 pr-14 text-left transition hover:border-accent active:scale-[.99]">
                 <span className="flex items-start gap-3">
                   <span aria-hidden
-                        className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-linear-to-br from-indigo-500 via-purple-500 to-pink-500 text-lg font-semibold text-white">
+                        className="relative flex size-11 shrink-0 items-center justify-center rounded-lg bg-ink font-[family-name:var(--font-display)] text-xl font-semibold text-background">
                     {c.name.trim().charAt(0).toUpperCase() || "?"}
+                    <span className="absolute top-1.5 right-1.5 size-1.5 rounded-full bg-accent" />
                   </span>
                   <span className="min-w-0 flex-1">
                     <span className="block truncate font-medium">{c.name}</span>

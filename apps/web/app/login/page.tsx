@@ -20,8 +20,11 @@ export default async function LoginPage() {
   return (
     <main className="flex flex-1 items-center justify-center px-4 py-16">
       <div className="w-full max-w-sm">
-        <h1 className="text-2xl font-semibold tracking-tight">Content Corpus</h1>
-        <p className="mt-1 text-sm text-muted">Plan, render and publish short-form video.</p>
+        <p className="kicker flex items-center gap-2 border-y border-ink/80 py-1.5 text-accent">
+          <span className="on-air-dot" /> On air <span className="ml-auto text-muted">The newsroom</span>
+        </p>
+        <h1 className="mt-5 text-4xl font-semibold tracking-tight">Content Corpus</h1>
+        <p className="mt-1 text-sm text-muted">From today&apos;s news to a posted Short.</p>
         <div className="mt-8 rounded-xl border border-border bg-surface p-6 shadow-sm">
           <LoginForm googleEnabled={googleEnabled} />
         </div>

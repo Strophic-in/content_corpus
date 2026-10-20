@@ -21,8 +21,9 @@ export function ContactForm({ to }: { to: string }) {
     } catch { /* the address is on the page */ }
   };
   return (
-    <form className="flex flex-col gap-4 rounded-3xl border border-border bg-surface p-6 shadow-[var(--shadow)]"
+    <form className="flex flex-col gap-4 border-2 border-ink bg-surface p-6 shadow-[6px_6px_0_var(--ink)]"
           onSubmit={(e) => { e.preventDefault(); window.location.href = href; }}>
+      <p className="kicker border-b border-border pb-3 text-muted">A letter to the desk</p>
       <label className="flex flex-col gap-1.5 text-sm">
         <span className="font-medium">Your name</span>
         <input value={name} onChange={(e) => setName(e.target.value)} autoComplete="name"
@@ -41,7 +42,7 @@ export function ContactForm({ to }: { to: string }) {
                   placeholder="Tell us about your channel and what you'd like to make."
                   className="rounded-xl border border-border bg-background px-3 py-2.5 outline-none focus:border-accent" />
       </label>
-      <button type="submit" className="pressable rounded-xl bg-accent px-5 py-3 font-medium text-accent-foreground">
+      <button type="submit" className="pressable btn-primary rounded-lg px-5 py-3 font-medium">
         Write the email
       </button>
       <p className="text-center text-xs text-muted">

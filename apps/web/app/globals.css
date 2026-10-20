@@ -1,38 +1,44 @@
 @import "tailwindcss";
 
+/* On Air: a newsroom's paper and ink with one signal-red "on air" light; at night,
+   the control room. Headlines in an editorial serif, labels in mono. */
 :root {
-  --background: #f6f6f9;
-  --surface: #ffffff;
-  --surface-2: #f1f1f6;
-  --foreground: #14141c;
-  --muted: #6b6b7b;
-  --border: #e3e3ea;
-  --accent: #5b4cf0;
-  --accent-2: #c026d3;
+  --background: #f1ece2;
+  --surface: #fbf8f2;
+  --surface-2: #ebe4d7;
+  --foreground: #17140f;
+  --muted: #6b6457;
+  --border: #d9cfbe;
+  --accent: #d4261c;
+  --accent-2: #ef9a0c;
   --accent-foreground: #ffffff;
-  --danger: #dc2626;
-  --danger-surface: #fef2f2;
-  --warn: #b45309;
-  --ok: #15803d;
-  --shadow: 0 1px 2px rgb(20 20 40 / 0.05), 0 8px 24px -12px rgb(20 20 40 / 0.12);
+  --ink: #17140f;
+  --danger: #b42318;
+  --danger-surface: #fbe9e4;
+  --warn: #a35a00;
+  --ok: #1f6f3a;
+  --shadow: 0 1px 0 rgb(23 20 15 / 0.05), 0 12px 24px -22px rgb(23 20 15 / 0.35);
+  --grain-opacity: 0.05;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0a0a0f;
-    --surface: #13131b;
-    --surface-2: #1b1b25;
-    --foreground: #f3f3f7;
-    --muted: #9b9bad;
-    --border: #262634;
-    --accent: #8b7cff;
-    --accent-2: #e879f9;
-    --accent-foreground: #0a0a0f;
-    --danger: #f87171;
-    --danger-surface: #2a1215;
-    --warn: #fbbf24;
+    --background: #0e0d0b;
+    --surface: #171512;
+    --surface-2: #201d19;
+    --foreground: #f2ece1;
+    --muted: #9f9688;
+    --border: #2f2a24;
+    --accent: #ff4636;
+    --accent-2: #ffb21a;
+    --accent-foreground: #ffffff;
+    --ink: #f2ece1;
+    --danger: #ff6b5b;
+    --danger-surface: #2b1210;
+    --warn: #ffb21a;
     --ok: #4ade80;
-    --shadow: 0 1px 0 rgb(255 255 255 / 0.04) inset, 0 12px 32px -16px rgb(0 0 0 / 0.6);
+    --shadow: 0 1px 0 rgb(255 255 255 / 0.03) inset, 0 14px 30px -22px rgb(0 0 0 / 0.8);
+    --grain-opacity: 0.07;
   }
 }
 
@@ -44,19 +50,52 @@
   --color-muted: var(--muted);
   --color-border: var(--border);
   --color-accent: var(--accent);
+  --color-accent-2: var(--accent-2);
   --color-accent-foreground: var(--accent-foreground);
+  --color-ink: var(--ink);
   --color-danger: var(--danger);
   --color-danger-surface: var(--danger-surface);
   --color-warn: var(--warn);
   --color-ok: var(--ok);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+  --font-display: var(--font-fraunces);
+}
+
+/* Print, not pillows: tighter corners everywhere. */
+@theme {
+  --radius-lg: 0.45rem;
+  --radius-xl: 0.6rem;
+  --radius-2xl: 0.75rem;
+  --radius-3xl: 1rem;
 }
 
 body {
-  background: var(--background);
+  background-color: var(--background);
   color: var(--foreground);
 }
+/* A faint paper grain over everything (never over what you click: it's behind). */
+body::before {
+  content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 .55 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"); opacity: var(--grain-opacity);
+}
+
+@layer base {
+  h1, h2 { font-family: var(--font-display); font-optical-sizing: auto; letter-spacing: -0.015em; }
+  ::selection { background: color-mix(in oklab, var(--accent) 25%, transparent); }
+}
+
+/* A small mono label over a heading: "THE DESK", "00:30", "LIVE". */
+.kicker { font-family: var(--font-mono); text-transform: uppercase; letter-spacing: 0.14em; font-size: 0.7rem; }
+/* The on-air light: a red dot that breathes. */
+.on-air-dot { position: relative; display: inline-block; width: 0.5rem; height: 0.5rem; border-radius: 9999px;
+  background: var(--accent); box-shadow: 0 0 0 0 color-mix(in oklab, var(--accent) 60%, transparent);
+  animation: on-air 2s ease-out infinite; }
+@keyframes on-air {
+  0% { box-shadow: 0 0 0 0 color-mix(in oklab, var(--accent) 55%, transparent); }
+  80%, 100% { box-shadow: 0 0 0 9px transparent; }
+}
+@media (prefers-reduced-motion: reduce) { .on-air-dot { animation: none; } }
 
 /* App feel: sheets slide up, toasts rise in. */
 @keyframes sheet-up {
@@ -116,14 +155,15 @@ a, button, input, select, label, summary { touch-action: manipulation; }
   .pressable:active { transform: none; }
 }
 
-/* Panels sit a little above the page; main actions carry the accent's gradient. */
+/* Panels sit a little above the paper; the main action is the signal red, with a
+   printed edge. */
 .bg-surface { box-shadow: var(--shadow); }
 .btn-primary {
-  background-image: linear-gradient(135deg, var(--accent), var(--accent-2));
+  background: var(--accent);
   color: #fff;
-  box-shadow: 0 6px 20px -8px color-mix(in oklab, var(--accent) 70%, transparent);
+  box-shadow: inset 0 -2px 0 rgb(0 0 0 / 0.18), 0 6px 16px -10px color-mix(in oklab, var(--accent) 80%, transparent);
 }
-.btn-primary:hover { filter: brightness(1.08); }
+.btn-primary:hover { filter: brightness(1.06); }
 
 /* Rows of chips scroll sideways without a scrollbar in the way. */
 .no-scrollbar { scrollbar-width: none; }
@@ -137,35 +177,23 @@ a, button, input, select, label, summary { touch-action: manipulation; }
 }
 
 
-/* ── the public homepage ((site)/page.tsx) ───────────────────────────────────── */
-/* Sections rise in once as they scroll into view (reveal.tsx). */
-.reveal { opacity: 0; transform: translateY(18px); transition: opacity 700ms ease, transform 700ms cubic-bezier(.2, .8, .2, 1); }
-.reveal-in { opacity: 1; transform: none; }
-.gradient-text {
-  background: linear-gradient(100deg, var(--accent), var(--accent-2));
-  -webkit-background-clip: text; background-clip: text; color: transparent;
-}
-/* Slow drifting colour behind the hero, and screenshots that float. */
-@keyframes blob { 0%, 100% { transform: translate(0, 0) scale(1); } 50% { transform: translate(40px, 30px) scale(1.08); } }
-@keyframes float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-10px); } }
-.blob { animation: blob 16s ease-in-out infinite; }
-.blob-2 { animation-duration: 20s; animation-direction: reverse; }
-.float { animation: float 6s ease-in-out infinite; }
-.float-slow { animation: float 8s ease-in-out infinite 1s; }
-.browser-frame {
-  border: 1px solid var(--border); border-radius: 1rem; background: var(--surface); overflow: hidden;
-  box-shadow: 0 30px 80px -30px rgb(20 20 60 / 0.35), 0 2px 6px rgb(20 20 60 / 0.06);
-}
-.phone-frame {
-  padding: 0.55rem; border-radius: 2.2rem; background: #0b0b12;
-  box-shadow: 0 30px 70px -25px rgb(20 20 60 / 0.5), inset 0 0 0 1px rgb(255 255 255 / 0.08);
-}
-.cta-card {
-  background: radial-gradient(120% 140% at 0% 0%, #7c6cff 0%, #5b4cf0 45%, #a21caf 100%);
-  box-shadow: 0 30px 80px -30px rgb(91 76 240 / 0.6);
-}
-.faq summary::-webkit-details-marker { display: none; }
-@media (prefers-reduced-motion: reduce) {
-  .reveal { opacity: 1; transform: none; transition: none; }
-  .blob, .float, .float-slow { animation: none; }
-}
+/* ── the public homepage ((site)/page.tsx) — a broadcast front page ─────────────── */
+/* The news ticker: a crawl that never stops (the list is drawn twice). */
+@keyframes crawl { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+.ticker-track { animation: crawl 48s linear infinite; }
+.ticker:hover .ticker-track { animation-play-state: paused; }
+/* The phone on the monitor wall: a dark bezel with a hairline of light. */
+.monitor { padding: 0.6rem 0.6rem 0.9rem; border-radius: 2.1rem; background: #0d0c0b;
+  box-shadow: 0 40px 80px -40px rgb(23 20 15 / 0.65), inset 0 0 0 1px rgb(255 255 255 / 0.09); }
+.monitor .kicker, .monitor .text-muted { color: rgb(242 236 225 / 0.6); }
+.monitor > div:last-child { padding: 0 0.35rem; }
+/* The program monitor around a desktop screenshot. */
+.screen-frame { overflow: hidden; border-radius: 0.75rem; background: #0d0c0b;
+  box-shadow: 0 40px 90px -45px rgb(23 20 15 / 0.7), inset 0 0 0 1px rgb(255 255 255 / 0.08); }
+.screen-frame > div:last-child { margin: 0 0.5rem 0.5rem; border-radius: 0.35rem; overflow: hidden; }
+/* A rubber stamp, slightly askew. */
+.stamp { font-family: var(--font-mono); font-size: 0.62rem; font-weight: 700; letter-spacing: 0.16em;
+  text-transform: uppercase; color: var(--accent); border: 2px solid var(--accent); border-radius: 0.3rem;
+  padding: 0.25rem 0.5rem; transform: rotate(6deg); opacity: 0.9; mix-blend-mode: multiply; }
+@media (prefers-color-scheme: dark) { .stamp { mix-blend-mode: normal; } }
+@media (prefers-reduced-motion: reduce) { .ticker-track { animation: none; } }

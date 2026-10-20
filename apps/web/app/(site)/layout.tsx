@@ -18,7 +18,7 @@ export async function generateMetadata(): Promise<Metadata> {
   };
 }
 
-const SECTIONS = [["#features", "Features"], ["#how", "How it works"], ["#pricing", "Pricing"], ["#faq", "FAQ"]] as const;
+const SECTIONS = [["#rundown", "How it works"], ["#features", "Features"], ["#pricing", "Pricing"], ["#faq", "FAQ"]] as const;
 const SECTION_HREF = (h: string) => `/${h}`;
 
 export default async function SiteLayout({ children }: LayoutProps<"/">) {
@@ -29,10 +29,10 @@ export default async function SiteLayout({ children }: LayoutProps<"/">) {
     <div className="flex flex-1 flex-col pt-[env(safe-area-inset-top)]">
       <header className="sticky top-0 z-30 border-b border-transparent bg-background/80 backdrop-blur supports-[backdrop-filter]:bg-background/60">
         <div className="mx-auto flex w-full max-w-6xl items-center gap-3 px-4 py-3">
-          <Link href="/" className="flex items-center gap-2 font-semibold tracking-tight">
+          <Link href="/" className="flex items-center gap-2.5">
             {/* eslint-disable-next-line @next/next/no-img-element -- drawn by /icons, already sized */}
-            <img src="/icons/192" alt="" width={28} height={28} className="rounded-lg" />
-            Content Corpus
+            <img src="/icons/192" alt="" width={28} height={28} className="rounded-md" />
+            <span className="font-[family-name:var(--font-display)] text-xl font-semibold tracking-tight">Content Corpus</span>
           </Link>
           <nav aria-label="Sections" className="ml-6 hidden items-center gap-5 text-sm text-muted md:flex">
             {SECTIONS.map(([href, label]) => (
@@ -43,17 +43,17 @@ export default async function SiteLayout({ children }: LayoutProps<"/">) {
           <nav className="ml-auto flex items-center gap-3 text-sm">
             <Link href="/contact" className="text-muted hover:text-foreground md:hidden">Contact</Link>
             <Link href={signedIn ? "/discover" : "/login"}
-                  className="pressable rounded-lg bg-accent px-3.5 py-1.5 font-medium text-accent-foreground">
+                  className="pressable btn-primary rounded-md px-3.5 py-1.5 font-medium">
               {signedIn ? "Open app" : "Sign in"}
             </Link>
           </nav>
         </div>
       </header>
       <div className="flex-1">{children}</div>
-      <footer className="border-t border-border pb-[env(safe-area-inset-bottom)]">
+      <footer className="border-t-2 border-ink pb-[env(safe-area-inset-bottom)]">
         <div className="mx-auto grid w-full max-w-6xl grid-cols-2 gap-8 px-4 py-10 text-sm sm:grid-cols-4">
           <div className="col-span-2">
-            <p className="font-semibold">Content Corpus</p>
+            <p className="font-[family-name:var(--font-display)] text-3xl font-semibold tracking-tight">Content Corpus</p>
             <p className="mt-2 max-w-sm text-muted">The AI studio that turns today&apos;s news into finished YouTube Shorts
               and Instagram Reels. Built by Strophic.</p>
           </div>

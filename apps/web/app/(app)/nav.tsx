@@ -1,5 +1,6 @@
 "use client";
 
+import { motion } from "motion/react";
 import Link, { useLinkStatus } from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
@@ -46,17 +47,26 @@ function Pending({ children }: { children: React.ReactNode }) {
   return <span className={`transition-opacity ${pending ? "animate-pulse" : ""}`}>{children}</span>;
 }
 
+/** The desk's sections; a red rule slides under the one you're on. */
 export function DesktopNav() {
   const [on, tap] = useTapped();
   return (
-    <nav className="hidden gap-1 text-sm md:flex">
-      {TABS.map((t) => (
-        <Link key={t.href} href={t.href} onClick={() => tap(t.href)}
-              className={`rounded-full px-3 py-1.5 transition-colors ${on(t.href)
-                ? "bg-accent/10 font-medium text-foreground" : "text-muted hover:bg-border/40 hover:text-foreground"}`}>
-          <Pending>{t.label}</Pending>
-        </Link>
-      ))}
+    <nav className="hidden h-full items-stretch gap-1 text-sm md:flex">
+      {TABS.map((t) => {
+        const active = on(t.href);
+        return (
+          <Link key={t.href} href={t.href} onClick={() => tap(t.href)}
+                className={`relative flex items-center px-3 transition-colors ${active
+                  ? "font-medium text-foreground" : "text-muted hover:text-foreground"}`}>
+            <Pending>{t.label}</Pending>
+            {active && (
+              <motion.span layoutId="desk-rule" aria-hidden
+                           className="absolute inset-x-2 -bottom-px h-[3px] rounded-full bg-accent"
+                           transition={{ type: "spring", stiffness: 500, damping: 38 }} />
+            )}
+          </Link>
+        );
+      })}
     </nav>
   );
 }
@@ -66,16 +76,21 @@ export function DesktopNav() {
 export function BottomTabs() {
   const [on, tap] = useTapped();
   return (
-    <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-surface/90 pb-[env(safe-area-inset-bottom)] backdrop-blur-xl md:hidden">
+    <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-surface/92 pb-[env(safe-area-inset-bottom)] backdrop-blur-xl md:hidden">
       <div className="mx-auto grid max-w-lg grid-cols-6 px-1">
         {TABS.map((t) => {
           const active = on(t.href);
           return (
             <Link key={t.href} href={t.href} aria-current={active ? "page" : undefined}
                   onClick={() => { tap(t.href); navigator.vibrate?.(8); }}
-                  className={`group flex flex-col items-center gap-0.5 pt-1.5 pb-1.5 text-[10.5px] font-medium transition-colors active:scale-95 ${active ? "text-accent" : "text-muted"}`}>
-              <span className={`grid h-8 w-14 place-items-center rounded-full transition-all duration-300 ease-out [&_svg]:transition-transform ${active
-                ? "bg-accent/15 [&>span>svg]:scale-110" : "bg-transparent group-active:bg-border/50"}`}>
+                  className={`group relative flex flex-col items-center gap-0.5 pt-2 pb-1.5 text-[10.5px] font-medium transition-colors active:scale-95 ${active ? "text-accent" : "text-muted"}`}>
+              {active && (
+                <motion.span layoutId="tab-light" aria-hidden
+                             className="absolute -top-px left-1/2 h-[3px] w-8 -translate-x-1/2 rounded-b-full bg-accent"
+                             transition={{ type: "spring", stiffness: 500, damping: 36 }} />
+              )}
+              <span className={`grid h-7 w-12 place-items-center transition-transform duration-300 ease-out ${active
+                ? "[&>span>svg]:scale-110" : ""}`}>
                 <Pending>{t.icon}</Pending>
               </span>
               {t.label}
