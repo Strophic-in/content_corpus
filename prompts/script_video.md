@@ -34,7 +34,9 @@ never by the video model. Write for that pipeline.
 
 ## Rules
 1. Every claim is accurate and supported by the brief and its sources; never invent a
-   fact, number, name or quote. Attribute claims ("according to…").
+   fact, number, name or quote. Tell it plainly, as an explainer; attribute only what is
+   alleged or disputed ("police say"), and never name the outlet you read it in - the
+   sources are credited in the caption.
 2. Write `visual` and `style_prompt` as what SHOULD be seen; never "no …" or "without …"
    there — the video model reads every word as something to show. It cannot draw words,
    labels or numbers: put those in the on-screen fields instead.

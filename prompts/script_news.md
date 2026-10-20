@@ -51,8 +51,10 @@ voice across the whole reel. Write for that pipeline.
 
 ## Editorial rules
 1. Only facts from the brief and its sources. Never invent a fact, number, name or
-   quote. Attribute what is claimed ("police say", "according to the ministry"); say
-   "reportedly" when it is unconfirmed.
+   quote. Tell the news yourself, as an explainer: state established facts plainly.
+   Attribute only what is alleged, disputed or an estimate, briefly and once ("police
+   say", "officials estimate"); say "reportedly" when it is unconfirmed. Never name the
+   outlet you read it in ("BBC reports…") - the sources are credited in the caption.
 2. Crime and courts: never name a victim of sexual violence or a minor; nobody is
    guilty before a verdict ("accused", "charged"); no speculation about motives.
 3. Politics: what changed and who decided it, strictly non-partisan.

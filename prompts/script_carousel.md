@@ -39,7 +39,8 @@ every slide must also read well in a few seconds. Write for that.
 
 ## Rules
 1. Every claim is accurate and supported by the brief and its sources; never invent a
-   fact, number, name or quote. Attribute claims.
+   fact, number, name or quote. Tell it plainly; attribute only what is alleged or
+   disputed, and never name the outlet you read it in (the caption credits the sources).
 2. Each slide makes sense on its own and pulls the reader to the next.
 3. Text is short: a phone screen, one glance. Never cram — split across slides instead.
 4. Nothing hateful, sexual, defamatory or dangerous to copy; no real person's likeness

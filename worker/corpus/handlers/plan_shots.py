@@ -119,8 +119,28 @@ def _plan_footage(c, s: dict, idx: int, shot: dict, source: str, assets: dict, n
          "keep" if keep else ("duck" if source == "clip" else "mute"),
          (shot.get("stock_query") or "").strip() or None if source == "stock" else None,
          asset["credit"] if asset else None, Jsonb(shot.get("chart")) if source == "chart" else None,
-         Jsonb(extras(shot, assets))))
+         Jsonb(_split_if_worded(extras(shot, assets), asset))))
     return seconds
+
+
+# A picture with words in it (a headline, map labels, an infographic, a news clip's
+# lower third) would be written over by the captions: its shot becomes a split screen,
+# the picture above and the captions in the panel below (owner, 2026-10-19). The cards
+# drawn here leave the caption area clear, and a logo sits above it.
+WORDED_MIN = 3
+
+
+def _worded(asset: dict | None) -> bool:
+    if not asset or asset.get("role") in ("headline", "logo"):
+        return False
+    words = asset.get("words") or []
+    return sum(len(str(w).split()) for w in words) >= WORDED_MIN
+
+
+def _split_if_worded(ex: dict, asset: dict | None) -> dict:
+    if _worded(asset) and not ex.get("layout"):
+        return {**ex, "layout": "split"}
+    return ex
 
 
 def run(ctx: JobContext) -> dict:
@@ -150,7 +170,9 @@ def run(ctx: JobContext) -> dict:
         ai_label = "AI-generated" if vlook and vlook.realism == "photoreal" else None
 
         assets = {r["n"]: r for r in c.execute(
-            "select id, n, kind, credit, key, rights from assets where post_id = %s", (s["post_id"],)).fetchall()}
+            """select id, n, kind, credit, key, rights, analysis->'on_screen_text' as words,
+                      fetch_from->'found'->>'role' as role
+                 from assets where post_id = %s""", (s["post_id"],)).fetchall()}
         # The owner wanted an AI version of the idea's video: what is generated recreates it.
         reconstruction = any(a["kind"] == "video" and a["rights"] == "needs_review" for a in assets.values())
         total = 0.0

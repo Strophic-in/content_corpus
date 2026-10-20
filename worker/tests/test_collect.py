@@ -148,7 +148,7 @@ def test_the_writer_is_told_what_each_asset_is_and_never_animates_a_logo():
             "role": "logo", "entity": "Jio Platforms"}
     card = {**logo, "n": 2, "role": "headline", "outlet": "ET Markets", "entity": "https://news.test/a"}
     assert "LOGO of Jio Platforms" in footage._describe(logo)
-    assert "HEADLINE CARD of ET Markets" in footage._describe(card)
+    assert "HEADLINE CARD of the report" in footage._describe(card) and "ET Markets" not in footage._describe(card)
     fx = Footage(assets=[logo, card])
     assert "Real assets come first" in footage.prompt_section(fx, narrated=True)
     shot = lambda **kw: generated_shot(**{"seconds": 4, "visual": "v", "audio": "", "narration": "x", **kw})  # noqa: E731

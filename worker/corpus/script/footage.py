@@ -68,8 +68,8 @@ def _describe(a: dict, label: str | None = None) -> str:
         lines.append(f"   LOGO of {a.get('entity') or 'the company'}: show it as an \"image\" shot when the narration "
                      "first names them. Never animate it (\"generate\" with this asset): the video model warps logos.")
     elif role == "headline":
-        lines.append(f"   HEADLINE CARD of {a.get('outlet') or 'the report'}'s report: show it as an \"image\" shot "
-                     "when the narration cites that report (\"ET Markets reports…\"), ideally early.")
+        lines.append("   HEADLINE CARD of the report: show it as an \"image\" shot early, as the proof of the "
+                     "news, while the narration states it plainly (never \"…reports\": the card shows the outlet).")
     elif role == "map":
         lines.append(f"   MAP of {a.get('entity') or 'the place'}: show it as an \"image\" shot when the narration "
                      "says where it happened. Never animate it.")

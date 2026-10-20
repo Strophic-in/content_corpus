@@ -146,6 +146,56 @@ def _media(its: list[Item]) -> str:
 
 
 PLACE_SURE = 0.75
+# The story's shape, as yes/no questions Jev answers sharply (a single "which format?"
+# leans on "it's news": 13 of 17 ideas went to the news explainer, live 2026-10-19) —
+# then a rule maps the shape to a format the category allows (SHAPE_RULES).
+SHAPE = {
+    "moment": {"type": "noul", "instructions":
+               "Is `idea` above all a striking moment people would want to watch - an incident, accident, disaster, "
+               "a win, a spectacle, something caught on camera - that pictures or video tell by themselves?"},
+    "numbers": {"type": "noul", "instructions":
+                "Does `idea` turn on a few striking numbers - prices, money, scores, percentages, counts - that a "
+                "chart would show better than words?"},
+    "list": {"type": "noul", "instructions":
+             "Is `idea` naturally a list of several separate items - a ranking, a top 5, several cases or places?"},
+    "myth": {"type": "noul", "instructions": "Does `idea` correct a common belief, a myth or a rumour?"},
+    "arc": {"type": "noul", "instructions":
+            "Is `idea` a human story with an arc - a person, their struggle, a turning point?"},
+    "explain": {"type": "noul", "instructions":
+                "Does `idea` need explaining for viewers to get it - a why, a how, a process, cause and effect, "
+                "what it means for them?"},
+    "concept": {"type": "noul", "instructions":
+                "Is `idea` about science, the body, technology or how something works, rather than a news event?"},
+}
+SHAPE_SURE = 0.7
+# (the shape, the templates that make it best, in order of preference)
+SHAPE_RULES = [
+    ("myth", ("myth_vs_fact",)),
+    ("list", ("ranked_countdown",)),
+    ("moment", ("full_screen_text_overlay", "documentary_storytelling")),
+    ("numbers", ("animated_infographic", "top_bottom_split_screen")),
+    ("arc", ("documentary_storytelling",)),
+]
+
+
+def by_shape(a: dict, templates_here: list[str]) -> tuple[int | None, float, str]:
+    """The format the story's shape calls for: (its index in templates_here, how sure,
+    the shape) — (None, 0, "") when no rule fires or the format isn't allowed."""
+    for shape, wanted in SHAPE_RULES:
+        sure = yes(a.get(shape), 0.0)
+        if sure >= SHAPE_SURE:
+            for t in wanted:
+                if t in templates_here:
+                    return templates_here.index(t), sure, shape
+    if yes(a.get("explain"), 0.0) >= 0.6:
+        prefer = (("cinematic_3d_explainer", "mini_news_explainer") if yes(a.get("concept"), 0.0) >= 0.6
+                  else ("mini_news_explainer", "cinematic_3d_explainer"))
+        for t in prefer:
+            if t in templates_here:
+                return templates_here.index(t), yes(a.get("explain"), 0.0), "explain"
+    return None, 0.0, ""
+
+
 PLACE_CHANGED = {"type": "noul", "instructions":
                  "Is the most striking picture of `idea` a specific, named place, landmark, building or landscape "
                  "that was damaged, destroyed, flooded or transformed - so that showing it before, then now, tells "
@@ -183,6 +233,8 @@ def pick_format(jev: Jev, ideas: list[dict], items_of: list[list[Item]], fmts: l
     before_after = next((n for n, f in enumerate(fmts) if f["template_id"] == "before_after_comparison"), None)
     if before_after is not None:
         q["place_changed"] = PLACE_CHANGED
+    q.update(SHAPE)
+    templates_here = [f["template_id"] for f in fmts]
     answers = jev.many([({"idea": f"{i['title']}. {i['hook']} {i['brief']}", "media": _media(its)}, q)
                         for i, its in zip(ideas, items_of)])
     out = []
@@ -190,6 +242,10 @@ def pick_format(jev: Jev, ideas: list[dict], items_of: list[list[Item]], fmts: l
         changed = yes((a or {}).get("place_changed"), 0.0) if before_after is not None else 0.0
         if changed >= PLACE_SURE:
             out.append((before_after, changed))
+            continue
+        shaped, sure, _ = by_shape(a or {}, templates_here)
+        if shaped is not None:
+            out.append((shaped, sure))
             continue
         pick = (a or {}).get("format") or {}
         choice, conf = pick.get("choice"), float(pick.get("confidence") or 0)

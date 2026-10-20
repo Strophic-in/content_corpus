@@ -25,6 +25,7 @@ up to REPAIR_ROUNDS times, before the attempt counts as failed.
 from __future__ import annotations
 
 import hashlib
+import re
 
 from psycopg.types.json import Jsonb
 
@@ -194,9 +195,12 @@ def run(ctx: JobContext) -> dict:
             if fmt:
                 structure.normalize(o, t, look, post["audio_source"])
 
+        outlets = outlet_names(post.get("research"))
+
         def check(o):
-            return validate(o, target, narrated=narrated, speed=speed, footage=footage, dialogue=dialogue,
-                            template=t if fmt else None, look=look if fmt else None)
+            return (validate(o, target, narrated=narrated, speed=speed, footage=footage, dialogue=dialogue,
+                             template=t if fmt else None, look=look if fmt else None)
+                    + outlet_problems(o, outlets))
     user = (f"Topic: {post['topic']}\nBrief: {post['brief'] or '(none)'}" + _category_note(category)
             + sources_note(post.get("research")))
     input_sha = hashlib.sha256("\x1f".join([system, user, model]).encode()).hexdigest()
@@ -288,6 +292,38 @@ def run(ctx: JobContext) -> dict:
 SOURCES_CHARS = 9000
 
 
+# News outlets and agencies a script must not keep naming (owner, 2026-10-19: "it repeats
+# the source name again and again"): the story's own sources, and the usual ones.
+KNOWN_OUTLETS = ("BBC", "Reuters", "Associated Press", "AFP", "CNN", "NDTV", "PTI", "ANI", "ET Markets",
+                 "Economic Times", "Times of India", "Hindustan Times", "Indian Express", "India Today",
+                 "Business Standard", "Business Today", "Moneycontrol", "Al Jazeera", "The Guardian", "Bloomberg",
+                 "CNBC", "Livemint", "News18", "Firstpost", "WION", "Sky News", "New York Times", "Washington Post")
+
+
+def outlet_names(research: dict | None) -> list[str]:
+    from ..packaging import _site_name
+
+    names = set(KNOWN_OUTLETS)
+    for a in (research or {}).get("articles") or []:
+        site = (a.get("site") or "").removeprefix("www.").lower()
+        if site:
+            names.add(_site_name(site))         # "BBC News" for bbc.co.uk; an unknown site stays a domain
+    return sorted(n for n in names if n and "." not in n)
+
+
+def outlet_problems(out, names: list[str]) -> list[str]:
+    """A shot whose narration or on-screen words name a news outlet."""
+    problems = []
+    for i, s in enumerate(out.shots, 1):
+        said = " ".join(x for x in (getattr(s, "narration", ""), getattr(s, "text", "")) if x)
+        hit = next((n for n in names if re.search(rf"(?<![\w]){re.escape(n)}(?![\w])", said,
+                                                  0 if len(n) <= 4 else re.I)), None)
+        if hit:
+            problems.append(f"shot {i} names {hit}: tell the news in your own words, as an explainer - the outlets "
+                            "are credited in the caption, never in the narration or on screen")
+    return problems
+
+
 def sources_note(research: dict | None) -> str:
     """The story's sources, read in full (research_post), for the writer and the desk editor."""
     articles = (research or {}).get("articles") or []
@@ -295,7 +331,10 @@ def sources_note(research: dict | None) -> str:
         return ""
     per = max(1200, SOURCES_CHARS // len(articles))
     parts = [f"### {a['site']} — {a.get('title') or a['url']}\n{a['text'][:per]}" for a in articles]
-    return ("\n\n## What the sources report (the only facts you may use; attribute claims to them)\n"
+    return ("\n\n## What the sources report (the only facts you may use)\n"
+            "Tell the news in your own words, as an explainer: never name these outlets in the narration or on "
+            "screen (\"BBC reports…\", \"according to ET Markets…\") - they are credited in the caption. Attribute "
+            "only what is alleged, disputed or an estimate, briefly and once (\"police say\").\n\n"
             + "\n\n".join(parts))
 
 
