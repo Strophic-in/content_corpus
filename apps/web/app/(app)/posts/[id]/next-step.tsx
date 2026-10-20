@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 
 import { approveScript, generateScript, publishNow, setAutopilot, type ActionState } from "../../actions";
 import { bulkPostAction } from "../../library/table-actions";
+import { Spinner } from "../../../spinner";
 
 // The one thing to do next on a post, as a single button — and the autopilot switch
 // that does every remaining step without stopping (then posts it at its time).
@@ -78,8 +79,9 @@ export function NextStep({ postId, status, autopilot, scriptId, publishTime, fai
         <div className="flex flex-wrap items-center gap-2">
           {primary && (
             <button onClick={primary.act} disabled={pending}
-                    className="pressable btn-primary rounded-full px-5 py-2 text-sm font-semibold disabled:opacity-60">
-              {pending ? "Working…" : primary.label}
+                    className="pressable btn-primary inline-flex items-center gap-2 rounded-full px-5 py-2 text-sm font-semibold disabled:opacity-80">
+              {pending && <Spinner />}
+              {pending ? "On it…" : primary.label}
             </button>
           )}
           {secondary && (

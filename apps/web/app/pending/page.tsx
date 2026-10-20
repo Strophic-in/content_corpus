@@ -1,4 +1,5 @@
 import { headers } from "next/headers";
+import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import { auth } from "@/lib/auth";
@@ -18,18 +19,28 @@ export default async function PendingPage() {
   const suspended = m?.status === "suspended";
   return (
     <main className="flex flex-1 items-center justify-center px-4 py-16">
-      <div className="w-full max-w-sm rounded-xl border border-border bg-surface p-6 text-sm shadow-sm">
-        <h1 className="text-xl font-semibold tracking-tight">
-          {suspended ? "This account is suspended" : "Thanks for signing up"}
-        </h1>
-        <p className="mt-2 text-muted">
-          {suspended
-            ? "It can't make or post videos right now. Contact the owner if you think this is a mistake."
-            : "Content Corpus lets new accounts in by hand. The owner has been told — you'll get an email when " +
-              "yours is approved, and this page will let you in."}
+      <div className="w-full max-w-md">
+        <p className="kicker flex items-center gap-2 border-y border-ink/80 py-1.5 text-accent">
+          <span className="on-air-dot" /> {suspended ? "Off air" : "Stand by"}
+          <span className="ml-auto text-muted">Content Corpus</span>
         </p>
-        <p className="mt-4 text-muted">Signed in as {session.user.email}.</p>
-        <div className="mt-4"><SignOutButton /></div>
+        <h1 className="mt-6 text-4xl font-semibold tracking-tight">
+          {suspended ? "This account is paused." : "You're on the list."}
+        </h1>
+        <p className="mt-3 leading-relaxed text-muted">
+          {suspended
+            ? "It can't make or post videos right now. If you think this is a mistake, write to us."
+            : "New accounts are let in by hand. We've been told about your request, and we'll email you the moment "
+              + "yours is approved. Then this page lets you straight in."}
+        </p>
+        <div className="mt-6 border-t border-border pt-4 text-sm text-muted">
+          <p>Signed in as <span className="font-medium text-foreground">{session.user.email}</span>.</p>
+          <div className="mt-4 flex items-center gap-5">
+            <SignOutButton />
+            <Link href="/contact" className="text-accent hover:underline">Write to us</Link>
+            <Link href="/" className="hover:text-foreground">About Content Corpus</Link>
+          </div>
+        </div>
       </div>
     </main>
   );

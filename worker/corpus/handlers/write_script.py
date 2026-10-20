@@ -38,6 +38,7 @@ from ..script import structure
 from ..script.llm import (MUSIC_MOODS, NARRATOR_WORDS_PER_SECOND, OpenAIScriptWriter, Usage,
                           narration_word_cap, validate)
 from ..script.review import OpenAIReviewer
+from ..style import NO_DASHES, undash
 
 # Swapped out by tests; production always talks to OpenAI with the user's key.
 WRITER_FACTORY = OpenAIScriptWriter
@@ -187,13 +188,16 @@ def run(ctx: JobContext) -> dict:
         system = (_system_prompt(st, target, revision, post["audio_source"], speed, fmt, look_text=look_text)
                   + footage_.prompt_section(footage, narrated)
                   + (structure.writer_section(t, look, post["audio_source"]) if fmt else "")
-                  + _music_section(music))
+                  + _music_section(music) + "\n\n## Style\n" + NO_DASHES)
         writer = WRITER_FACTORY(key)
 
         def tidy(o):
             footage_.normalize(o, footage, music)
             if fmt:
                 structure.normalize(o, t, look, post["audio_source"])
+            o.title, o.hook, o.description = undash(o.title), undash(o.hook), undash(o.description)
+            for s in o.shots:       # what is said and shown on screen
+                s.narration, s.text = undash(s.narration), undash(s.text)
 
         outlets = outlet_names(post.get("research"))
 

@@ -10,8 +10,8 @@ const TOPICS = ["Early access / waitlist", "Pricing", "Partnership", "Support", 
 const field = "rounded-md border border-border bg-background px-3 py-2.5 outline-none focus:border-accent";
 
 /** A message to the desk, sent by the site itself (kept for the owner, and emailed when
- *  the server can send mail) — no mail app needed on the visitor's side. */
-export function ContactForm({ to }: { to: string }) {
+ *  the server can send mail). No mail app needed on the visitor's side. */
+export function ContactForm({ to, topic }: { to: string; topic?: string }) {
   const [state, action, pending] = useActionState<ContactState, FormData>(sendContact, null);
   const [copied, setCopied] = useState(false);
   const copy = async () => {
@@ -46,7 +46,7 @@ export function ContactForm({ to }: { to: string }) {
             </div>
             <label className="flex flex-col gap-1.5 text-sm">
               <span className="font-medium">What it&apos;s about</span>
-              <select name="topic" defaultValue={TOPICS[0]} className={field}>
+              <select name="topic" defaultValue={TOPICS.find((t) => t === topic) ?? TOPICS[0]} className={field}>
                 {TOPICS.map((t) => <option key={t}>{t}</option>)}
               </select>
             </label>

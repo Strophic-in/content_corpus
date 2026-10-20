@@ -18,9 +18,13 @@ export function Head({ wide = false, action = false }: { wide?: boolean; action?
   );
 }
 
+/** While a page is on its way: a red signal sweeping along the top of the screen, a
+ *  "stand by" slate, and the page's own shape in placeholders. */
 function Loading({ children, className = "" }: { children: React.ReactNode; className?: string }) {
   return (
     <div role="status" aria-label="Loading" className={`flex flex-col gap-5 ${className}`}>
+      <div aria-hidden className="loading-line"><span /></div>
+      <p aria-hidden className="kicker flex items-center gap-2 text-muted"><span className="on-air-dot" /> Stand by</p>
       {children}
       <span className="sr-only">Loading…</span>
     </div>

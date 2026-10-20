@@ -8,13 +8,13 @@ import { useState } from "react";
 // camera switcher.
 const SHOTS = [
   { id: "post", label: "Every step, live", src: "/site/post.webp",
-    text: "Each video shows where it is — sources and assets, script, your review, voice, render, packaging, posting — and what to do next." },
+    text: "Each video shows where it is (sources and assets, script, your review, voice, render, packaging, posting) and what to do next." },
   { id: "calendar", label: "Calendar", src: "/site/calendar.webp",
     text: "The month at a glance. Drag a video to another day; scheduled posts move with it." },
   { id: "table", label: "Library", src: "/site/table.webp",
     text: "Every video in one table: stage, script, shots, GPU time, cost and views. Approve, render or delete in bulk." },
   { id: "styles", label: "Styles", src: "/site/styles.webp",
-    text: "Twelve caption styles and thirteen cover layouts — Jev picks the best fit for each story." },
+    text: "Twelve caption styles and thirteen cover layouts. Jev picks the best fit for each story." },
   { id: "voices", label: "Voices", src: "/site/voices.webp",
     text: "Forty-four narrators in English and Hindi, free and AI. Hear each one, switch on the ones you like." },
   { id: "formats", label: "Formats", src: "/site/formats.webp",
@@ -55,7 +55,7 @@ export function Showcase() {
           <AnimatePresence initial={false}>
             <motion.div key={shot.id} className="absolute inset-0" initial={{ opacity: 0, scale: 1.015 }}
                         animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.5 }}>
-              <Image src={shot.src} alt={`Content Corpus — ${shot.label}`} fill priority={at === 0}
+              <Image src={shot.src} alt={`Content Corpus: ${shot.label}`} fill priority={at === 0}
                      sizes="(min-width: 1024px) 1024px, 100vw" className="object-cover object-top" />
             </motion.div>
           </AnimatePresence>

@@ -30,6 +30,7 @@ from pydantic import BaseModel
 
 from . import costs, db, jev, storage, styles, vault
 from .media import thumbnail
+from .style import undash
 
 log = logging.getLogger("corpus.packaging")
 
@@ -59,6 +60,7 @@ scrolling and tap - without misleading them. Everything you write must be true t
   for: the background, a telling detail or number from the reports, or what happens next - only facts the
   reports state. End with a question that starts a conversation. No links, no list of sources, no hashtags,
   never begging for likes.
+- Style: never use em dashes or en dashes as punctuation; write a comma, a full stop or a colon.
 - thumbnail_text: 2-5 words in capitals that tell the story at a glance and make people curious (for a before/now
   video, name what is gone or changed: "SPIRE GONE IN MINUTES"). True, no question marks spam, no clickbait lies.
 - kicker: one or two words for a small red label above it ("BREAKING", "BEFORE / NOW", "LIVE", "UPDATE"), or ""
@@ -290,9 +292,10 @@ def make(post: dict, *, job_id=None) -> dict:
     out, usage = COPYWRITER(key).write(model=model, system=SYSTEM, user=_brief(post))
     costs.record_llm(usage, note="caption and thumbnail", user_id=post["user_id"], post_id=post["id"],
                      channel_id=post["channel_id"], category_id=post["category_id"], job_id=job_id)
-    pkg = {"title": out.title.strip()[:100], "hook_line": out.hook_line.strip(), "caption": out.caption.strip(),
+    pkg = {"title": undash(out.title.strip())[:100], "hook_line": undash(out.hook_line.strip()),
+           "caption": undash(out.caption.strip()),
            "hashtags": _tags(out.hashtags) or _tags(post.get("hashtags") or []),
-           "first_comment": out.first_comment.strip(), "thumbnail_text": out.thumbnail_text.strip()[:60],
+           "first_comment": undash(out.first_comment.strip()), "thumbnail_text": undash(out.thumbnail_text.strip())[:60],
            "kicker": out.kicker.strip()[:24], "sources": sources(post), "model": usage.model,
            "script_id": str(post["approved_script_id"]), "made_at": datetime.now(timezone.utc).isoformat()}
     with tempfile.TemporaryDirectory() as tmp:

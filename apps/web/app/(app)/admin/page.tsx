@@ -28,7 +28,7 @@ export default async function AdminPage() {
     config: (await db.query("select * from api.admin_config()")).rows[0] as
       { signups_need_approval: boolean; member_monthly_limit_paise: number },
   }));
-  const open = process.env.SIGNUPS_OPEN === "true";
+  const open = process.env.SIGNUPS_OPEN !== "false";
   const waiting = members.filter((m) => m.status === "pending").length;
   const unread = messages.filter((m) => !m.read_at).length;
   return (
@@ -37,8 +37,8 @@ export default async function AdminPage() {
         <Link href="/settings" className="text-sm text-muted hover:text-foreground">← Settings</Link>
         <h1 className="mt-1 text-2xl font-semibold tracking-tight">Admin</h1>
         <p className="text-sm text-muted">
-          {open ? "Sign-ups are open (SIGNUPS_OPEN=true)." : "Sign-ups are closed: only AUTH_ALLOWED_EMAILS can sign in. "
-            + "Set SIGNUPS_OPEN=true on the server to let others sign up."}
+          {open ? "Anyone can ask for access; new accounts wait for your approval below."
+            : "Sign-ups are closed (SIGNUPS_OPEN=false): only AUTH_ALLOWED_EMAILS can sign in."}
           {waiting > 0 && ` ${waiting} waiting for you.`}
         </p>
       </div>

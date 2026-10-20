@@ -1,12 +1,12 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 
-import { CONTACT_EMAIL, siteUrl } from "@/lib/site";
+import { siteUrl } from "@/lib/site";
 
 import { CountUp, Faq, Headline, In, Monitor, Rundown, Timecode } from "./motion-bits";
 import { Showcase } from "./showcase";
 
-const TITLE = "Content Corpus — AI studio for YouTube Shorts & Instagram Reels";
+const TITLE = "Content Corpus: the AI studio for YouTube Shorts and Instagram Reels";
 const DESCRIPTION = "Turn today's trending news into finished Shorts and Reels: Content Corpus finds the stories your "
   + "audience will tap, collects real logos, photos and footage, writes and voices the script, renders the video and "
   + "posts it on schedule.";
@@ -26,10 +26,10 @@ export const metadata: Metadata = {
 const STEPS = [
   { slug: "Discover", time: "06:00", title: "The day's stories, ranked for your audience",
     text: "Every morning it reads news sites, trend feeds and communities for each of your categories. Jev, our decision "
-      + "model, ranks the stories by how many of your viewers would stop and tap — and you swipe to keep the ones you want." },
+      + "model, ranks the stories by how many of your viewers would stop and tap. You swipe to keep the ones you want." },
   { slug: "Collect", time: "06:05", title: "The real thing, before a word is written",
     text: "The logos of the companies named, photos of the people and places, maps and flags, a card of each report, the "
-      + "reports' own photos and video — and anything you add." },
+      + "reports' own photos and video, and anything you add." },
   { slug: "Write", time: "06:12", title: "A script told like an explainer",
     text: "Written from several outlets' reports and checked against them, in the format the story's shape calls for: a "
       + "narrated explainer, a before/after, a countdown, footage with captions and music." },
@@ -37,7 +37,7 @@ const STEPS = [
     text: "Pictures pan, zoom and scroll; news footage plays; just a couple of AI-generated shots for the moment itself. "
       + "Then the voice, captions in the style that fits, music and a scroll-stopping cover." },
   { slug: "Publish", time: "18:00", title: "On air at the time you chose",
-    text: "Title, caption with sources, hashtags, a first comment that adds context and the cover — posted to YouTube "
+    text: "Title, caption with sources, hashtags, a first comment that adds context and the cover, posted to YouTube "
       + "Shorts and Instagram Reels. Or let autopilot run the whole day." },
 ] as const;
 
@@ -45,20 +45,20 @@ const DESKS = [
   { name: "The desk", note: "Finding the story", items: [
     ["Trend radar by category", "Science, crime, finance, sport, India, world… each category with its own sources and its own daily count."],
     ["Swipe to decide", "Ideas arrive as cards: the story, why it's trending, its media and what it cost so far."],
-    ["Real assets, credited", "Logos, photos, maps, flags, report cards and news footage — credited on screen and in the caption."],
+    ["Real assets, credited", "Logos, photos, maps, flags, report cards and news footage, credited on screen and in the caption."],
     ["Sourced scripts", "Written from several reports and checked against them; hooks that open a curiosity gap the video closes."],
   ] },
   { name: "The edit", note: "Making the video", items: [
-    ["AI video where it counts", "Cinematic generated shots for what footage can't show — and image-to-video that brings a photo to life."],
+    ["AI video where it counts", "Cinematic generated shots for what footage can't show, and image-to-video that brings a photo to life."],
     ["44 voices, English & Hindi", "Free natural narrators and expressive AI voices whose tone follows the script."],
     ["25 caption & cover styles", "Chosen per video to fit the story and the title; captions never cover a picture's own words."],
     ["22 formats", "Explainers, before/after, countdowns, myth vs fact, split screens, footage with captions, carousels."],
   ] },
   { name: "The broadcast", note: "Getting it out", items: [
-    ["Autopilot", "When you're away it picks the day's top stories and posts them — no idea batch, no wasted tokens."],
+    ["Autopilot", "When you're away it picks the day's top stories and posts them. No idea batch, no wasted tokens."],
     ["Calendar & library", "Plan the month, drag a video to another day, see every video's stage, cost and views."],
     ["Ready to post", "A gripping, accurate title, a sourced caption, hashtags, a first comment and the cover."],
-    ["Every rupee shown", "The cost of each idea and each video — writing, voice, GPU minutes — always in view."],
+    ["Every rupee shown", "The cost of each idea and each video (writing, voice, GPU minutes), always in view."],
   ] },
 ] as const;
 
@@ -80,10 +80,10 @@ const FAQ = [
   ["Do I have to post everything it makes?", "No. In manual mode nothing happens without you: you keep the ideas you like, read and approve each script, and choose when it goes out. Autopilot is an option per video or per channel."],
   ["Where do the pictures and footage come from?", "From the story itself: logos, photos, maps and flags from Wikipedia and Wikimedia Commons, the news reports' own photos and video, a card of each report, and anything you upload or link. Each is credited on screen and in the caption. AI-generated shots are used only for what nothing real can show."],
   ["Does it work in Hindi?", "Yes. Scripts can be written in Hindi and read by AI voices that speak natural Hindi; English uses free, natural narrators."],
-  ["Can every video have narration — or none?", "Both. Narrated explainers suit stories that need explaining; for stories the pictures tell by themselves there's a format with captions and background music only. Jev picks the format by the story's shape."],
+  ["Can a video have no narration?", "Both. Narrated explainers suit stories that need explaining; for stories the pictures tell by themselves there's a format with captions and background music only. Jev picks the format by the story's shape."],
   ["How much does a video cost to make?", "You see the exact cost of every idea and every video in the app. Shots made from real pictures cost nothing to render and AI shots are capped per video, so videos stay cheap."],
   ["Is my YouTube and Instagram account safe?", "It asks only for what signing in and publishing need, stores connection tokens encrypted, never reads or changes your other videos, and you can disconnect at any time. Details are below and in the privacy policy."],
-  ["When can I sign up, and what will it cost?", "Content Corpus is in private beta. Base, Pro and Elite plans are coming soon — join the waitlist and we'll write to you when they open."],
+  ["When can I sign up, and what will it cost?", "Content Corpus is in private beta. Base, Pro and Elite plans are coming soon. Join the waitlist and we'll write to you when they open."],
 ] as const;
 
 const GOOGLE_ACCESS = [
@@ -100,10 +100,10 @@ const PHONE_SHOTS = [{ src: "/site/phone-discover.webp", label: "Discover" }, { 
 
 // The public homepage (also what Google's OAuth verification reads: it names the app
 // as the consent screen does, says what it is for and why it asks for each permission
-// — the "Standards & permissions" section).
+// (the "Standards & permissions" section).
 export default function HomePage() {
   const site = siteUrl();
-  const waitlist = `mailto:${CONTACT_EMAIL}?subject=${encodeURIComponent("Content Corpus waitlist")}`;
+  const waitlist = "/login?mode=signup";       // ask for access; the owner approves
   const today = new Intl.DateTimeFormat("en-IN", { weekday: "long", day: "numeric", month: "long", year: "numeric",
                                                    timeZone: "Asia/Kolkata" }).format(new Date());
   const jsonLd = [
@@ -141,7 +141,7 @@ export default function HomePage() {
             <p className="mt-6 max-w-xl text-lg leading-relaxed text-muted">
               Content Corpus finds the stories your audience will tap, collects the real logos, photos and footage, writes
               and voices the script, renders the video and posts it to <strong className="text-foreground">YouTube
-              Shorts</strong> and <strong className="text-foreground">Instagram Reels</strong> — on your schedule.
+              Shorts</strong> and <strong className="text-foreground">Instagram Reels</strong>, on your schedule.
             </p>
             <div className="mt-8 flex flex-wrap gap-3">
               <a href={waitlist} className="pressable btn-primary group inline-flex items-center gap-2 rounded-lg px-5 py-3 font-medium">
@@ -186,7 +186,7 @@ export default function HomePage() {
           <p className="kicker text-accent">How it works</p>
           <h2 className="mt-3 text-4xl font-semibold tracking-tight sm:text-6xl">Tonight&apos;s running order.</h2>
           <p className="mt-4 max-w-2xl text-lg text-muted">Five steps from the morning&apos;s news to the evening&apos;s post.
-            Review every script and choose every time — or switch on autopilot and let the day run itself.</p>
+            Review every script and choose every time, or switch on autopilot and let the day run itself.</p>
         </In>
         <Rundown steps={[...STEPS]} />
       </section>

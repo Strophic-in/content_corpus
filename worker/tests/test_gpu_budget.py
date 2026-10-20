@@ -81,3 +81,11 @@ def test_the_storys_shape_picks_the_format():
     assert by_shape({"explain": noul(0.8), "concept": noul(0.9)}, here)[0] == 1            # 3D explainer
     assert by_shape({"explain": noul(0.8), "concept": noul(0.1)}, here)[0] == 0            # news explainer
     assert by_shape({"list": noul(0.9)}, here) == (None, 0.0, "")                          # no countdown here
+
+
+def test_dashes_never_reach_the_screen():
+    from corpus.style import undash
+    assert undash("A spire fell — in four minutes.") == "A spire fell, in four minutes."
+    assert undash("Prices rose 2019–2024") == "Prices rose 2019-2024"
+    assert undash("— Breaking: rain") == "Breaking: rain"
+    assert undash("no dash here") == "no dash here"

@@ -11,14 +11,19 @@ export const metadata: Metadata = {
   alternates: { canonical: "/contact" },
 };
 
+// Each opens what it needs: early access is a request for an account; the rest is the
+// form below with its topic chosen.
 const WAYS = [
-  ["Early access", "Join the waitlist for the private beta, or ask about Base, Pro and Elite.", "Content Corpus waitlist"],
-  ["Partnerships", "Newsrooms, agencies and creators who want to make Shorts and Reels at scale.", "Partnership"],
-  ["Privacy & data", "Questions about your data, or a request to delete it.", "Privacy or data deletion"],
+  ["Early access", "Ask for an account in the private beta. We let new accounts in by hand.", "/login?mode=signup"],
+  ["Partnerships", "Newsrooms, agencies and creators who want to make Shorts and Reels at scale.",
+   "/contact?topic=Partnership#letter"],
+  ["Privacy & data", "Questions about your data, or a request to delete it.",
+   "/contact?topic=Privacy%20or%20data%20deletion#letter"],
 ] as const;
 
-export default function ContactPage() {
+export default async function ContactPage({ searchParams }: { searchParams: Promise<{ topic?: string }> }) {
   const to = CONTACT_EMAIL;
+  const { topic } = await searchParams;
   return (
     <main className="overflow-x-clip">
       <div className="border-y border-ink/80">
@@ -34,7 +39,7 @@ export default function ContactPage() {
                     className="mt-3 text-5xl leading-[1] font-semibold tracking-tight sm:text-7xl" />
           <In delay={0.4}>
             <p className="mt-6 max-w-xl text-lg leading-relaxed text-muted">
-              Questions about Content Corpus, early access, pricing or a partnership — a person who builds the product
+              Questions about Content Corpus, early access, pricing or a partnership? A person who builds the product
               reads every message and answers.
             </p>
             <a href={`mailto:${to}`} className="group mt-8 inline-flex items-baseline gap-3 border-b-2 border-ink pb-1">
@@ -43,15 +48,16 @@ export default function ContactPage() {
             </a>
           </In>
           <ul className="mt-12 grid grid-cols-1 border-t-2 border-ink sm:grid-cols-3 lg:grid-cols-1 xl:grid-cols-3">
-            {WAYS.map(([title, text, subject], i) => (
+            {WAYS.map(([title, text, href], i) => (
               <li key={title} className={`border-border ${i ? "border-t sm:border-t-0 sm:border-l lg:border-t lg:border-l-0 xl:border-t-0 xl:border-l" : ""}`}>
                 <In delay={0.1 + i * 0.08}>
-                  <a href={`mailto:${to}?subject=${encodeURIComponent(subject)}`}
+                  <a href={href}
                      className="group block h-full p-5 transition-colors hover:bg-surface">
                     <span className="kicker text-muted">0{i + 1}</span>
                     <span className="mt-1 block font-[family-name:var(--font-display)] text-xl font-semibold">{title}</span>
                     <span className="mt-1 block text-sm text-muted">{text}</span>
-                    <span className="mt-3 inline-block text-sm text-accent transition-transform group-hover:translate-x-1">Write →</span>
+                    <span className="mt-3 inline-block text-sm text-accent transition-transform group-hover:translate-x-1">
+                      {i === 0 ? "Request access →" : "Write →"}</span>
                   </a>
                 </In>
               </li>
@@ -59,7 +65,7 @@ export default function ContactPage() {
           </ul>
           <p className="kicker mt-10 text-muted">Strophic · Content Corpus · India</p>
         </div>
-        <In delay={0.2}><ContactForm to={to} /></In>
+        <In delay={0.2} className="scroll-mt-24"><div id="letter"><ContactForm to={to} topic={topic} /></div></In>
       </div>
     </main>
   );
