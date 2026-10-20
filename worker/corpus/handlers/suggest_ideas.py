@@ -31,31 +31,42 @@ credible — the best dozen), and each idea's format (where Jev is sure enough; 
 writer's pick otherwise).
 
 As idea_from_video (Explore YouTube → "Make an idea"), the payload carries one
-YouTube video: it is the only item, one idea is asked for (or none, if it doesn't
-suit the channel), the category's sources aren't read, and a category whose
-daily batches are off still takes it — the owner asked for this one.
+YouTube video: it is the only item. As idea_from_topic (Discover → "Your idea"), it
+carries what the owner heard about, in their words, and maybe a link: the items are
+that link and the news found about it. Either way the owner asked for this one, so
+exactly one idea is made (owner, 2026-10-20: a pick that came back as "nothing worth
+making" left no card and no word why): the category's sources aren't read, a
+category whose daily batches are off still takes it, it is never dropped as a
+repeat, and if the writer still gives none the idea is made from the request itself.
 """
 
 from __future__ import annotations
+
+import re
+from urllib.parse import urlparse
 
 import httpx
 import numpy as np
 from psycopg.types.json import Jsonb
 
-from .. import channels, costs, db, jev, prompts, stats, templates, vault
+from .. import channels, costs, db, jev, prompts, research, stats, templates, vault
 from ..config import settings
-from ..ideas import decide, feeds, memory, reddit, select, sources
+from ..ideas import decide, feeds, memory, reddit, select, sites, sources, voice
 from ..ideas.agent import OpenAIIdeaWriter
 from ..ideas.embed import embed
 from ..runner import Handler, JobContext, Permanent
+from ..style import undash
 from .write_script import _classify_openai_error
 
 # Swapped by tests.
 WRITER_FACTORY = OpenAIIdeaWriter
 FETCH = sources.fetch
+SEARCH = sites.search_news
+READ = research.read
 EMBED = embed
 MEMORY = lambda log: memory.connect(settings().qdrant_url, settings().qdrant_api_key, log)  # noqa: E731
 
+TOPIC_ITEMS = 8      # news items found about an owner's own idea
 EXTRA = 3            # ask for a few more than needed: some will turn out to be repeats
 CANDIDATES = 25      # items the model sees after the prefilter
 MEDIA_PRIORITY = 80  # previews come after batches, before nothing else waits on them
@@ -168,14 +179,52 @@ def video_item(v: dict) -> feeds.Item:
                              "comments": int(v.get("comments") or 0)})
 
 
+def _topic_items(topic: str, url: str | None, log) -> tuple[str, list[feeds.Item]]:
+    """(the topic, its items): the owner's link first (its page read, and its headline
+    the topic when the owner gave only the link), then the news found about it."""
+    own: list[feeds.Item] = []
+    found: list[feeds.Item] = []
+    with httpx.Client(timeout=30, follow_redirects=True) as client:
+        if url:
+            a = READ(client, url)
+            if not a.ok:
+                log(f"the owner's link could not be read: {a.error}")
+            if a.ok and a.title and re.fullmatch(r"https?://\S+", topic):
+                topic = a.title
+            own = [feeds.Item(source=urlparse(url).netloc.removeprefix("www.") or "link",
+                              title=(a.title if a.ok and a.title else topic)[:200],
+                              summary=a.text[:600] if a.ok else "", url=url, media_hint="link",
+                              extra={"from_owner": True})]
+        if not re.fullmatch(r"https?://\S+", topic):
+            try:
+                found = SEARCH(client, topic[:200], count=10)
+            except Exception as e:  # noqa: BLE001 - the idea can still be made from the owner's words
+                log(f"news search for the owner's topic failed: {type(e).__name__}: {str(e)[:120]}")
+    return topic, own + [f for f in found if f.url != url][:TOPIC_ITEMS]
+
+
+def _from_request(video: dict | None, topic: str, has_items: bool) -> dict:
+    """The idea the owner asked for, when the writer gave none: their own words (or
+    the video's title and description), with item 1 when there is one."""
+    if video:
+        title, brief = str(video["title"]), str(video.get("description") or video["title"])
+    else:
+        title, brief = topic.split("\n")[0], topic
+    return {"title": title[:120], "hook": "", "brief": brief[:600], "why_now": "You asked for this",
+            "items": [1] if has_items else [], "format": 1, "format_why": ""}
+
+
 def run(ctx: JobContext) -> dict:
     log = lambda m: print(f"[suggest_ideas] {m}", flush=True)  # noqa: E731
     video = ctx.payload.get("video")
+    topic = str(ctx.payload.get("topic") or "").strip()
+    url = ctx.payload.get("url") or None
+    asked = bool(video or topic)          # the owner asked for this one idea
     with db.conn() as c:
         cat = _category(c, ctx.payload)
         if cat is None:
             return {"skipped": "category deleted"}
-        if not cat["enabled"] and not video:
+        if not cat["enabled"] and not asked:
             return {"skipped": "category is turned off"}
         if ctx.payload.get("trigger") == "daily" and c.execute(
                 "select 1 from channels where id = %s and ideas_paused_until > now()", (cat["channel_id"],)).fetchone():
@@ -200,6 +249,8 @@ def run(ctx: JobContext) -> dict:
                                  order by decided_at desc limit 25""", (cat["channel_id"],)).fetchall()
         performance = stats.summary(c, cat["channel_id"])
         per_format = stats.by_format(c, cat["channel_id"])
+        share = c.execute("select voice_share from channels where id = %s",
+                          (cat["channel_id"],)).fetchone()["voice_share"]
     model = st.get("script_model")
     if not model:
         raise Permanent("Choose a script model in Settings.", stage="config")
@@ -210,9 +261,13 @@ def run(ctx: JobContext) -> dict:
         raise Permanent("Add your OpenAI API key in Settings.", stage="config")
 
     judge = jev.for_user(cat["user_id"])         # Jev, when the owner has a key
+    cuts: dict = {}
     if video:
         items = cands = [video_item(video)]
-        cuts: dict = {}
+    elif topic:
+        topic, items = _topic_items(topic, url, log)
+        cands = items
+        log(f"the owner's idea: {topic[:80]!r}, {len(items)} items found")
     else:
         with httpx.Client(timeout=30) as client:
             rid, rsecret = (vault.secret(cat["user_id"], "reddit_client_id"),
@@ -231,11 +286,12 @@ def run(ctx: JobContext) -> dict:
         if cuts:
             log("cut before the model: " + ", ".join(f"{n} {why}" for why, n in sorted(cuts.items())))
 
-    count = 1 if video else cat["ideas_per_batch"]
+    count = 1 if asked else cat["ideas_per_batch"]
     template = fmt["idea_prompt"]
     if "{category_name}" not in template:
         template += CATEGORY_BLOCK
-    system = prompts.fill(template + performance + formats_block(fmts, per_format) + PULL_NOTE + OUTPUT_NOTE, {
+    system = prompts.fill(template + performance + formats_block(fmts, per_format)
+                          + (voice.prompt_note(share) if len(fmts) > 1 else "") + PULL_NOTE + OUTPUT_NOTE, {
         **{k: prof.get(k) or "(not set)" for k in channels.PROFILE_KEYS},
         "format_name": fmt["name"], "format_description": fmt["description"] or "(none)",
         "category_name": cat["name"],
@@ -245,22 +301,36 @@ def run(ctx: JobContext) -> dict:
         "avoid": "\n".join(f"- {t}" for t in avoid) or "(nothing yet)",
         "rejected": "\n".join(f"- {r['title']}" + (f" — {r['reject_reason']}" if r["reject_reason"] else "")
                               for r in rejected) or "(nothing yet)",
-        "count": count if video else count + EXTRA,
+        "count": count if asked else count + EXTRA,
     })
     billed = dict(user_id=cat["user_id"], channel_id=cat["channel_id"], category_id=cat["id"],
                   job_id=ctx.job.get("id"))
     try:
-        ask = ("The owner picked item 1, a trending YouTube video. Make one idea for this channel from its "
-               "story — our own video about it, never a copy of theirs — or none if it doesn't fit the channel."
-               if video else f"Suggest up to {count + EXTRA} ideas now, or none.")
+        if video:
+            ask = ("The owner picked item 1, a trending YouTube video. Make exactly one idea for this channel from "
+                   "its story: our own video about it, never a copy of theirs. Find the angle that suits this "
+                   "channel's audience.")
+        elif topic:
+            ask = (f"The owner asked for a video about this, in their words:\n\"{topic}\"\n"
+                   + ("They gave a link about it: item 1.\n" if url else "")
+                   + "The items above are news found about it; some may be about something else, so use only "
+                   "those on the same story (`items` lists them). Make exactly one idea for this channel about "
+                   "the owner's topic, with the angle that suits its audience. Never add a fact that neither "
+                   "the owner's words nor those items support.")
+        else:
+            ask = f"Suggest up to {count + EXTRA} ideas now, or none."
         out, usage = WRITER_FACTORY(key).write(model=model, system=system, user=ask)
     except Exception as e:  # noqa: BLE001 - classified like the script writer's
         if getattr(e, "usage", None) is not None:
             costs.record_llm(e.usage, note="unparsable idea batch", **billed)
         raise _classify_openai_error(e) from e
-    costs.record_llm(usage, note=f"idea from a YouTube video: {cat['name']}" if video else f"ideas: {cat['name']}",
-                     **billed)
+    costs.record_llm(usage, note=(f"idea from a YouTube video: {cat['name']}" if video
+                                  else f"your idea: {cat['name']}" if topic else f"ideas: {cat['name']}"), **billed)
     cands_ideas = [i.model_dump() for i in out.ideas]
+    if asked:
+        cands_ideas = cands_ideas[:1] or [_from_request(video, topic, bool(cands))]
+    for i in cands_ideas:               # no em or en dashes as punctuation (owner, 2026-10-20)
+        i["title"], i["hook"], i["brief"] = undash(i["title"]), undash(i["hook"]), undash(i["brief"])
     if judge is not None and not video and len(cands_ideas) > 1:
         # The writer drafted a few more than needed: the strongest honest pull is kept.
         try:
@@ -279,6 +349,10 @@ def run(ctx: JobContext) -> dict:
     channel = str(cat["channel_id"])
     kept, kept_vecs, repeats = [], [], []
     for idea, v in zip(cands_ideas, vecs):
+        if asked:                       # the owner asked for it: never dropped as a repeat
+            kept.append(idea)
+            kept_vecs.append(v)
+            break
         if kept_vecs and float(np.max(np.array(kept_vecs) @ v)) >= memory.SIMILAR:
             repeats.append((idea["title"], "same as another idea in this batch"))
             continue
@@ -304,11 +378,13 @@ def run(ctx: JobContext) -> dict:
         judge.record(f"Jev decisions: {cat['name']}", **billed)
     rows_out = []
     with db.tx() as c:
+        budget = voice.Budget.load(c, cat["channel_id"], share)
         for i, its, (pick, sure) in zip(kept, items_of, picks):
             media = any(_has_media(it) for it in its)
             chosen = fmts[i["format"] - 1] if 1 <= i.get("format", 0) <= len(fmts) else fmt
             if pick is not None and sure >= decide.SURE and fmts[pick]["id"] != chosen["id"]:
                 chosen, i["format_why"] = fmts[pick], f"Jev's pick ({sure:.0%} sure)"
+            chosen, i["format_why"] = budget.fit(chosen, fmts, i.get("format_why") or "")
             rid = c.execute(
                 """insert into ideas (user_id, channel_id, format_id, category_id, title, hook, brief, why_now,
                                       sources, items, media_state, batch_job_id, format_why)

@@ -25,6 +25,33 @@ export async function requestIdeas(target: { categoryId: string } | { channelId:
   return { ok: true };
 }
 
+/** "Your idea": something the owner heard about, in their own words (a link in it, or
+ *  in the link box, is read as the story's source), becomes one idea card at the top
+ *  of the deck. */
+export async function requestOwnIdea(categoryId: string, topic: string, link: string): Promise<ActionState> {
+  const user = await requireUser();
+  if (!/^[0-9a-f-]{36}$/i.test(categoryId)) return { ok: false, error: "Pick a category." };
+  let text = topic.trim().slice(0, 1000);
+  let url = link.trim();
+  if (!url) {                                   // a pasted link inside the text
+    const found = text.match(/https?:\/\/\S+/i)?.[0];
+    if (found) {
+      url = found.replace(/[).,;!?]+$/, "");
+      text = text.replace(found, " ").replace(/\s+/g, " ").trim() || text;
+    }
+  }
+  if (url && !/^https?:\/\//i.test(url)) url = `https://${url}`;
+  try {
+    await asUser(user.id, (db) => db.query("select api.idea_from_topic($1, $2, $3)",
+                                           [categoryId, text, url || null]));
+  } catch (err) {
+    return { ok: false, error: friendly(err) };
+  }
+  await wakeWorker();
+  refresh();
+  return { ok: true };
+}
+
 /**
  * A swipe. Right (accept) schedules the idea as a post at `date` + `time` in the
  * channel's own timezone; left (reject) records the optional reason, which the

@@ -10,7 +10,7 @@ import { KIND_LABEL, template } from "@/lib/templates";
 import { ChannelPicker } from "../../nav";
 import { AutoRefresh } from "../../posts/[id]/post-actions";
 import { DailyIdeasPause } from "../daily-pause";
-import { Deck, type CardMedia, type IdeaCard } from "../deck";
+import { Deck, type Ask, type CardMedia, type IdeaCard } from "../deck";
 
 export const metadata = { title: "Discover · Content Corpus" };
 
@@ -25,6 +25,7 @@ function host(url: string) {
 type Row = {
   id: string; title: string; hook: string; brief: string; why_now: string; category_id: string | null;
   media_state: string; created_at: Date; format_id: string | null; format_why: string; cost: number | null;
+  asked: boolean;
   media: { type: "image" | "video"; w: number; h: number; seconds?: number; credit?: string; gallery?: boolean;
            poster_key?: string }[];
   items: { url?: string; title?: string; source?: string; subreddit?: string; author?: string; platform?: string }[];
@@ -72,7 +73,7 @@ function card(r: Row, cats: Map<string, { id: string; name: string; color: strin
     category: r.category_id ? cats.get(r.category_id) ?? null : null,
     format: r.format_id ? fmts.get(r.format_id) ?? null : null, formatWhy: r.format_why ?? "",
     media, mediaPending: r.media_state === "pending", summary: v?.summary ?? null, flags, sources,
-    cost: r.cost,
+    cost: r.cost, asked: r.asked,
   };
 }
 
@@ -97,6 +98,8 @@ export default async function ChannelDeckPage({ params }: { params: Promise<{ ch
     const ideas = (await db.query(
       `select i.id, i.title, i.hook, i.brief, i.why_now, i.category_id, i.media_state, i.created_at, i.media, i.items,
               i.sources, i.analysis, i.format_id, i.format_why,
+              exists (select 1 from jobs j where j.id = i.batch_job_id
+                         and j.kind in ('idea_from_topic', 'idea_from_video')) as asked,
               (coalesce((select sum(${inr}) from costs c where c.job_id = i.batch_job_id), 0)
                  / greatest((select count(*) from ideas x where x.batch_job_id = i.batch_job_id), 1)
                + coalesce((select sum(${inr}) from costs c join jobs j on j.id = c.job_id
@@ -116,6 +119,18 @@ export default async function ChannelDeckPage({ params }: { params: Promise<{ ch
                or payload->>'category_id' in (select id::text from categories where channel_id = $1::uuid)
                or payload->>'idea_id' in (select id::text from ideas where channel_id = $1::uuid and status = 'new'))`,
       [channelId])).rows[0].n as number;
+    // What the owner asked for (Your idea; Explore's Make an idea): still being written,
+    // or failed lately, and why.
+    const asks = (await db.query(
+      `select j.id, j.kind, j.state, j.error->>'message' as error,
+              coalesce(nullif(j.payload->>'topic', ''), j.payload->'video'->>'title', '') as what
+         from jobs j
+        where j.lane = 'ideas' and j.kind in ('idea_from_topic', 'idea_from_video')
+          and j.payload->>'category_id' in (select id::text from categories where channel_id = $1::uuid)
+          and (j.state in ('queued', 'claimed')
+               or (j.state in ('failed', 'dead') and j.finished_at > now() - interval '12 hours'))
+        order by j.created_at desc limit 5`, [channelId])).rows as
+      { id: string; kind: string; state: string; error: string | null; what: string }[];
     // An idea picked today goes out today (owner, 2026-10-19): at the channel's usual
     // time, or two hours from now when that is under 90 minutes away or past (then
     // tomorrow at the usual time, if two hours from now is already tomorrow).
@@ -132,7 +147,7 @@ export default async function ChannelDeckPage({ params }: { params: Promise<{ ch
          from t`, [channel.timezone, channel.default_publish_time])).rows[0] as { day: string; time: string };
     const today = (await db.query("select to_char(now() at time zone $1, 'YYYY-MM-DD') as d",
                                   [channel.timezone])).rows[0].d as string;
-    return { channel, categories, ideas, formats, accounts, looking, slot, today };
+    return { channel, categories, ideas, formats, accounts, looking, asks, slot, today };
   });
   if (!data) notFound();
   const { channel, categories } = data;
@@ -140,12 +155,19 @@ export default async function ChannelDeckPage({ params }: { params: Promise<{ ch
   const formats: FormatOpt[] = data.formats.map((f) => ({ id: f.id, name: f.name,
                                                           kind: KIND_LABEL[template(f.template_id).content_type] }));
   const fmts = new Map(formats.map((f) => [f.id, f]));
-  const cards = roundRobin(data.ideas).map((r) => card(r, cats, fmts));
+  // What the owner asked for comes first.
+  const cards = [...data.ideas.filter((r) => r.asked), ...roundRobin(data.ideas.filter((r) => !r.asked))]
+    .map((r) => card(r, cats, fmts));
+  const asks: Ask[] = data.asks.map((a) => ({
+    id: a.id, video: a.kind === "idea_from_video", what: a.what,
+    failed: a.state === "failed" || a.state === "dead", error: a.error,
+  }));
+  const writing = asks.some((a) => !a.failed);
   const names = { youtube: "YouTube", instagram: "Instagram" } as const;
 
   return (
     <div className="mx-auto flex w-full max-w-md flex-col gap-2">
-      {data.looking > 0 && <AutoRefresh everyMs={5000} />}
+      {(data.looking > 0 || writing) && <AutoRefresh everyMs={5000} />}
       <Link href="/discover" className="w-fit text-sm text-muted hover:text-foreground">← All channels</Link>
       <Deck
         key={channel.id}
@@ -154,6 +176,7 @@ export default async function ChannelDeckPage({ params }: { params: Promise<{ ch
                                 paused={channel.ideas_paused} />}
         cards={cards}
         looking={data.looking > 0}
+        asks={asks}
         channel={{ id: channel.id, name: channel.name, timezone: channel.timezone }}
         categories={categories}
         formats={formats}

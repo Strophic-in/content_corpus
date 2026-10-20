@@ -16,7 +16,7 @@ function Feedback({ state }: { state: ActionState }) {
 type ChannelData = {
   id: string; name: string; niche: string; audience: string; voice: string; language: string; timezone: string;
   default_publish_time: string; ideas_daily: boolean; ideas_daily_at: string; video_look?: string;
-  daily_auto_post?: boolean; daily_pick_at?: string; daily_auto_count?: number;
+  daily_auto_post?: boolean; daily_pick_at?: string; daily_auto_count?: number; voice_share?: number;
 };
 export type LookOption = { look_id: string; name: string; best_for: string[] };
 
@@ -61,6 +61,16 @@ export function ChannelForm({ channel, looks = [] }: { channel?: ChannelData; lo
         </select>
         <span className="text-xs text-muted">How generated shots look: photoreal, documentary, 3D, cartoon, anime, retro,
           black and white… Real footage always stays as filmed. Sensitive stories never get a playful look.</span>
+      </label>
+      <label className="flex flex-col gap-1 text-sm sm:col-span-2">Reels with a narrator
+        <span className="flex items-center gap-2">
+          <input name="voice_share" type="number" min={0} max={100} step={5} required
+                 defaultValue={c?.voice_share ?? 25} className={`${input} w-24`} />
+          <span className="text-muted">% of reels</span>
+        </span>
+        <span className="text-xs text-muted">The rest are captions only: footage and pictures, text on screen and music,
+          no voice. The agent saves the voice for stories that need explaining, within this share. You can still pick any format when you make
+          an idea. 0 = never a voice, 100 = no limit.</span>
       </label>
       <label className="flex items-start gap-2 text-sm sm:col-span-2">
         <input name="daily_auto_post" type="checkbox" defaultChecked={c?.daily_auto_post ?? false}

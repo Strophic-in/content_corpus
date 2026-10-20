@@ -4,7 +4,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 
-import { decideIdea, requestIdeas } from "./actions";
+import { Spinner } from "../../spinner";
+import { decideIdea, requestIdeas, requestOwnIdea } from "./actions";
 
 export type CardMedia = {
   type: "image" | "video"; src: string; poster?: string; w: number; h: number; seconds?: number;
@@ -22,13 +23,18 @@ export type IdeaCard = {
   flags: string[];             // rights and content warnings
   cost: number | null;         // ₹ spent on it so far (finding, writing, checking its media)
   sources: { url: string; label: string; detail?: string }[];
+  asked: boolean;              // the owner asked for it (Your idea, or a YouTube video)
 };
+
+/** An idea the owner asked for that is still being written, or that failed lately. */
+export type Ask = { id: string; video: boolean; what: string; failed: boolean; error: string | null };
 
 type Props = {
   picker?: React.ReactNode;
   daily?: React.ReactNode;           // the morning batch: on, or paused for a while
   cards: IdeaCard[];
   looking: boolean;
+  asks: Ask[];
   channel: { id: string; name: string; timezone: string };
   categories: { id: string; name: string; color: string }[];
   formats: { id: string; name: string; kind: string }[];
@@ -103,6 +109,7 @@ function CardBody({ card, active, muted, stamp }: { card: IdeaCard; active: bool
             {card.category.name}
           </span>
         )}
+        {card.asked && <span className="rounded-full bg-foreground px-2 py-0.5 font-medium text-background">You asked</span>}
         {card.whyNow && <span className="rounded-full bg-accent/15 px-2 py-0.5 text-accent">{card.whyNow}</span>}
         {card.cost != null && (
           <span className="ml-auto rounded-full border border-border px-2 py-0.5 text-muted tabular-nums"
@@ -161,7 +168,7 @@ function CardBody({ card, active, muted, stamp }: { card: IdeaCard; active: bool
   );
 }
 
-export function Deck({ picker, daily, cards, looking, channel, categories, formats, platforms, suggestion }: Props) {
+export function Deck({ picker, daily, cards, looking, asks, channel, categories, formats, platforms, suggestion }: Props) {
   const router = useRouter();
   // The deck is the server's cards minus the ones decided here; cards put back
   // (Undo, Back) go to the front. Derived, so fresh server data (a new batch,
@@ -204,6 +211,30 @@ export function Deck({ picker, daily, cards, looking, channel, categories, forma
   const [muted, setMuted] = useState(true);
   const [pending, start] = useTransition();
   const startRef = useRef({ x: 0, y: 0, t: 0, onMedia: false });
+  // "Your idea": what the owner heard about, written up as a card.
+  const [own, setOwn] = useState<{ topic: string; link: string; category: string; error?: string } | null>(null);
+  const [sending, startSend] = useTransition();
+  const [hidden, setHidden] = useState<Set<string>>(() => new Set());     // failed asks dismissed here
+  const shownAsks = asks.filter((a) => !hidden.has(a.id));
+
+  function openOwn() {
+    setOwn({ topic: "", link: "", category: target !== "all" ? target : filter ?? categories[0]?.id ?? "" });
+  }
+  function sendOwn() {
+    if (!own) return;
+    const req = own;
+    startSend(async () => {
+      const r = await requestOwnIdea(req.category, req.topic, req.link);
+      if (!r?.ok) {
+        setOwn({ ...req, error: r?.error ?? "Couldn't send it." });
+        return;
+      }
+      setOwn(null);
+      setNotice({ text: "Writing your idea. It'll be first in the deck in about a minute." });
+      setTimeout(() => setNotice(null), 7000);
+      router.refresh();
+    });
+  }
 
   const shown = useMemo(() => (filter ? queue.filter((c) => c.category?.id === filter) : queue), [queue, filter]);
   const top = shown[0];
@@ -348,10 +379,37 @@ export function Deck({ picker, daily, cards, looking, channel, categories, forma
                   className="shrink-0 rounded-full border border-border px-3 py-1.5 text-sm font-medium hover:border-accent disabled:opacity-50">
             {looking ? "Looking…" : "More ideas"}
           </button>
+          <button onClick={openOwn} disabled={!categories.length}
+                  className="pressable btn-primary shrink-0 rounded-full px-3 py-1.5 text-sm font-medium disabled:opacity-50">
+            + Your idea
+          </button>
         </div>
       </div>
 
       {daily}
+
+      {shownAsks.length > 0 && (
+        <ul className="flex flex-col gap-2">
+          {shownAsks.map((a) => (
+            <li key={a.id} role={a.failed ? "alert" : "status"}
+                className={`flex items-start gap-3 rounded-2xl border px-4 py-3 text-sm ${a.failed
+                  ? "border-danger bg-danger-surface text-danger" : "border-border bg-surface"}`}>
+              {a.failed ? <span aria-hidden className="mt-0.5">⚠</span> : <Spinner className="mt-0.5 size-4 shrink-0 text-accent" />}
+              <span className="min-w-0 flex-1">
+                <span className="kicker block text-[10px] text-muted">
+                  {a.failed ? "Couldn't write it" : a.video ? "Writing an idea from the video" : "Writing your idea"}
+                </span>
+                <span className="line-clamp-2 font-medium text-foreground">{a.what}</span>
+                {a.failed && a.error && <span className="mt-0.5 block text-xs">{a.error}</span>}
+              </span>
+              {a.failed && (
+                <button aria-label="Dismiss" onClick={() => setHidden((h) => new Set(h).add(a.id))}
+                        className="text-muted">✕</button>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
 
       {categories.length > 1 && queue.length > 0 && (
         <div className="no-scrollbar -mx-4 flex gap-1.5 overflow-x-auto px-4 pb-1 text-xs">
@@ -421,11 +479,18 @@ export function Deck({ picker, daily, cards, looking, channel, categories, forma
             ) : (
               <>
                 <p className="text-lg font-medium">{filter ? "Nothing left in this category" : "You're all caught up"}</p>
-                <p className="text-sm text-muted">New ideas arrive every morning, or ask for some now.</p>
-                <button onClick={findIdeas} disabled={pending}
-                        className="rounded-full bg-accent px-5 py-2.5 text-sm font-medium text-accent-foreground disabled:opacity-60">
-                  Find ideas
-                </button>
+                <p className="text-sm text-muted">New ideas arrive every morning, or ask for some now. Heard about
+                  something? Give it as your own idea.</p>
+                <div className="flex flex-wrap justify-center gap-2">
+                  <button onClick={findIdeas} disabled={pending}
+                          className="rounded-full bg-accent px-5 py-2.5 text-sm font-medium text-accent-foreground disabled:opacity-60">
+                    Find ideas
+                  </button>
+                  <button onClick={openOwn} disabled={!categories.length}
+                          className="rounded-full border border-border px-5 py-2.5 text-sm font-medium hover:border-accent disabled:opacity-60">
+                    Your idea
+                  </button>
+                </div>
               </>
             )}
           </div>
@@ -463,6 +528,53 @@ export function Deck({ picker, daily, cards, looking, channel, categories, forma
           <span className="flex-1">{notice.text}</span>
           {notice.href && <Link href={notice.href} className="shrink-0 rounded-full bg-accent/15 px-3 py-1 font-medium text-accent">Watch it →</Link>}
           <button aria-label="Dismiss" onClick={() => setNotice(null)} className="text-muted">✕</button>
+        </div>
+      )}
+
+      {own && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 md:items-center"
+             onClick={() => !sending && setOwn(null)}>
+          <form onClick={(e) => e.stopPropagation()} onSubmit={(e) => { e.preventDefault(); sendOwn(); }}
+                className="anim-sheet w-full max-w-md rounded-t-3xl border border-border bg-surface p-5 pb-[calc(1.25rem+env(safe-area-inset-bottom))] shadow-2xl md:rounded-3xl">
+            <div className="mx-auto mb-4 h-1 w-10 rounded-full bg-border md:hidden" />
+            <p className="kicker flex items-center gap-2 text-accent"><span className="on-air-dot" /> Your idea</p>
+            <h3 className="mt-1 text-lg leading-snug font-semibold">What did you hear about?</h3>
+            <p className="mt-1 text-sm text-muted">
+              A piece of news, a topic, anything. The agent finds the reports about it and writes it up as a card;
+              make it as a reel or a post like any other idea.
+            </p>
+            <label className="mt-4 flex flex-col gap-1 text-sm">
+              <span className="font-medium">The story</span>
+              <textarea autoFocus required minLength={3} maxLength={1000} rows={4} value={own.topic}
+                        onChange={(e) => setOwn({ ...own, topic: e.target.value, error: undefined })}
+                        placeholder="e.g. Pune metro is cutting Sunday fares by half from next week"
+                        className="rounded-xl border border-border bg-background px-3 py-2.5 outline-none focus:border-accent" />
+            </label>
+            <label className="mt-3 flex flex-col gap-1 text-sm">
+              <span className="font-medium">A link about it <span className="font-normal text-muted">(optional)</span></span>
+              <input type="url" inputMode="url" value={own.link} placeholder="https://"
+                     onChange={(e) => setOwn({ ...own, link: e.target.value, error: undefined })}
+                     className="rounded-xl border border-border bg-background px-3 py-2.5 outline-none focus:border-accent" />
+            </label>
+            {categories.length > 1 && (
+              <label className="mt-3 flex flex-col gap-1 text-sm">
+                <span className="font-medium">Category</span>
+                <select value={own.category} onChange={(e) => setOwn({ ...own, category: e.target.value })}
+                        className="rounded-xl border border-border bg-background px-3 py-2.5 outline-none focus:border-accent">
+                  {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+              </label>
+            )}
+            {own.error && <p role="alert" className="mt-3 text-sm text-danger">{own.error}</p>}
+            <div className="mt-5 flex gap-3">
+              <button type="button" onClick={() => setOwn(null)} disabled={sending}
+                      className="flex-1 rounded-xl border border-border py-3 text-sm font-medium">Cancel</button>
+              <button type="submit" disabled={sending || own.topic.trim().length < 3}
+                      className="btn-primary flex flex-1 items-center justify-center gap-2 rounded-xl py-3 text-sm font-semibold disabled:opacity-60">
+                {sending && <Spinner />}{sending ? "Sending…" : "Write the idea"}
+              </button>
+            </div>
+          </form>
         </div>
       )}
 

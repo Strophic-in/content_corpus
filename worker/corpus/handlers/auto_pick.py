@@ -27,7 +27,7 @@ import httpx
 from psycopg.types.json import Jsonb
 
 from .. import channels, db, jev, vault
-from ..ideas import decide, reddit, select
+from ..ideas import decide, reddit, select, voice
 from ..research import sig_tokens
 from ..runner import Handler, JobContext
 from . import suggest_ideas as si
@@ -162,14 +162,16 @@ def _make(ctx: JobContext, ch: dict, judge, cat: dict, item, score: float, at: d
                 fmt = fmts[pick]
         except Exception as e:  # noqa: BLE001 - the category's first format stands
             log(f"format pick skipped: {e}")
+    why = "Jev's pick: the day's top story"
     with db.tx() as c:
+        fmt, why = voice.Budget.load(c, ch["id"], ch.get("voice_share")).fit(fmt, fmts, why)
         iid = c.execute(
             """insert into ideas (user_id, channel_id, format_id, category_id, title, hook, brief, why_now,
                                   sources, items, media_state, batch_job_id, format_why)
                values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'none', %s, %s) returning id""",
             (ch["user_id"], ch["id"], fmt["id"], cat["id"], idea["title"], idea["hook"], idea["brief"], WHY_NOW,
              Jsonb([{"url": item.url, "title": item.title}] if item.url else []),
-             Jsonb([si._item_json(item)]), ctx.job.get("id"), "Jev's pick: the day's top story")).fetchone()["id"]
+             Jsonb([si._item_json(item)]), ctx.job.get("id"), why)).fetchone()["id"]
         c.execute("select set_config('app.user_id', %s, true)", (ch["user_id"],))
         pid = c.execute("select (api.decide_idea_v2(%s, true, %s, null, null, false, 'none', %s)).post_id as p",
                         (iid, at.astimezone(timezone.utc), fmt["id"])).fetchone()["p"]

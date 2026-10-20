@@ -188,3 +188,86 @@ def test_unreachable_memory_still_gives_ideas(channel, monkeypatch):
     run_batch(uid, fid)
     assert [r["title"] for r in ideas_of(ch)] == ["How lightning finds its path"]
     assert "no trend feeds answered today" in FakeWriter.systems[0]
+
+
+# ── the owner's own asks: a YouTube video, or "Your idea" (owner, 2026-10-20) ──
+
+def run_ask(owner_user, ch, kind, payload):
+    with db.conn() as c:
+        cat = c.execute("select id from categories where channel_id = %s", (ch,)).fetchone()["id"]
+        job = db.enqueue(c, user_id=owner_user, lane="ideas", kind=kind,
+                         dedupe_key=f"{kind}:test:{uuid.uuid4()}", payload={"category_id": str(cat), **payload})
+    return suggest_ideas.HANDLER.run(JobContext(job=job))
+
+
+def test_a_picked_video_always_becomes_a_card_even_as_a_repeat(mem, channel):
+    uid, ch, _ = channel
+    video = {"id": "dQw4w9WgXcQ", "title": "Why octopus arms think on their own", "description": "Each arm decides."}
+    FakeWriter.outputs = [[]]                                       # the writer gave none
+    assert run_ask(uid, ch, "idea_from_video", {"video": video})["ideas"] == 1
+    assert [r["title"] for r in ideas_of(ch)] == ["Why octopus arms think on their own"]
+    FakeWriter.outputs = [[idea("Why octopus arms think on their own")]]     # asked again: kept anyway
+    assert run_ask(uid, ch, "idea_from_video", {"video": video})["ideas"] == 1
+    assert len(ideas_of(ch)) == 2
+
+
+def test_your_own_idea_reads_the_link_and_the_news_about_it(mem, channel, monkeypatch):
+    uid, ch, _ = channel
+    from corpus.research import Article
+    searched = []
+    monkeypatch.setattr(suggest_ideas, "READ", lambda client, url: Article(
+        url, "news.test", "Metro fares cut by half on Sundays", "The city cut fares — from Sunday."))
+    monkeypatch.setattr(suggest_ideas, "SEARCH", lambda client, q, count: searched.append(q) or [
+        feeds.Item("paper.test", "Sunday metro fares halved", "Riders save.", "https://paper.test/m")])
+    users = []
+    real_write = FakeWriter.write
+    monkeypatch.setattr(FakeWriter, "write", lambda self, **kw: users.append(kw["user"]) or real_write(self, **kw))
+    FakeWriter.outputs = [[idea("Half-price metro Sundays — what changes", items=[1, 2])]]
+    run_ask(uid, ch, "idea_from_topic", {"topic": "https://news.test/metro", "url": "https://news.test/metro"})
+    assert searched == ["Metro fares cut by half on Sundays"]        # only a link: its headline is the topic
+    assert "Metro fares cut by half on Sundays" in users[0] and "Make exactly one idea" in users[0]
+    with db.conn() as c:
+        row = c.execute("select title, sources from ideas where channel_id = %s", (ch,)).fetchone()
+    assert row["title"] == "Half-price metro Sundays, what changes"          # no dashes
+    assert [s["url"] for s in row["sources"]] == ["https://news.test/metro", "https://paper.test/m"]
+
+
+def test_your_own_idea_is_made_from_your_words_when_nothing_is_found(mem, channel, monkeypatch):
+    uid, ch, _ = channel
+    monkeypatch.setattr(suggest_ideas, "SEARCH", lambda client, q, count: (_ for _ in ()).throw(RuntimeError("down")))
+    FakeWriter.outputs = [[]]
+    run_ask(uid, ch, "idea_from_topic", {"topic": "A tiger was seen near the Pune ring road"})
+    assert [r["title"] for r in ideas_of(ch)] == ["A tiger was seen near the Pune ring road"]
+
+
+# ── captions first: most reels without a narrator (owner, 2026-10-20) ─────────
+
+def test_the_voice_share_lets_one_narrated_reel_in_four():
+    from corpus.ideas import voice
+    talk = {"id": "t", "content_type": "video", "audio_source": "kokoro"}
+    quiet = {"id": "q", "content_type": "video", "audio_source": "none"}
+    cards = {"id": "c", "content_type": "carousel", "audio_source": "none"}
+    b = voice.Budget(25, 0, 0)
+    picks = [b.fit(talk, [talk, cards, quiet], "")[0]["id"] for _ in range(8)]
+    assert picks == ["q", "q", "q", "t", "q", "q", "q", "t"]
+    assert voice.Budget(100, 50, 50).fit(talk, [talk, quiet], "x") == (talk, "x")
+    assert voice.Budget(0, 0, 0).fit(talk, [talk], "x") == (talk, "x")          # no captions-only reel to use
+    assert voice.Budget(0, 0, 9).fit(cards, [talk, quiet], "x") == (cards, "x")  # cards have no voice anyway
+
+
+def test_a_batch_that_wanted_every_reel_narrated_gets_mostly_captions(mem, channel):
+    uid, ch, fid = channel
+    with db.conn() as c:
+        c.execute("""insert into formats (user_id, channel_id, name, idea_prompt, script_prompt, template_id,
+                                          audio_source)
+                     values (%s, %s, 'Footage & text', 'i', 's', 'full_screen_text_overlay', 'none')""", (uid, ch))
+        assert c.execute("select audio_source from formats where id = %s", (fid,)).fetchone()["audio_source"] != "none"
+    FakeWriter.outputs = [[idea("How bees see ultraviolet"), idea("Why ice floats on water"),
+                           idea("How tides follow the moon")]]                  # format 1: the narrated explainer
+    run_batch(uid, fid)
+    with db.conn() as c:
+        got = c.execute("""select f.audio_source, i.format_why from ideas i join formats f on f.id = i.format_id
+                            where i.channel_id = %s""", (ch,)).fetchall()
+    assert sorted(r["audio_source"] for r in got).count("none") == 3                # 0 of 3 within 25%
+    assert all("Captions only" in r["format_why"] for r in got)
+    assert "## Voice" in FakeWriter.systems[0] and "about 25 in 100" in FakeWriter.systems[0]

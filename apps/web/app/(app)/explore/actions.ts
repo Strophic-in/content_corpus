@@ -22,5 +22,5 @@ export async function makeIdea(categoryId: string, v: Video): Promise<ActionStat
     return { ok: false, error: friendly(err) };
   }
   await wakeWorker();
-  return { ok: true, message: "Writing the idea — it'll be on the channel's Discover deck in a minute." };
+  return { ok: true, message: "Writing the idea. It'll be first on the channel's Discover deck in a minute." };
 }

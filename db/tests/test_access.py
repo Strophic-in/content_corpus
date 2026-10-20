@@ -802,6 +802,32 @@ def test_the_web_reads_only_its_own_youtube_key_and_queues_ideas_from_videos(ali
             c.execute("select api.idea_from_video(%s, %s)", (cat, Jsonb({"id": "dQw4w9WgXcQ", "title": "x"})))
 
 
+def test_your_own_idea_is_queued_for_your_category_and_asking_again_asks_again(alice, bob, owner):
+    with web_session(alice) as c:
+        ch = _new_channel(c, alice, f"own-{uuid.uuid4().hex[:6]}")
+        cat = c.execute("insert into categories (user_id, channel_id, name) values (%s, %s, 'Mine') returning id",
+                        (alice, ch)).fetchone()[0]
+        j = c.execute("select id, lane, kind, payload from api.idea_from_topic(%s, %s, %s)",
+                      (cat, "  Metro fares halved on Sundays ", "https://news.test/metro")).fetchone()
+        assert j[1:3] == ("ideas", "idea_from_topic")
+        assert j[3] == {"category_id": str(cat), "topic": "Metro fares halved on Sundays",
+                        "url": "https://news.test/metro"}
+        for topic, url in [("hi", None), ("Metro fares", "javascript:alert(1)")]:
+            with pytest.raises(psycopg.errors.InvalidParameterValue):
+                c.execute("select api.idea_from_topic(%s, %s, %s)", (cat, topic, url))
+        v = c.execute("select id from api.idea_from_video(%s, %s)",
+                      (cat, Jsonb({"id": "dQw4w9WgXcQ", "title": "A video"}))).fetchone()[0]
+    # A finished request no longer blocks the same one later (the key carries the minute).
+    owner.execute("update jobs set state = 'succeeded', dedupe_key = dedupe_key || ':earlier' where id = %s", (v,))
+    with web_session(alice) as c:
+        again = c.execute("select id, state from api.idea_from_video(%s, %s)",
+                          (cat, Jsonb({"id": "dQw4w9WgXcQ", "title": "A video"}))).fetchone()
+        assert again[0] != v and again[1] == "queued"
+    with pytest.raises(psycopg.errors.NoDataFound):                          # not bob's category
+        with web(bob) as c:
+            c.execute("select api.idea_from_topic(%s, %s)", (cat, "Metro fares halved"))
+
+
 # ── templates: formats, several per category, carousels, uploads (0021) ───────
 
 def test_a_formats_kind_follows_its_template_and_categories_use_several(alice, bob):
