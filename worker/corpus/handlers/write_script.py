@@ -59,7 +59,7 @@ def template_of(fmt: dict | None, audio_source: str) -> templates.Template:
 
 def _system_prompt(st: dict, target_seconds: int, revision_note: str, audio_source: str,
                    speed: float = 1.1, fmt: dict | None = None, slide_hint: str = "",
-                   look_text: str | None = None) -> str:
+                   look_text: str | None = None, shot_seconds: int = 8) -> str:
     """The script writer's instructions: the post's format's prompt (prompt library) —
     or its template's shipped prompt while the owner hasn't written one — or the
     shipped default for posts made before formats existed."""
@@ -70,7 +70,7 @@ def _system_prompt(st: dict, target_seconds: int, revision_note: str, audio_sour
     else:
         template = prompts.default(f"script:{audio_source}")
     look = look_text or (fmt["visual_style"] if fmt else prompts.default("visual_style"))
-    shots = max(1, round(target_seconds / 8))
+    shots = max(1, round(target_seconds / shot_seconds))
     cap = narration_word_cap(speed)
     return prompts.fill(template, {
         "voice_rules": structure.voice_rules(audio_source, cap - 5, round(NARRATOR_WORDS_PER_SECOND * speed, 1)),
@@ -185,7 +185,10 @@ def run(ctx: JobContext) -> dict:
         def check(o):
             return carousel_.problems(o, t, look, footage)
     else:
-        system = (_system_prompt(st, target, revision, post["audio_source"], speed, fmt, look_text=look_text)
+        if footage.assets:      # room for the story's own material, at a footage reel's pace
+            target = footage_.fitted_target(footage, target)
+        system = (_system_prompt(st, target, revision, post["audio_source"], speed, fmt, look_text=look_text,
+                                 shot_seconds=footage_.FOOTAGE_SHOT_SECONDS[narrated] if footage.assets else 8)
                   + footage_.prompt_section(footage, narrated)
                   + (structure.writer_section(t, look, post["audio_source"]) if fmt else "")
                   + _music_section(music) + "\n\n## Style\n" + NO_DASHES)

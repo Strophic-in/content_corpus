@@ -20,6 +20,24 @@ from .llm import GENERATED, MAX_CLIP_SECONDS, NO_CHART, Footage, ScriptOut
 WAIT_MINUTES = 30
 # What having no footage resets (the on-screen fields stay).
 FOOTAGE_FIELDS = ("source", "asset", "start", "end", "keep_audio", "stock_query")
+# A reel is as long as its material: a picture holds the screen about PICTURE_SECONDS,
+# a video gives up to VIDEO_SECONDS of windows, up to MAX_REEL_SECONDS in all. Live,
+# 2026-10-24: a 20 s format with 14 collected assets (two headline cards, a 52 s
+# video, four warning maps) had room for 3 shots and left the rest out.
+PICTURE_SECONDS = 3.5
+VIDEO_SECONDS = 15
+MAX_REEL_SECONDS = 45
+# A shot's usual length, for the writer's shot count: footage cuts faster than a
+# generated take (its 8 s cap), and a voice paces it a little slower.
+FOOTAGE_SHOT_SECONDS = {True: 6, False: 5}
+
+
+def fitted_target(footage: Footage, target: int) -> int:
+    """The reel's length: the format's target, longer when the footage has more to
+    show than that holds (never shorter, at most MAX_REEL_SECONDS)."""
+    need = sum(PICTURE_SECONDS if a["kind"] == "image" else min(float(a.get("seconds") or 0), VIDEO_SECONDS)
+               for a in footage.assets)
+    return int(min(max(target, MAX_REEL_SECONDS), max(target, round(need))))
 
 
 def load(c, post_id, stock: bool) -> tuple[Footage, list[dict]]:
@@ -170,7 +188,9 @@ def prompt_section(footage: Footage, narrated: bool) -> str:
     lines.append(unused)
     if footage.assets:
         lines += ["Real assets come first: they were collected for this story, and every one of them should "
-                  "appear unless it doesn't fit. Prefer, in this order: a clip of the real footage; a picture "
+                  "appear unless it doesn't fit (off the story, or the same as another), and the reel's length "
+                  "was set to hold them: about one shot per good picture, and several windows of a long video. "
+                  "Prefer, in this order: a clip of the real footage; a picture "
                   "(\"image\": free, no GPU); a picture animated (\"generate\" with `asset`) where motion adds "
                   "something; and a plain \"generate\" shot only for what no asset shows (a detail, the scale, "
                   "a consequence). When the narration names a company, person or place that has a logo or photo "

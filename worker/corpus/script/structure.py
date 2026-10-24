@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import re
 
+from ..media import overlays
 from ..media import text as tx
 from ..templates import Look, Template
 from .llm import CHART_KINDS, NO_FOCUS, Chart, Focus, Footage, ScriptOut
@@ -21,7 +22,6 @@ from .llm import CHART_KINDS, NO_FOCUS, Chart, Focus, Footage, ScriptOut
 W = 1080
 # On-screen text sizes (px on the 1080x1920 frame) and how many lines each may take.
 HEADLINE = dict(max_size=66, min_size=50, max_lines=3)
-BEAT = dict(max_size=92, min_size=62, max_lines=5)
 LABEL = dict(max_size=44, min_size=36, max_lines=1)
 KINETIC_MIN = 96
 READ_WORDS_PER_SECOND = 3.0       # text beats: a reader takes about a third of a second a word
@@ -45,7 +45,8 @@ def writer_section(t: Template, look: Look, audio: str) -> str:
              "Every shot also has these fields; one this template doesn't use takes its empty value.",
              f"- `role`: the shot's step, one of: {', '.join(t.scene_structure)}."]
     if look.captions == "beats":
-        lines.append("- `text`: the shot's text beat, drawn large in the middle of the screen for the whole shot.")
+        lines.append("- `text`: the shot's text beat, drawn large near the bottom of the screen "
+                     "(under any words the picture has) for the whole shot.")
     elif look.captions == "kinetic" and audio != "kokoro":
         lines.append("- `text`: the words that animate on screen during the shot, in short phrases.")
     elif look.text == "headline":
@@ -124,7 +125,8 @@ def problems(out: ScriptOut, t: Template, look: Look, *, audio: str, footage: Fo
             out_.append(f"shot {i} uses source \"{src}\", which {t.display_name} doesn't use; use one of "
                         f"{', '.join(r.sources)}")
         if s.text:
-            spec = BEAT if look.captions == "beats" else HEADLINE
+            spec = (overlays.beat_spec(overlays.place(look, (s.layout or look.layout) == "split", src == "plain"))
+                    if look.captions == "beats" else HEADLINE)
             if look.captions == "kinetic" and audio != "kokoro":
                 words = len(s.text.split())
                 if words > max(3, s.seconds * KINETIC_WORDS_PER_SECOND + 2):
@@ -134,7 +136,7 @@ def problems(out: ScriptOut, t: Template, look: Look, *, audio: str, footage: Fo
                 if too_wide:
                     out_.append(f"shot {i}'s word \"{too_wide[0]}\" is too long to animate; use a shorter word")
             elif not _fits(s.text, font, spec, width):
-                limit = "5 short lines" if spec is BEAT else "3 lines"
+                limit = f"{spec['max_lines']} lines"
                 out_.append(f"shot {i}'s text is too long to fit on screen ({limit}); shorten it")
             elif look.captions == "beats":
                 words = len(s.text.split())

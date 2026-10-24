@@ -119,7 +119,8 @@ def ensure_segment(post: dict, shot: dict, style: media.CaptionStyle, hint: str,
                 panel = storage.get_file(a["key"], work / "panel.jpg")
         media.build_segment(clip, work / "seg.mp4", work / "seg.wav", narration=narration, words=timed,
                             style=style, label=label, look=look, extras=ex, panel=panel, grade=grade,
-                            panel_credit=ex.get("panel_credit") if panel else None)
+                            panel_credit=ex.get("panel_credit") if panel else None,
+                            bare=shot.get("source") == "plain")
         # Sound first, picture last: a picture on disk means the pair is complete.
         os.replace(work / "seg.wav", audio)
         os.replace(work / "seg.mp4", video)

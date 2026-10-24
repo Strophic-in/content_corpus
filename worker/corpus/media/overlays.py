@@ -2,10 +2,14 @@
 
   captions   "karaoke"/"speech": the spoken words in groups, the active one
              enlarged in the accent colour (assemble.captions_ass's events);
-             "beats": the shot's `text`, large in the middle, popping in;
+             "beats": the shot's `text`, large, popping in;
              "kinetic": the words themselves as the picture — one to three at a
              time, popping in on their beat (the narration's timing, or spread
              evenly over the shot), CAPITALISED words in the accent colour;
+             both at the format's caption_position: by default at the bottom,
+             under what the picture itself says (a headline card's headline, a
+             map's labels: the middle wrote over them, live 2026-10-24); in a
+             split screen in its panel; over a plain background in the middle;
              "none": nothing.
   headline   the shot's `text` at the top (in a split screen: at the top of the
              bottom panel), wrapped and sized exactly as the script check measured.
@@ -25,6 +29,10 @@ W, H = 1080, 1920
 SPLIT_Y = 960                     # a split screen's panel starts here
 HEADLINE = dict(max_size=66, min_size=50, max_lines=3)
 BEAT = dict(max_size=92, min_size=62, max_lines=5)
+# A beat at the bottom is smaller: it fits between the picture's own words (a headline
+# card's end above y=1300) and the apps' title and buttons (below LOW_BOTTOM).
+BEAT_LOW = dict(max_size=76, min_size=56, max_lines=3)
+LOW_BOTTOM = 1600
 KINETIC = 176                     # the largest kinetic word; longer groups shrink to fit
 RANK = re.compile(r"^#\s*(\d{1,2})$")
 CHIP_COLOURS = {"myth": "#EF4444", "fact": "#22C55E", "false": "#EF4444", "true": "#22C55E",
@@ -105,19 +113,35 @@ def headline(text: str, look, seconds: float, split: bool, label: str = "") -> l
             f"{body}"]
 
 
-def beat(text: str, look, seconds: float, split: bool) -> list[str]:
+def place(look, split: bool, bare: bool = False) -> str:
+    """Where a beat or kinetic words go: "panel" (a split screen's bottom half),
+    "middle" (over a plain background, or the format says so), "top" or "bottom"."""
+    if split:
+        return "panel"
+    return "middle" if bare else look.caption_position
+
+
+def beat_spec(where: str) -> dict:
+    return BEAT_LOW if where == "bottom" else BEAT
+
+
+def beat(text: str, look, seconds: float, split: bool, bare: bool = False) -> list[str]:
     if not text.strip():
         return []
     heavy = tx.heavy(look.font)
     width = W - 2 * look.safe_margin_px
-    got = _fitted(text, heavy, BEAT, width) or _fitted(text, heavy, {**BEAT, "min_size": 44, "max_lines": 7}, width)
+    where = place(look, split, bare)
+    spec = beat_spec(where)
+    got = _fitted(text, heavy, spec, width) or _fitted(text, heavy, {**spec, "min_size": 44,
+                                                                     "max_lines": spec["max_lines"] + 2}, width)
     if got is None:
         return []
     size, body = got
-    y = (SPLIT_Y + (H - SPLIT_Y) // 2) if split else H // 2
+    an, y = {"panel": (5, SPLIT_Y + (H - SPLIT_Y) // 2), "middle": (5, H // 2), "top": (8, 300),
+             "bottom": (2, LOW_BOTTOM)}[where]
     fs = f"{BS}fs{_ass_size(heavy, size):.0f}"
     pop = f"{BS}fscx88{BS}fscy88{BS}t(0,200,{BS}fscx100{BS}fscy100){BS}fad(140,120)"
-    return [f"Dialogue: 2,{_ts(0)},{_ts(seconds)},Beat,,0,0,0,,{{{BS}an5{BS}pos({W // 2},{y}){fs}{pop}}}{body}"]
+    return [f"Dialogue: 2,{_ts(0)},{_ts(seconds)},Beat,,0,0,0,,{{{BS}an{an}{BS}pos({W // 2},{y}){fs}{pop}}}{body}"]
 
 
 def label(text: str, look, seconds: float) -> list[str]:
@@ -135,7 +159,8 @@ def label(text: str, look, seconds: float) -> list[str]:
             f"{_esc(t.upper())}"]
 
 
-def kinetic(words: list[tuple[float, float, str]], look, seconds: float, split: bool) -> list[str]:
+def kinetic(words: list[tuple[float, float, str]], look, seconds: float, split: bool,
+            bare: bool = False) -> list[str]:
     """Words popping onto the screen one beat at a time: one word, or two short ones
     said close together (at most 12 letters); a stressed (CAPITALISED) word is always
     alone, larger, in the accent colour. Each shows until the next."""
@@ -156,7 +181,8 @@ def kinetic(words: list[tuple[float, float, str]], look, seconds: float, split: 
             last.append(w)
         else:
             groups.append([w])
-    y = (SPLIT_Y + (H - SPLIT_Y) // 2) if split else int(H * 0.47)
+    an, y = {"panel": (5, SPLIT_Y + (H - SPLIT_Y) // 2), "middle": (5, int(H * 0.47)), "top": (8, 300),
+             "bottom": (2, LOW_BOTTOM)}[place(look, split, bare)]
     out = []
     for k, g in enumerate(groups):
         start = g[0][0]
@@ -175,7 +201,7 @@ def kinetic(words: list[tuple[float, float, str]], look, seconds: float, split: 
         sep = f"{BS}N" if tx.width(line, heavy, size) > width else " "   # three long words: one per line
         body = sep.join((f"{{{BS}c{accent}&}}{_esc(w)}{{{BS}c{white}&}}" if e else _esc(w)) for w, e in shown)
         pop = f"{BS}fscx60{BS}fscy60{BS}t(0,140,{BS}fscx108{BS}fscy108){BS}t(140,220,{BS}fscx100{BS}fscy100)"
-        out.append(f"Dialogue: 2,{_ts(start)},{_ts(stop)},Kin,,0,0,0,,{{{BS}an5{BS}pos({W // 2},{y})"
+        out.append(f"Dialogue: 2,{_ts(start)},{_ts(stop)},Kin,,0,0,0,,{{{BS}an{an}{BS}pos({W // 2},{y})"
                    f"{BS}fs{_ass_size(heavy, size):.0f}{pop}}}{body}")
     return out
 

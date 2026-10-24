@@ -219,6 +219,28 @@ def test_a_split_screen_with_a_rank_and_headline_keeps_every_frame(clip, tmp_pat
     assert "#2" in events[0] and "Ladakh in winter" in events[1]
 
 
+def test_text_beats_sit_at_the_bottom_under_what_the_picture_says():
+    """Live 2026-10-24: a beat in the middle wrote over a headline card's headline."""
+    lk = templates.look("full_screen_text_overlay")
+    assert lk.caption_position == "bottom"
+    line = "Amber warning issued as Storm Boelo approaches"
+    low = overlays.beat(line, lk, 3.0, split=False)[0]
+    assert rf"\an2\pos(540,{overlays.LOW_BOTTOM})" in low
+    assert r"\an5\pos(540,1440)" in overlays.beat(line, lk, 3.0, split=True)[0]      # a split: its panel
+    assert r"\an5\pos(540,960)" in overlays.beat(line, lk, 3.0, split=False, bare=True)[0]   # plain: middle
+    mid = lk.model_copy(update={"caption_position": "middle"})
+    assert r"\an5\pos(540,960)" in overlays.beat(line, mid, 3.0, split=False)[0]
+    assert r"\an2" in overlays.kinetic(overlays.even_words("Storm BOELO", 2.0), lk, 2.0, split=False)[0]
+    # The script check measures a bottom beat in its smaller space: 5 lines fit the middle, not the bottom.
+    long = "Amber warnings now cover most of Scotland, Northern Ireland and northern England through Sunday night"
+    out = _s(shot(role="hook", source="image", asset=1, seconds=12, text=long))
+    fp = Footage(assets=[{"n": 1, "kind": "image", "w": 1080, "h": 1920, "credit": "x"}])
+    assert any("text is too long to fit on screen (3 lines)" in p
+               for p in _check("full_screen_text_overlay", out, audio="none", target=12, fp=fp))
+    out.shots[0].source, out.shots[0].asset = "plain", 0
+    assert not any("too long to fit" in p for p in _check("full_screen_text_overlay", out, audio="none", target=12))
+
+
 def test_a_voice_longer_than_its_picture_slows_the_picture_to_hold_it(clip, tmp_path):
     nar = tmp_path / "nar.wav"
     ff("-f", "lavfi", "-i", "sine=f=300:d=1.9", str(nar))          # 1.9 s of voice over a 2 s picture

@@ -96,6 +96,19 @@ def test_the_writer_sees_the_footage_with_times_and_words():
     assert (s.shots[0].source, s.shots[0].asset) == ("generate", 0)
 
 
+def test_a_reel_with_much_footage_is_long_enough_to_show_it():
+    """Live 2026-10-24: a 20 s format, 14 collected assets, a 3-shot reel."""
+    pics = [{"n": n, "kind": "image"} for n in range(1, 14)]
+    video = {"n": 14, "kind": "video", "seconds": 52.5}
+    assert footage_.fitted_target(Footage(assets=pics + [video]), 20) == footage_.MAX_REEL_SECONDS
+    assert footage_.fitted_target(Footage(assets=pics[:2]), 20) == 20           # never shorter than the format
+    assert footage_.fitted_target(Footage(assets=pics[:4] + [video]), 20) == 29  # 4 x 3.5 + 15
+    assert footage_.fitted_target(Footage(assets=pics), 60) == 60               # a longer format keeps its length
+    fmt = {"template_id": "full_screen_text_overlay", "script_prompt": "", "visual_style": ""}
+    hint = write_script._system_prompt({}, 45, "", "none", fmt=fmt, shot_seconds=footage_.FOOTAGE_SHOT_SECONDS[False])
+    assert "about 9 shots, together about 45 seconds" in hint
+
+
 def test_publishing_carries_the_credits_and_says_whether_anything_is_generated():
     meta = youtube.metadata("T", "What happened.", ["#shorts"], "25", credits=["u/a on r/b", "Video by C on Pexels"],
                             synthetic=False)

@@ -281,7 +281,7 @@ FPS = 24
 RATE = 48000
 BREAK_AFTER = (".", "!", "?", "—", "–")   # a caption group never runs past these
 # Bump when a segment's content changes, so cached segments are not reused.
-SEGMENT_VERSION = 4
+SEGMENT_VERSION = 5
 
 
 def narration_words(wav: Path, line: str,
@@ -348,7 +348,8 @@ def _hex(c: str) -> str:
 def build_segment(clip: Path, out_video: Path, out_audio: Path, *, narration: Path | None = None,
                   words: Words | None = None, style: CaptionStyle = CaptionStyle(),
                   label: str | None = None, look=None, extras: dict | None = None,
-                  panel: Path | None = None, panel_credit: str | None = None, grade: str | None = None) -> dict:
+                  panel: Path | None = None, panel_credit: str | None = None, grade: str | None = None,
+                  bare: bool = False) -> dict:
     """One rendered shot → its finished piece of the reel.
 
     `words` are timed from the start of the shot. With `narration` the shot's own
@@ -360,7 +361,8 @@ def build_segment(clip: Path, out_video: Path, out_audio: Path, *, narration: Pa
     format's template draws: its captions mode (word groups, text beats, kinetic
     words or none), a headline, a chip or rank number, and a split screen — the
     picture's middle in the top half, the format's panel colour or `panel` (a
-    second picture) in the bottom half. `grade` (a video look's ffmpeg filters:
+    second picture) in the bottom half; `bare`: the picture is a plain background,
+    so text beats may take the middle. `grade` (a video look's ffmpeg filters:
     black and white, film grain…) colours the picture before any text is drawn."""
     from . import overlays
 
@@ -410,10 +412,10 @@ def build_segment(clip: Path, out_video: Path, out_audio: Path, *, narration: Pa
         if look is not None:
             text = (ex.get("text") or "").strip()
             if mode == "beats":
-                events += overlays.beat(text, look, seconds, split)
+                events += overlays.beat(text, look, seconds, split, bare)
             elif mode == "kinetic":
                 events += overlays.kinetic(list(words or []) or overlays.even_words(text, seconds), look, seconds,
-                                           split)
+                                           split, bare)
             if look.text == "headline" and mode != "beats" and not (mode == "kinetic" and not words):
                 events += overlays.headline(text, look, seconds, split, ex.get("label") or "")
             events += overlays.label(ex.get("label") or "", look, seconds)
