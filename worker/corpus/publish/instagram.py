@@ -91,6 +91,7 @@ def publish(client: httpx.Client, *, token: str, ig_user_id: str, video_url: str
             return _find_published(client, token, ig_user_id, attempt["created_at"], graph)
         if status != "FINISHED":
             container = None        # never published; Instagram drops it within a day
+    resumed = container is not None  # built by an earlier run, which may have left the song out
     dropped = None
     if image_urls:
         audio = None                # songs are for Reels only
@@ -116,7 +117,7 @@ def publish(client: httpx.Client, *, token: str, ig_user_id: str, video_url: str
     out = _result(client, token, media["id"], graph)
     if dropped:
         out["audio_dropped"] = dropped
-    elif audio:
+    elif audio and not resumed:
         out["audio_id"] = audio["audio_id"]
     return out
 

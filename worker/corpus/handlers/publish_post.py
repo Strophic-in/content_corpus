@@ -75,6 +75,7 @@ def run(ctx: JobContext) -> dict:
     except Exception as e:  # noqa: BLE001
         log.warning("no caption package for %s: %s", post["id"], e)
     credits = post["credits"] or []
+    pick = None                     # the Instagram song, when one was picked
 
     try:
         with httpx.Client(timeout=TIMEOUT) as client:
@@ -151,6 +152,10 @@ def run(ctx: JobContext) -> dict:
             _drop_song(post, out["audio_dropped"])
         except Exception:  # noqa: BLE001 - the post is live; the record is best effort
             log.warning("could not record the dropped song for %s", post["id"], exc_info=True)
+    if out.get("audio_id"):
+        _note_song(post, {"attached": True})
+    elif pick and not out.get("audio_dropped"):
+        _note_song(post, {"dropped": "the reel went out from an earlier container without the song"})
     # Live first; then the cover as YouTube's thumbnail and the first comment. These
     # never undo the post — what happened is recorded on the attempt and the activity.
     extras = _extras(platform, acc["id"], out, pkg)
@@ -173,6 +178,17 @@ def _drop_song(post: dict, message: str) -> None:
                   (Jsonb({"dropped": message}), post["id"]))
         db.log_event(c, post["id"], post["status"], post["status"], f"worker:{settings().worker_id}",
                      "posted to Instagram without its song", {"message": message})
+
+
+def _note_song(post: dict, fields: dict) -> None:
+    """Merge what happened to the post's song into its record. The post is live either
+    way, so a failure here is logged, not raised."""
+    try:
+        with db.conn() as c:
+            c.execute("update posts set ig_music = coalesce(ig_music, '{}'::jsonb) || %s where id = %s",
+                      (Jsonb(fields), post["id"]))
+    except Exception:  # noqa: BLE001 - the post is live; the record is best effort
+        log.warning("could not record the song for %s", post["id"], exc_info=True)
 
 
 def _extras(platform: str, account_id, out: dict, pkg: dict | None) -> dict:

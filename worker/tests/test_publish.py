@@ -21,7 +21,7 @@ import pytest
 from corpus import db
 from corpus.crypto import encrypt
 from corpus.handlers import publish_post
-from corpus.publish import instagram, youtube
+from corpus.publish import attempts, instagram, youtube
 from corpus.runner import Runner
 
 VIDEO = bytes(range(256)) * 100          # 25,600 bytes
@@ -303,6 +303,33 @@ def test_instagram_saves_the_fallback_container_over_the_refused_one(video):
     assert saved[-1] == {"state": "uploaded"}
 
 
+def test_a_resumed_container_does_not_claim_the_song(video):
+    fake = FakeInstagram(version="v27.0", container="FINISHED")
+    out = instagram.publish(client(fake), token="tok", ig_user_id="178", video_url=LINK, caption="A reel",
+                            attempt={"upload_session_uri": "ig-container:c1"}, save=lambda **f: None,
+                            sleep=lambda s: None, graph=instagram.GRAPH_UNIFIED, audio=SONG)
+    assert out["remote_id"] == "m1" and "audio_id" not in out and fake.created == 0
+
+
+def test_a_reel_from_an_earlier_container_is_recorded_without_the_song(owner, user, fake_http, monkeypatch):
+    fake = FakeInstagram(version="v27.0", audio_list=[LISTED], container="FINISHED")
+    fake_http(fake)
+    monkeypatch.setattr(publish_post.storage, "signed_url", lambda key, seconds: f"{LINK}&key={key}")
+    monkeypatch.setattr(publish_post.instagram, "POLL_S", 0)
+    pid = _ready_post(owner, user)
+    _unified(owner, user, pid)
+    att = attempts.start(pid, "instagram")          # an earlier run built this container, without the song
+    owner.execute("update publish_attempts set state = 'uploading', upload_session_uri = %s where id = %s",
+                  ("ig-container:c1", att["id"]))
+    _request(owner, user, pid, ("instagram",))
+    assert Runner("publish", {"publish_post": publish_post.HANDLER}).tick()
+    job = owner.execute("select state, error from jobs where dedupe_key = %s", (f"publish:{pid}:instagram",)).fetchone()
+    assert job["state"] == "succeeded", job["error"]
+    assert fake.published == 1 and fake.created == 0
+    saved = owner.execute("select ig_music from posts where id = %s", (pid,)).fetchone()["ig_music"]
+    assert saved["dropped"] == "the reel went out from an earlier container without the song" and "attached" not in saved
+
+
 def _due_unified(owner, user, pid):
     """An account due for renewal by its dates — but on Unified Login."""
     owner.execute("""insert into channel_accounts (user_id, channel_id, platform, external_id, token_ciphertext,
@@ -473,7 +500,7 @@ def test_handler_attaches_a_picked_song_from_the_music_free_copy(owner, user, fa
     assert json.loads(fake.audio) == {"audio_id": "587", "audio_volume": 100, "video_volume": 40}  # not narrated
     assert "Freesound" not in fake.caption
     saved = owner.execute("select ig_music from posts where id = %s", (pid,)).fetchone()["ig_music"]
-    assert saved["audio_id"] == "587" and saved["picked_by"] == "only"
+    assert saved["audio_id"] == "587" and saved["picked_by"] == "only" and saved["attached"] is True
 
 
 def test_handler_keeps_the_bed_version_when_instagram_has_no_songs(owner, user, fake_http, monkeypatch):
