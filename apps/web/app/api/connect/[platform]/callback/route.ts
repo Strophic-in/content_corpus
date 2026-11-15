@@ -32,11 +32,12 @@ export async function GET(req: NextRequest, ctx: RouteContext<"/api/connect/[pla
   const api: IgApi | undefined = p === "instagram" ? (state.a ?? "instagram_login") : undefined;
   let current: { external_id: string; handle: string | null; api: IgApi } | undefined;
   try {
-    // A unified reconnect must be the account the channel already has, if it has one.
-    if (api === "unified") current = await asUser(session.user.id, async (db) =>
+    // A reconnect must be the account the channel already has, if it has one: a Unified
+    // login may not silently switch to another account.
+    if (p === "instagram") current = await asUser(session.user.id, async (db) =>
       (await db.query("select external_id, handle, api from channel_accounts where channel_id = $1 and platform = 'instagram'",
                       [state.c])).rows[0] as typeof current);
-    const keepId = current?.api === "instagram_login" ? String(current.external_id) : null;
+    const keepId = current ? String(current.external_id) : null;
     const acc = await exchange(p, q.get("code")!, api, keepId);
     await asUser(session.user.id, (db) => db.query(
       `insert into channel_accounts (user_id, channel_id, platform, external_id, handle, display_name, avatar_url,

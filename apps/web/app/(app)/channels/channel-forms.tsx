@@ -135,8 +135,9 @@ const NOTES = {
   instagram: "Posts your reels to an Instagram professional (creator or business) account.",
 } as const;
 
-export function ConnectionCard({ platform, channelId, account, ready, owner }: {
+export function ConnectionCard({ platform, channelId, account, ready, owner, unified }: {
   platform: "youtube" | "instagram"; channelId: string; account: AccountData | null; ready: boolean; owner: boolean;
+  unified: boolean;     // Unified Login is set up on the server (its song library needs it)
 }) {
   const [pending, start] = useTransition();
   const [state, setState] = useState<ActionState>(null);
@@ -158,7 +159,7 @@ export function ConnectionCard({ platform, channelId, account, ready, owner }: {
         </div>
       </div>
       <p className="text-xs text-muted">{NOTES[platform]}</p>
-      {platform === "instagram" && owner && connected && account?.api !== "unified" && (
+      {platform === "instagram" && owner && connected && account?.api !== "unified" && unified && (
         <p className="text-xs text-muted">Reconnect to get trending Instagram music.</p>
       )}
       <div className="flex gap-2">

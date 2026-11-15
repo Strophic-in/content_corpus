@@ -74,7 +74,7 @@ export function authorizeUrl(p: Platform, state: string, api?: IgApi): string {
       client_id: process.env.META_APP_ID!, config_id: process.env.META_IG_CONFIG_ID!, redirect_uri: redirectUri(p),
       response_type: "code", state,
     });
-    return `https://www.facebook.com/dialog/oauth?${q}`;
+    return `https://www.facebook.com/v27.0/dialog/oauth?${q}`;
   }
   const q = new URLSearchParams({
     client_id: process.env.INSTAGRAM_APP_ID!, redirect_uri: redirectUri(p), response_type: "code",
