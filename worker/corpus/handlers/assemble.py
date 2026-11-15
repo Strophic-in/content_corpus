@@ -47,17 +47,31 @@ def run(ctx: JobContext) -> dict:
     built = [build_segment.ensure_segment(post, s, style, hint, look) for s in shots]
     # How each shot begins: its own transition, else the format's.
     transitions = [((s.get("extras") or {}).get("transition") or look.transition) for s in shots]
+    segments = [(v, a) for v, a, _ in built]
+    log = lambda m: print(f"[assemble {script_id}] {m}", flush=True)  # noqa: E731
     with tempfile.TemporaryDirectory() as tmp:
         out = Path(tmp) / "final.mp4"
         track = _music(post, script_id, Path(tmp))
-        info = media.join_segments([(v, a) for v, a, _ in built], out,
-                                   log=lambda m: print(f"[assemble {script_id}] {m}", flush=True),
+        info = media.join_segments(segments, out, log=log,
                                    music=track.path if track else None, music_gain=music.GAIN,
                                    transitions=transitions, loop=look.loop)
         info["segments_ready"] = sum(cached for _, _, cached in built)
-        key = f"{storage.post_prefix(post['user_id'], post['id'])}/final/{script_id}.mp4"
+        prefix = storage.post_prefix(post["user_id"], post["id"])
+        key = f"{prefix}/final/{script_id}.mp4"
         stored = storage.put_file(key, out, kind="final", user_id=post["user_id"], post_id=post["id"],
                                   content_type="video/mp4")
+        # Instagram attaches its own song to a reel, so it gets a copy without the Freesound bed.
+        ig_key = None
+        if _wants_ig_copy(post["channel_id"]):
+            ig_key = key
+            if track:
+                log("instagram copy without music")
+                ig_out = Path(tmp) / "final.ig.mp4"
+                media.join_segments(segments, ig_out, log=log, music=None,
+                                    transitions=transitions, loop=look.loop)
+                ig_key = f"{prefix}/final/{script_id}.ig.mp4"
+                storage.put_file(ig_key, ig_out, kind="final", user_id=post["user_id"], post_id=post["id"],
+                                 content_type="video/mp4")
     # Who made the footage shown, in order of appearance: for the description and caption.
     # ("AI reconstruction" and "AI illustration" are labels, not credits.)
     credits = list(dict.fromkeys(s["credit"].strip() for s in shots
@@ -66,9 +80,11 @@ def run(ctx: JobContext) -> dict:
         credits.append(track.credit)
     with db.tx() as c:
         c.execute("""update posts set status = 'ready', final_key = %s, final_sha256 = %s, final_bytes = %s,
-                                      final_duration_s = %s, error = null, credits = %s, music = %s
+                                      final_duration_s = %s, error = null, credits = %s, music = %s,
+                                      final_ig_key = %s, ig_music = null
                       where id = %s""", (key, stored["sha256"], stored["bytes"], info["seconds"],
-                                         Jsonb(credits), Jsonb(track.meta) if track else None, post["id"]))
+                                         Jsonb(credits), Jsonb(track.meta) if track else None, ig_key,
+                                         post["id"]))
         db.log_event(c, post["id"], "post_processing", "ready", f"worker:{settings().worker_id}",
                      "reel assembled", {**info, "bytes": stored["bytes"]})
         db.enqueue(c, user_id=post["user_id"], lane="cpu", kind="package_post",
@@ -77,6 +93,14 @@ def run(ctx: JobContext) -> dict:
     shutil.rmtree(build_segment.cache_dir(post["id"]), ignore_errors=True)
     auto.request_publish(post["id"])             # Automatic mode: post it at the picked time
     return {**info, "final_key": key}
+
+
+def _wants_ig_copy(channel_id) -> bool:
+    """Is the channel's Instagram account connected through Unified Login (the Audio API)?"""
+    with db.conn() as c:
+        return c.execute("""select 1 from channel_accounts where channel_id = %s and platform = 'instagram'
+                            and status = 'connected' and api = 'unified'""",
+                         (channel_id,)).fetchone() is not None
 
 
 class _Track:

@@ -240,8 +240,10 @@ from contextlib import contextmanager  # noqa: E402
 
 from corpus.gpu import session  # noqa: E402
 from corpus.gpu.session import Pod  # noqa: E402
+from corpus import music  # noqa: E402
 from corpus.handlers import assemble, build_segment, render_post  # noqa: E402
 from corpus.media import assemble as media  # noqa: E402
+import corpus.handlers.assemble as assemble_handler  # noqa: E402
 
 
 class FakeGPU:
@@ -420,6 +422,49 @@ def test_render_then_assemble_to_a_ready_reel(s3, owner, user, gpu, tmp_path, se
                                                  (pid,)).fetchall()]
     assert events[-5:] == ["render requested", "rendering started", "all shots rendered", "assembling",
                            "reel assembled"]
+
+
+def _render_and_assemble(owner, user, pid):
+    cpu_all().tick()
+    as_user(owner, user, "select api.request_render(%s)", (pid,))
+    assert gpu_lane().tick()
+    drain(cpu_all())
+
+def _with_tone_and_spy(monkeypatch, tmp_path):
+    tone = tmp_path / "tone.mp3"
+    subprocess.run(["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "sine=frequency=440:duration=5", str(tone)],
+                   check=True)
+    monkeypatch.setattr(assemble_handler, "_music", lambda post, script_id, work: assemble_handler._Track(
+        music.Track(1, "Tone", "me", "https://example.test/tone", tone), "uplifting"))
+    joins, real = [], media.join_segments
+    def spy(segments, out, **kw):
+        joins.append(kw.get("music") is not None)
+        return real(segments, out, **kw)
+    monkeypatch.setattr(media, "join_segments", spy)
+    return joins
+
+def test_assemble_keeps_a_music_free_copy_for_unified_instagram(s3, owner, user, gpu, tmp_path, segment_cache,
+                                                                monkeypatch):
+    pid, sid = approved_narrated_post(owner, user)
+    channel = owner.execute("insert into channels (user_id, name, is_default) values (%s, 'Glow', true) returning id",
+                            (user,)).fetchone()["id"]
+    owner.execute("update posts set channel_id = %s where id = %s", (channel, pid))
+    owner.execute("""insert into channel_accounts (user_id, channel_id, platform, external_id, token_ciphertext, api)
+                     values (%s, %s, 'instagram', '178', 'x', 'unified')""", (user, channel))
+    owner.execute("update posts set ig_music = '{\"audio_id\": \"old\"}' where id = %s", (pid,))
+    joins = _with_tone_and_spy(monkeypatch, tmp_path)
+    _render_and_assemble(owner, user, pid)
+    row = owner.execute("select final_key, final_ig_key, ig_music from posts where id = %s", (pid,)).fetchone()
+    assert row["final_ig_key"].endswith(".ig.mp4") and row["final_ig_key"] != row["final_key"]
+    assert joins == [True, False] and row["ig_music"] is None
+
+def test_assemble_makes_one_reel_without_unified_instagram(s3, owner, user, gpu, tmp_path, segment_cache,
+                                                           monkeypatch):
+    pid, sid = approved_narrated_post(owner, user)
+    joins = _with_tone_and_spy(monkeypatch, tmp_path)
+    _render_and_assemble(owner, user, pid)
+    assert joins == [True]
+    assert owner.execute("select final_ig_key from posts where id = %s", (pid,)).fetchone()["final_ig_key"] is None
 
 
 def test_a_failed_join_is_retried_without_the_gpu(s3, owner, user, gpu, monkeypatch):
