@@ -47,6 +47,21 @@ def test_trending_leaves_room_for_searches_and_the_cap_holds():
     assert sum(t.found_by == "bollywood" for t in got) == 25         # the failing search was skipped
 
 
+def test_excluded_trending_songs_do_not_use_up_slots():
+    c = fake_audio({"": [a(i) for i in range(20)], "bollywood": [a(100)]})
+    got = ig_music.candidates(c, graph=GRAPH, token="t", ig_user_id="178", mood=None,
+                              exclude={"0", "1", "2", "3", "4"})
+    trending = [t.audio_id for t in got if t.found_by == "trending"]
+    assert trending == [str(i) for i in range(5, 20)]               # 15 kept, all past the excluded five
+    assert "100" in [t.audio_id for t in got]                        # the search still gets reached
+
+
+def test_a_non_numeric_duration_counts_as_zero():
+    c = fake_audio({"": [{"audio_id": "7", "title": "T", "display_artist": "A", "duration_in_ms": "long"}]})
+    got = ig_music.candidates(c, graph=GRAPH, token="t", ig_user_id="178", mood=None, exclude=set())
+    assert got[0].duration_ms == 0
+
+
 def test_candidates_are_empty_when_instagram_has_nothing():
     c = fake_audio({"": 500})
     assert ig_music.candidates(c, graph=GRAPH, token="t", ig_user_id="178", mood="playful", exclude=set()) == []

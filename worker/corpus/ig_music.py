@@ -82,30 +82,44 @@ def _audio(client: httpx.Client, *, graph: str, token: str, ig_user_id: str,
 
 
 def _track(x: dict, rank: int | None, found_by: str) -> Track:
+    try:
+        duration_ms = int(x.get("duration_in_ms") or 0)
+    except (TypeError, ValueError):
+        duration_ms = 0
     return Track(audio_id=str(x["audio_id"]), title=str(x.get("title") or ""),
-                 artist=str(x.get("display_artist") or ""), duration_ms=int(x.get("duration_in_ms") or 0),
+                 artist=str(x.get("display_artist") or ""), duration_ms=duration_ms,
                  trending_rank=rank, found_by=found_by)
 
 
 def candidates(client: httpx.Client, *, graph: str, token: str, ig_user_id: str,
                mood: str | None, exclude: set[str]) -> list[Track]:
     """Songs to pick from: the top of the trending list, then each search in order,
-    de-duplicated by audio_id (the first sighting wins), minus `exclude`, at most CAP.
+    de-duplicated by audio_id (the first sighting wins), at most CAP. Songs in `exclude`
+    are skipped before they count toward TRENDING_SLOTS or CAP, so they never use up room.
     Returns [] when Instagram answers nothing at all."""
     out: dict[str, Track] = {}
     trending = _audio(client, graph=graph, token=token, ig_user_id=ig_user_id, search=None) or []
-    for rank, x in enumerate(trending[:TRENDING_SLOTS], start=1):
+    trending_kept = 0
+    for rank, x in enumerate(trending, start=1):
+        if trending_kept >= TRENDING_SLOTS:
+            break
+        if str(x["audio_id"]) in exclude:
+            continue
         t = _track(x, rank, "trending")
-        out.setdefault(t.audio_id, t)
+        if t.audio_id not in out:
+            out[t.audio_id] = t
+            trending_kept += 1
     for search in searches(mood):
         if len(out) >= CAP:
             break
         found = _audio(client, graph=graph, token=token, ig_user_id=ig_user_id, search=search) or []
         for x in found:
+            if len(out) >= CAP:
+                break
             t = _track(x, None, search)
-            out.setdefault(t.audio_id, t)
-    kept = [t for t in out.values() if t.audio_id not in exclude]
-    return kept[:CAP]
+            if t.audio_id not in out and t.audio_id not in exclude:
+                out[t.audio_id] = t
+    return list(out.values())
 
 
 def rule_pick(tracks: list[Track], mood: str | None) -> Track:
