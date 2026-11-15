@@ -16,7 +16,9 @@ import logging
 from dataclasses import dataclass
 
 import httpx
+from psycopg.types.json import Jsonb
 
+from . import costs, db, vault
 from .publish import instagram
 from .script.llm import Usage
 
@@ -255,3 +257,41 @@ def decide(client: httpx.Client | None, api_key: str | None, reel: dict, tracks:
         log.warning("Decisions chose %r, which was not offered; using the rule pick", answer.get("choice"))
         return fallback, None, usage, "rule"
     return track, conf, usage, "decisions"
+
+
+def choose(client: httpx.Client, *, post: dict, acc: dict, token: str, job_id=None) -> dict | None:
+    """The reel's song, saved on the post (posts.ig_music) and returned. A song Instagram
+    refused stays refused (None: the reel goes out with the bed); a song already saved
+    is reused as it is. None too when Instagram has no songs to offer."""
+    saved = post.get("ig_music")
+    if saved and "dropped" in saved:
+        return None
+    if saved and saved.get("audio_id"):
+        return saved
+    row = db.one("""select s.title, s.hook, s.music_mood, p.audio_source, c.name as category
+                      from posts p
+                      left join scripts s on s.id = p.approved_script_id
+                      left join categories c on c.id = p.category_id
+                     where p.id = %s""", (post["id"],))
+    with db.conn() as c:
+        recent = {r["audio_id"] for r in c.execute(
+            """select ig_music->>'audio_id' as audio_id from posts
+                where channel_id = %s and id <> %s and ig_music->>'audio_id' is not null
+                order by created_at desc limit %s""", (post["channel_id"], post["id"], RECENT)).fetchall()}
+    narrated = row["audio_source"] == "kokoro"
+    reel = {"title": row["title"] or "", "hook": row["hook"] or "", "category": row["category"] or "",
+            "mood": row["music_mood"] or "", "narrated": narrated}
+    tracks = candidates(client, graph=instagram.host("unified"), token=token, ig_user_id=acc["external_id"],
+                        mood=reel["mood"], exclude=recent)
+    if not tracks:
+        return None
+    track, conf, usage, picked_by = decide(client, vault.secret(post["user_id"], "openai"), reel, tracks)
+    if usage is not None:
+        costs.record_llm(usage, user_id=post["user_id"], kind="music_pick", post_id=post["id"],
+                         channel_id=post["channel_id"], job_id=job_id, note="Instagram song")
+    out = {"audio_id": track.audio_id, "title": track.title, "artist": track.artist, "confidence": conf,
+           "trending_rank": track.trending_rank, "found_by": track.found_by, "picked_by": picked_by,
+           **volumes(narrated)}
+    with db.conn() as c:
+        c.execute("update posts set ig_music = %s where id = %s", (Jsonb(out), post["id"]))
+    return out

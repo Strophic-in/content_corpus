@@ -18,8 +18,9 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import httpx
+from psycopg.types.json import Jsonb
 
-from .. import db, packaging, stats, storage
+from .. import db, ig_music, packaging, stats, storage
 from ..config import settings
 from ..crypto import decrypt, encrypt
 from ..publish import attempts, instagram, youtube
@@ -41,7 +42,7 @@ def run(ctx: JobContext) -> dict:
         raise Permanent(f"unknown platform {platform!r}", stage="input")
     name = NAMES[platform]
     post = db.one("""select p.id, p.user_id, p.channel_id, p.status, p.final_key, p.final_sha256, p.credits,
-                            p.format, p.slides,
+                            p.format, p.slides, p.final_ig_key, p.ig_music,
                             (exists (select 1 from shots x where x.script_id = p.approved_script_id
                                         and x.source = 'generate')
                              or exists (select 1 from jsonb_array_elements(coalesce(s.slides, '[]'::jsonb)) e
@@ -92,18 +93,33 @@ def run(ctx: JobContext) -> dict:
                 video = None
                 # A carousel or card goes as its slides; YouTube gets its slideshow (final_key).
                 slides = [s["key"] for s in (post["slides"] or [])] if post["format"] in ("carousel", "image") else []
+                token = _instagram_token(client, acc)
+                # A reel may carry a trending Instagram song: the music-free copy, with the song mixed in.
+                pick = None
+                if not slides and acc.get("api") == "unified" and post["final_ig_key"]:
+                    try:
+                        pick = ig_music.choose(client, post=post, acc=acc, token=token, job_id=ctx.job.get("id"))
+                    except instagram.AuthExpired:
+                        raise
+                    except Exception:  # noqa: BLE001 - a reel without a song beats no reel
+                        log.warning("picking an Instagram song for %s failed; posting without one", post["id"],
+                                    exc_info=True)
+                credits_ig = [c for c in credits if not (pick and c.startswith("Music:"))]
                 out = instagram.publish(
-                    client, token=_instagram_token(client, acc), ig_user_id=acc["external_id"],
+                    client, token=token, ig_user_id=acc["external_id"],
                     # Instagram downloads the file itself; the link lapses well after it has.
-                    video_url=None if slides else storage.signed_url(post["final_key"], INSTAGRAM_LINK_SECONDS),
+                    video_url=None if slides else storage.signed_url(
+                        post["final_ig_key"] if pick else post["final_key"], INSTAGRAM_LINK_SECONDS),
                     image_urls=[storage.signed_url(k, INSTAGRAM_LINK_SECONDS) for k in slides] or None,
-                    caption=(packaging.instagram_caption(pkg, credits) if pkg else
+                    caption=(packaging.instagram_caption(pkg, credits_ig) if pkg else
                              instagram.caption(post["title"], post["description"] or "", post["hashtags"] or [],
-                                               credits)),
+                                               credits_ig)),
                     cover_url=(storage.signed_url(pkg["thumbnail_key"], INSTAGRAM_LINK_SECONDS)
                                if pkg and pkg.get("thumbnail_key") and not slides else None),
                     attempt=att, save=lambda **f: attempts.update(att, **f),
-                    graph=instagram.host(acc.get("api")))
+                    graph=instagram.host(acc.get("api")),
+                    audio=({k: pick[k] for k in ("audio_id", "audio_volume", "video_volume")} if pick else None),
+                    fallback_video_url=storage.signed_url(post["final_key"], INSTAGRAM_LINK_SECONDS) if pick else None)
     except (youtube.AuthExpired, instagram.AuthExpired) as e:
         _set_account_status(acc, "expired")
         _give_up(att, e)
@@ -122,6 +138,8 @@ def run(ctx: JobContext) -> dict:
 
     attempts.update(att, state="live", remote_id=out["remote_id"], remote_url=out.get("remote_url"),
                     privacy=out.get("privacy"), response=out.get("response") or {}, error=None)
+    if out.get("audio_dropped"):
+        _drop_song(post, out["audio_dropped"])
     # Live first; then the cover as YouTube's thumbnail and the first comment. These
     # never undo the post — what happened is recorded on the attempt and the activity.
     extras = _extras(platform, acc["id"], out, pkg)
@@ -134,6 +152,16 @@ def run(ctx: JobContext) -> dict:
     if video:
         video.unlink(missing_ok=True)
     return {"platform": platform, "url": out.get("remote_url"), "privacy": out.get("privacy")}
+
+
+def _drop_song(post: dict, message: str) -> None:
+    """Instagram refused the picked song: the reel went out without it. The post keeps
+    the reason, so the song is not picked again on a retry."""
+    with db.conn() as c:
+        c.execute("update posts set ig_music = coalesce(ig_music, '{}'::jsonb) || %s where id = %s",
+                  (Jsonb({"dropped": message}), post["id"]))
+        db.log_event(c, post["id"], post["status"], post["status"], f"worker:{settings().worker_id}",
+                     "posted to Instagram without its song", {"message": message})
 
 
 def _extras(platform: str, account_id, out: dict, pkg: dict | None) -> dict:
