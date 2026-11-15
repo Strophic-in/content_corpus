@@ -26,6 +26,7 @@ API accepts.
 
 from __future__ import annotations
 
+import json
 import time
 from datetime import datetime
 from typing import Callable
@@ -75,10 +76,14 @@ def caption(title: str, description: str, hashtags: list[str], credits: list[str
 def publish(client: httpx.Client, *, token: str, ig_user_id: str, video_url: str | None = None, caption: str,
             attempt: dict, save: Callable[..., object], sleep: Callable[[float], None] = time.sleep,
             clock: Callable[[], float] = time.monotonic, image_urls: list[str] | None = None,
-            cover_url: str | None = None, graph: str = GRAPH) -> dict:
+            cover_url: str | None = None, graph: str = GRAPH,
+            audio: dict | None = None, fallback_video_url: str | None = None) -> dict:
     """Post the video at `video_url` as a Reel — or `image_urls` as a carousel (or,
     one of them, a picture) — and return what to record on the attempt. `graph` is
-    the account's host (see host())."""
+    the account's host (see host()). `audio` is the trending song for a Reel
+    ({audio_id, audio_volume, video_volume}); if Instagram refuses it, or cannot
+    process the video with it, the Reel goes out again from `fallback_video_url`
+    without the song, and the result says so in `audio_dropped`."""
     container = _container_of(attempt)
     if container:
         status = _status(client, token, container, graph)
@@ -86,18 +91,34 @@ def publish(client: httpx.Client, *, token: str, ig_user_id: str, video_url: str
             return _find_published(client, token, ig_user_id, attempt["created_at"], graph)
         if status != "FINISHED":
             container = None        # never published; Instagram drops it within a day
-    if not container:
-        container = (_create_images(client, token, ig_user_id, image_urls, caption, sleep, clock, graph)
-                     if image_urls
-                     else _create(client, token, ig_user_id, video_url or "", caption, cover_url, graph))
+    dropped = None
+    if image_urls:
+        audio = None                # songs are for Reels only
+    if not container and image_urls:
+        container = _create_images(client, token, ig_user_id, image_urls, caption, sleep, clock, graph)
         save(upload_session_uri=CONTAINER + container, state="uploading")
         _wait_until_processed(client, token, container, sleep, clock, graph)
+    elif not container:
+        try:
+            container = _start_reel(client, token, ig_user_id, video_url or "", caption, cover_url, audio,
+                                    save, sleep, clock, graph)
+        except Rejected as e:
+            if not audio:
+                raise
+            dropped = str(e)       # the Reel without its song; a refused video still propagates
+            container = _start_reel(client, token, ig_user_id, fallback_video_url or video_url or "", caption,
+                                    cover_url, None, save, sleep, clock, graph)
 
     save(state="uploaded")          # from here on, the post may be live
     media = _ok(client.post(f"{graph}/{ig_user_id}/media_publish",
                             data={"creation_id": container, "access_token": token}),
                 "publishing the post")
-    return _result(client, token, media["id"], graph)
+    out = _result(client, token, media["id"], graph)
+    if dropped:
+        out["audio_dropped"] = dropped
+    elif audio:
+        out["audio_id"] = audio["audio_id"]
+    return out
 
 
 def _container_of(attempt: dict) -> str | None:
@@ -116,12 +137,24 @@ def comment(client: httpx.Client, *, token: str, media_id: str, text: str, graph
     return f"not posted: {(err.get('message') or f'HTTP {r.status_code}')[:200]}"
 
 
+def _start_reel(client: httpx.Client, token: str, ig_user_id: str, video_url: str, text: str,
+                cover_url: str | None, audio: dict | None, save: Callable[..., object],
+                sleep: Callable[[float], None], clock: Callable[[], float], graph: str) -> str:
+    """A new REELS container, saved on the attempt, once Instagram has processed it."""
+    container = _create(client, token, ig_user_id, video_url, text, cover_url, graph, audio)
+    save(upload_session_uri=CONTAINER + container, state="uploading")
+    _wait_until_processed(client, token, container, sleep, clock, graph)
+    return container
+
+
 def _create(client: httpx.Client, token: str, ig_user_id: str, video_url: str, text: str,
-            cover_url: str | None = None, graph: str = GRAPH) -> str:
+            cover_url: str | None = None, graph: str = GRAPH, audio: dict | None = None) -> str:
     data = {"media_type": "REELS", "video_url": video_url, "caption": text, "share_to_feed": "true",
             "access_token": token}
     if cover_url:
         data["cover_url"] = cover_url           # the reel's cover in the grid and feed
+    if audio:
+        data["audio_configuration"] = json.dumps(audio)    # the trending song (Audio API)
     return _ok(client.post(f"{graph}/{ig_user_id}/media", data=data), "creating the reel")["id"]
 
 

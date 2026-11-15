@@ -147,11 +147,15 @@ class FakeInstagram:
     an earlier run's container reports; `statuses` are replies after creating one."""
 
     def __init__(self, *, statuses=("IN_PROGRESS", "FINISHED"), container: str | None = None,
-                 media: list | None = None, error_code: int | None = None, version: str = "v23.0"):
+                 media: list | None = None, error_code: int | None = None, version: str = "v23.0",
+                 refuse_audio: bool = False, audio_breaks_processing: bool = False):
         self.statuses, self.container, self.media = list(statuses), container, media or []
         self.error_code, self.version = error_code, version
+        self.refuse_audio, self.audio_breaks_processing = refuse_audio, audio_breaks_processing
         self.created = self.published = 0
-        self.caption = self.video_url = ""
+        self.caption = self.video_url = self.audio = ""
+        self.with_audio: dict[str, bool] = {}     # container id → created with a song?
+        self.published_id = None
 
     def __call__(self, req: httpx.Request) -> httpx.Response:
         path = req.url.path
@@ -163,14 +167,23 @@ class FakeInstagram:
                 return httpx.Response(400, json={"error": {"message": "The parameter video_url is required",
                                                            "code": 100}})
             assert form["media_type"] == ["REELS"] and "upload_type" not in form
-            self.created += 1
+            self.audio = form.get("audio_configuration", [""])[0]
             self.caption, self.video_url = form["caption"][0], form["video_url"][0]
-            return httpx.Response(200, json={"id": "c1"})
-        if req.method == "GET" and path == f"/{self.version}/c1":
+            self.created += 1
+            cid = f"c{self.created}"
+            self.with_audio[cid] = bool(self.audio)
+            if self.refuse_audio and self.audio:
+                return httpx.Response(400, json={"error": {"message": "Invalid audio", "code": 100}})
+            return httpx.Response(200, json={"id": cid})
+        if req.method == "GET" and path.startswith(f"/{self.version}/c"):
+            cid = path.rsplit("/", 1)[1]
+            if self.audio_breaks_processing and self.with_audio.get(cid):
+                return httpx.Response(200, json={"status_code": "ERROR", "status": "Error: audio unavailable"})
             status = self.container or (self.statuses.pop(0) if len(self.statuses) > 1 else self.statuses[0])
             return httpx.Response(200, json={"status_code": status, "status": "Error: too short"})
         if req.method == "POST" and path == f"/{self.version}/178/media_publish":
-            assert form["creation_id"] == ["c1"]
+            assert form["creation_id"][0] in ("c1", "c2")
+            self.published_id = form["creation_id"][0]
             self.published += 1
             return httpx.Response(200, json={"id": "m1"})
         if req.method == "GET" and path == f"/{self.version}/m1":
@@ -233,6 +246,45 @@ def test_instagram_publishes_through_the_unified_host(video):
                             attempt={}, save=lambda **f: None, sleep=lambda s: None,
                             graph=instagram.GRAPH_UNIFIED)
     assert out["remote_id"] == "m1" and fake.published == 1
+
+
+SONG = {"audio_id": "587", "audio_volume": 25, "video_volume": 100}
+
+
+def test_instagram_attaches_the_song_to_the_reel(video):
+    fake = FakeInstagram()
+    out = instagram.publish(client(fake), token="tok", ig_user_id="178", video_url=LINK, caption="A reel",
+                            attempt={}, save=lambda **f: None, sleep=lambda s: None, audio=SONG)
+    assert json.loads(fake.audio) == {"audio_id": "587", "audio_volume": 25, "video_volume": 100}
+    assert out["audio_id"] == "587" and "audio_dropped" not in out
+
+
+def test_instagram_posts_without_the_song_when_it_is_refused(video):
+    fake = FakeInstagram(refuse_audio=True)
+    out = instagram.publish(client(fake), token="tok", ig_user_id="178", video_url=LINK + "&ig", caption="A reel",
+                            attempt={}, save=lambda **f: None, sleep=lambda s: None,
+                            audio=SONG, fallback_video_url=LINK)
+    assert out["remote_id"] == "m1" and "audio" in out["audio_dropped"]
+    assert fake.video_url == LINK and fake.audio == ""        # second container: bed version, no song
+    assert fake.published_id == "c2"
+
+
+def test_instagram_posts_without_the_song_when_processing_fails_on_it(video):
+    fake = FakeInstagram(audio_breaks_processing=True)
+    out = instagram.publish(client(fake), token="tok", ig_user_id="178", video_url=LINK + "&ig", caption="A reel",
+                            attempt={}, save=lambda **f: None, sleep=lambda s: None,
+                            audio=SONG, fallback_video_url=LINK)
+    assert out["remote_id"] == "m1" and out["audio_dropped"] and fake.created == 2 and fake.audio == ""
+    assert fake.published_id == "c2"
+
+
+def test_instagram_saves_the_fallback_container_over_the_refused_one(video):
+    fake, saved = FakeInstagram(refuse_audio=True), []
+    instagram.publish(client(fake), token="tok", ig_user_id="178", video_url=LINK, caption="A reel",
+                      attempt={}, save=lambda **f: saved.append(f), sleep=lambda s: None,
+                      audio=SONG, fallback_video_url=LINK)
+    assert saved[0] == {"upload_session_uri": "ig-container:c2", "state": "uploading"}
+    assert saved[-1] == {"state": "uploaded"}
 
 
 def _due_unified(owner, user, pid):
