@@ -111,6 +111,26 @@ needs a developer app, set up once: put its keys in the VM's .env and redeploy.
 4. In .env, set INSTAGRAM_APP_ID and INSTAGRAM_APP_SECRET. These are the Instagram
    app's ID and secret, not the Facebook app's.
 
+**Instagram with Unified Login** (for trending Instagram music on reels). Meta's
+Audio API works only with Unified Login, not with Instagram Login above. With these
+keys set, the owner's Connect button uses Unified Login; members keep Instagram
+Login. Both work side by side.
+1. Make sure the Meta app is owned by a business portfolio (the **API setup with
+   Unified login** tab only appears then).
+2. Use cases → Manage messaging & content on Instagram → Customize → **API setup
+   with Unified login** → Create new configuration. Edit its permissions to
+   `instagram_basic`, `instagram_content_publish`, `instagram_manage_comments` and
+   `instagram_manage_insights`; pick a non-expiring token if offered. Set the
+   redirect URL to https://content-corpus.strophic.in/api/connect/instagram/callback
+   and copy the configuration's `config_id`.
+3. In .env, set META_APP_ID and META_APP_SECRET (the Meta app's own ID and secret,
+   not the Instagram app's) and META_IG_CONFIG_ID; apply migrations and redeploy.
+4. On each channel, press Reconnect on Instagram and log in with the same account.
+   A different account is refused, so stats and history stay matched.
+5. Make a new reel (assembled after reconnecting: older reels have no music-free
+   copy and go out with the Freesound track) and post it. Its post page shows the
+   song picked; check the song is on the reel in the Instagram app.
+
 ## Notes
 
 - The idea agent's embedding model (bge-small, about 34 MB) downloads into the
