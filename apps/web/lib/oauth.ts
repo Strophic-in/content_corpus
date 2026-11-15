@@ -69,10 +69,12 @@ export function authorizeUrl(p: Platform, state: string, api?: IgApi): string {
     return `https://accounts.google.com/o/oauth2/v2/auth?${q}`;
   }
   if (api === "unified") {
-    // The configuration in Meta's app decides the permissions, so no scope here.
+    // The configuration in Meta's app decides the permissions, so no scope here. As
+    // Meta's own login link: prompt=login always offers Instagram as well as Facebook
+    // (otherwise a browser signed in to Facebook continues as that account).
     const q = new URLSearchParams({
       client_id: process.env.META_APP_ID!, config_id: process.env.META_IG_CONFIG_ID!, redirect_uri: redirectUri(p),
-      response_type: "code", state,
+      response_type: "code", override_default_response_type: "true", prompt: "login", state,
     });
     return `https://www.facebook.com/v27.0/dialog/oauth?${q}`;
   }
