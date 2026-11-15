@@ -39,7 +39,22 @@
 4. A retry of a publish job must reuse the saved `posts.ig_music` choice, not pick a different song. → Task 6 test.
 5. Owner reconnecting to a different Instagram account than the one stored must be stopped with a clear message, not create a mismatch. → Task 7 (manual check in Task 9).
 
+Also: a song refused *during processing* (container status `ERROR`) is handled like one refused at creation (Task 2); the web role must be granted the new `channel_accounts.api` column or the callback fails in production only (Task 1 access test).
+
+## Facts read from the APIs (2026-11-15) — do not re-guess
+
+- Unified login URL: `https://www.facebook.com/dialog/oauth?client_id&config_id&redirect_uri&response_type=code` (+ our `state`).
+- Code exchange: `GET https://graph.facebook.com/v27.0/oauth/access_token?client_id&client_secret&code` — send `redirect_uri` too (the manual Facebook login flow requires it to match the dialog's).
+- Accounts: `GET https://graph.facebook.com/v27.0/me/assigned_instagram_accounts?fields=id,username` → `{"data": [{"id", "username"}], "paging": …}`.
+- Decisions `choice` question: **2–255 choices**, unique values. Answers in question order; any can be `{"type": "refusal", "name"}`. Reply has `usage.input_tokens` and `usage.input_tokens_details.cached_tokens`; output is free.
+- `vault.secret(user_id, name)` returns `None` when the key isn't stored.
+- Web-role column grants live in `db/access.sql` (re-applied after every migrate), not in migrations.
+
 ---
+
+### Task 0: Branch
+
+- [ ] Create `feat/ig-trending-music` from `main` (the spec and plan commits are on local `main`, unpushed): `git switch -c feat/ig-trending-music`. All tasks commit there.
 
 ### Task 1: Migration 0043 and per-account Graph host
 
@@ -48,7 +63,8 @@
 - Modify: `worker/corpus/publish/instagram.py` (host constant + `host()`; every function that builds a URL takes `graph`)
 - Modify: `worker/corpus/handlers/publish_post.py:197-266` (`_instagram_token`, `upkeep`)
 - Modify: `worker/corpus/stats.py:63-79`
-- Test: `worker/tests/test_publish.py`
+- Modify: `db/access.sql:166-174` (add `api` to the web role's `select`, `insert` and `update` column lists on `channel_accounts`; `posts` is already `grant select` on the whole table)
+- Test: `worker/tests/test_publish.py`, `db/tests/test_access.py` (next to the channel_accounts test at ~line 377)
 
 **Interfaces:**
 - Produces: `instagram.GRAPH_UNIFIED = "https://graph.facebook.com/v27.0"`; `instagram.host(api: str | None) -> str` (`'unified'` → `GRAPH_UNIFIED`, anything else → `GRAPH`); `instagram.publish(..., graph: str = GRAPH)` and `instagram.comment(..., graph: str = GRAPH)`; private helpers (`_create`, `_create_images`, `_status`, `_wait_until_processed`, `_find_published`, `_result`) gain a `graph` parameter. Columns `channel_accounts.api`, `posts.final_ig_key`, `posts.ig_music`.
@@ -81,20 +97,32 @@ def test_instagram_publishes_through_the_unified_host(video):
                             graph=instagram.GRAPH_UNIFIED)
     assert out["remote_id"] == "m1" and fake.published == 1
 
-def test_upkeep_never_renews_a_unified_token(owner, user, monkeypatch):
-    # an account due for renewal by date, but on Unified Login
-    pid = _ready_post(owner, user)
+def _due_unified(owner, user, pid):
+    """An account due for renewal by its dates — but on Unified Login."""
     owner.execute("""insert into channel_accounts (user_id, channel_id, platform, external_id, token_ciphertext,
                                                    token_expires_at, api, updated_at)
                      select %s, channel_id, 'instagram', '178', %s, now() + interval '2 days', 'unified',
                             now() - interval '3 days' from posts where id = %s""", (user, encrypt("tok"), pid))
-    monkeypatch.setattr(publish_post.instagram, "refresh",
-                        lambda *a: (_ for _ in ()).throw(AssertionError("refreshed a unified token")))
-    monkeypatch.setattr(publish_post, "_last_upkeep", 0.0)
-    monkeypatch.setattr(publish_post, "_last_stats", 1e18)
+    return owner.execute("select * from channel_accounts where external_id = '178'").fetchone()
+
+def test_upkeep_never_renews_a_unified_token(owner, user, monkeypatch):
+    _due_unified(owner, user, _ready_post(owner, user))
+    calls = []
+    monkeypatch.setattr(publish_post.instagram, "refresh", lambda *a: calls.append(a) or ("new", 5_184_000))
+    monkeypatch.setattr(publish_post, "_last_upkeep", -1e18)      # upkeep's hourly gate is open
+    monkeypatch.setattr(publish_post, "_last_stats", 1e18)        # no stats round
     publish_post.upkeep()
+    assert calls == []
     assert owner.execute("select status from channel_accounts where external_id = '178'").fetchone()["status"] == "connected"
+
+def test_publishing_never_renews_a_unified_token(owner, user, monkeypatch):
+    acc = _due_unified(owner, user, _ready_post(owner, user))
+    calls = []
+    monkeypatch.setattr(publish_post.instagram, "refresh", lambda *a: calls.append(a) or ("new", 5_184_000))
+    assert publish_post._instagram_token(httpx.Client(), acc) == "tok" and calls == []
 ```
+
+And in `db/tests/test_access.py`, beside the existing channel_accounts test: the web role can insert and update a row with `api = 'unified'` and read `api` back (follow that test's connection helpers).
 
 Change `FakeInstagram.__init__` to take `version: str = "v23.0"` and match paths against `f"/{self.version}/178/media"` etc. instead of the hard-coded `/v23.0/…`.
 
@@ -108,6 +136,7 @@ Expected: FAIL (`host` / `GRAPH_UNIFIED` / `graph=` not defined).
 - `instagram.py`: add `GRAPH_UNIFIED`, `host()`, thread `graph` through every URL; `refresh()` stays on `graph.instagram.com` (Instagram Login only).
 - `publish_post.py`: in `run`, pass `graph=instagram.host(acc.get("api"))` to `instagram.publish` and to `instagram.comment` (the first-comment path ~line 152). `_instagram_token`: when `acc.get("api") == "unified"` return the decrypted token with only the expiry check (no renewal). `upkeep` query: add `and api = 'instagram_login'`.
 - `stats.py`: select `token_ciphertext, api`, call `f"{instagram.host(acc['api'])}/{x['remote_id']}"`.
+- `db/access.sql`: add `api` to the three column lists named under Files.
 - Update the module docstring of `instagram.py`: both APIs, which host each uses.
 
 - [ ] **Step 5: Run the publish suite**
@@ -118,7 +147,7 @@ Expected: all pass (old tests still green with default `version="v23.0"`).
 - [ ] **Step 6: Commit**
 
 ```bash
-git add db/migrations/0043_ig_music.sql worker/corpus/publish/instagram.py worker/corpus/handlers/publish_post.py worker/corpus/stats.py worker/tests/test_publish.py
+git add db/migrations/0043_ig_music.sql db/access.sql db/tests/test_access.py worker/corpus/publish/instagram.py worker/corpus/handlers/publish_post.py worker/corpus/stats.py worker/tests/test_publish.py
 git commit -m "Instagram accounts know their API: Unified Login on graph.facebook.com, never refreshed like the old tokens"
 ```
 
@@ -132,7 +161,7 @@ git commit -m "Instagram accounts know their API: Unified Login on graph.faceboo
 
 **Interfaces:**
 - Consumes: Task 1's `graph` parameter.
-- Produces: `instagram.publish(..., audio: dict | None = None, fallback_video_url: str | None = None)`. `audio` is `{"audio_id": str, "audio_volume": int, "video_volume": int}` sent as `audio_configuration=json.dumps(audio)` on the REELS container. If creating the container with `audio` raises `Rejected`, it creates it once more **without** `audio_configuration` from `fallback_video_url or video_url`; the returned dict then has `"audio_dropped": "<Instagram's message>"`. Otherwise the returned dict has `"audio_id": audio["audio_id"]` when audio was sent.
+- Produces: `instagram.publish(..., audio: dict | None = None, fallback_video_url: str | None = None)`. `audio` is `{"audio_id": str, "audio_volume": int, "video_volume": int}` sent as `audio_configuration=json.dumps(audio)` on the REELS container. If **either** creating the container with `audio` **or** waiting for it to process (status `ERROR`) raises `Rejected`, it makes one new container **without** `audio_configuration` from `fallback_video_url or video_url` (saving its id over the old one) and waits for that; the returned dict then has `"audio_dropped": "<Instagram's message>"`. Otherwise the returned dict has `"audio_id": audio["audio_id"]` when audio was sent. A `Rejected` from the song-less container propagates as today.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -155,7 +184,17 @@ def test_instagram_posts_without_the_song_when_it_is_refused(video):
     assert fake.video_url == LINK and fake.audio == ""        # second container: bed version, no song
 ```
 
-Extend `FakeInstagram`: `refuse_audio: bool = False`; record `self.audio = form.get("audio_configuration", [""])[0]`; when `refuse_audio` and `audio_configuration` is present, return `400 {"error": {"message": "Invalid audio", "code": 100}}`.
+```python
+def test_instagram_posts_without_the_song_when_processing_fails_on_it(video):
+    fake = FakeInstagram(audio_breaks_processing=True)
+    out = instagram.publish(client(fake), token="tok", ig_user_id="178", video_url=LINK + "&ig", caption="A reel",
+                            attempt={}, save=lambda **f: None, sleep=lambda s: None,
+                            audio={"audio_id": "587", "audio_volume": 25, "video_volume": 100},
+                            fallback_video_url=LINK)
+    assert out["remote_id"] == "m1" and out["audio_dropped"] and fake.created == 2 and fake.audio == ""
+```
+
+Extend `FakeInstagram`: `refuse_audio: bool = False`, `audio_breaks_processing: bool = False`; record `self.audio = form.get("audio_configuration", [""])[0]` on every container create; when `refuse_audio` and `audio_configuration` is present, return `400 {"error": {"message": "Invalid audio", "code": 100}}`; when `audio_breaks_processing`, a container created **with** audio reports `status_code: "ERROR"` (`status: "Error: audio unavailable"`) and one without reports `FINISHED`. Give the two containers different ids (`c1`, `c2`) and accept `media_publish` / status checks for either.
 
 - [ ] **Step 2: Run to see them fail**
 
@@ -194,6 +233,7 @@ git commit -m "Reels can carry an Instagram song; a refused song is dropped, nev
       @property
       def label(self) -> str      # "Title — Artist"
   CAP = 40
+  TRENDING_SLOTS = 15         # the no-query list may fill at most this many, so searches always get room
   RECENT = 20
   MOOD_SEARCHES: dict[str, list[str]]   # mood → [hindi search, english search]
   MEME_SEARCHES = ["viral meme song", "phonk"]
@@ -204,7 +244,7 @@ git commit -m "Reels can carry an Instagram song; a refused song is dropped, nev
   def volumes(narrated: bool) -> dict
   ```
 - `searches(mood)` returns, in order: `"hindi trending"`, `"bollywood"`, the mood's Hindi search, `MEME_SEARCHES…`, the mood's English search (unknown/None mood → `neutral-corporate`'s). `MOOD_SEARCHES` covers the 8 moods in `corpus/music.py` `MOODS`; the builder chooses the words (e.g. `somber` → `["sad hindi song", "emotional piano"]`, `energetic-hype` → `["bollywood party", "hype beat"]`).
-- `candidates`: first `GET {graph}/ig_audio?audio_type=music&user_id={ig_user_id}&access_token=…` (trending; ranks 1..n), then one request per search with `search_query`. Each reply is `{"audio": [...]}` with `audio_id, title, display_artist, duration_in_ms`. De-duplicate by `audio_id` keeping the first sighting but keeping its trending rank if any; drop `exclude`; stop at `CAP`. A failing search (non-200 or bad JSON) is skipped; if the trending call and every search fail, return `[]`. Auth errors (`code 190` / HTTP 401) raise `instagram.AuthExpired`.
+- `candidates`: first `GET {graph}/ig_audio?audio_type=music&user_id={ig_user_id}&access_token=…` (trending; ranks 1..n), then one request per search with `search_query`. Each reply is `{"audio": [...]}` with `audio_id, title, display_artist, duration_in_ms`. Take at most `TRENDING_SLOTS` tracks from the trending list (ranks are their positions in the full list), then fill from the searches in order. De-duplicate by `audio_id` keeping the first sighting but keeping its trending rank if any; drop `exclude`; stop at `CAP`. A failing search (non-200 or bad JSON) is skipped; if the trending call and every search fail, return `[]`. Auth errors (`code 190` / HTTP 401) raise `instagram.AuthExpired`.
 - `rule_pick`: the best-ranked track found by a search for this mood (Hindi first), else the best trending rank, else the first.
 - `volumes(True) == {"audio_volume": 25, "video_volume": 100}`; `volumes(False) == {"audio_volume": 100, "video_volume": 40}`.
 
@@ -229,9 +269,13 @@ def test_candidates_rank_trending_then_add_searches_without_repeats():
     assert [t.trending_rank for t in got] == [1, 2, None]
     assert got[2].found_by == "hindi trending"
 
-def test_candidates_survive_a_failing_search_and_stop_at_the_cap():
-    c = fake_audio({"": [a(i) for i in range(50)], "hindi trending": 500})
-    assert len(ig_music.candidates(c, graph=GRAPH, token="t", ig_user_id="178", mood=None, exclude=set())) == 40
+def test_trending_leaves_room_for_searches_and_the_cap_holds():
+    c = fake_audio({"": [a(i) for i in range(50)], "hindi trending": 500,
+                    "bollywood": [a(100 + i) for i in range(50)]})
+    got = ig_music.candidates(c, graph=GRAPH, token="t", ig_user_id="178", mood=None, exclude=set())
+    assert len(got) == 40
+    assert sum(t.found_by == "trending" for t in got) == 15
+    assert sum(t.found_by == "bollywood" for t in got) == 25         # the failing search was skipped
 
 def test_candidates_are_empty_when_instagram_has_nothing():
     c = fake_audio({"": 500})
@@ -284,10 +328,12 @@ git commit -m "Song candidates from Instagram: trending first, then Hindi, meme 
   DECISIONS = "https://api.openai.com/v1/decisions"
   MODEL = "gpt-6-luna"
   INSTRUCTIONS: str
-  def decide(client: httpx.Client, api_key: str | None, reel: dict, tracks: list[Track]
-             ) -> tuple[Track, float | None, Usage | None]
+  def decide(client: httpx.Client | None, api_key: str | None, reel: dict, tracks: list[Track]
+             ) -> tuple[Track, float | None, Usage | None, str]
   ```
-  `reel` keys: `title, hook, category, mood, narrated`. Returns `(track, confidence, usage)`; with no key, an HTTP error, a `refusal` answer, or a `choice` value not among the labels → `(rule_pick(tracks, reel["mood"]), None, None)` (usage when the call was billed despite a refusal: still return it). `Usage` is `corpus.script.llm.Usage(model=MODEL, input_tokens=…, output_tokens=0, cached_input_tokens=…)` from the reply's `usage.input_tokens` and `usage.input_tokens_details.cached_tokens`.
+  `reel` keys: `title, hook, category, mood, narrated`. Returns `(track, confidence, usage, picked_by)` with `picked_by` one of `"decisions"`, `"rule"`, `"only"`.
+  - One candidate → `(it, None, None, "only")`, no call (a choice needs 2–255 options; never more than `CAP` here).
+  - No key, an HTTP error, a `refusal` answer, or a `choice` value not among the labels → `(rule_pick(tracks, reel["mood"]), None, usage_or_None, "rule")`; return the usage whenever the reply carried one. On a non-200, `log.warning` the status and the first 300 characters of the body (a permanent 400 must be visible, not silently covered by the rule pick). `Usage` is `corpus.script.llm.Usage(model=MODEL, input_tokens=…, output_tokens=0, cached_input_tokens=…)` from the reply's `usage.input_tokens` and `usage.input_tokens_details.cached_tokens`.
 - Request body:
   ```python
   {"model": MODEL,
@@ -307,7 +353,7 @@ git commit -m "Song candidates from Instagram: trending first, then Hindi, meme 
 
 ```python
 TRACKS = [ig_music.Track("1", "Party Song", "DJ", 30000, 1, "trending"),
-          ig_music.Track("2", "Dil Udaas", "Arijit", 40000, None, "sad hindi song")]
+          ig_music.Track("2", "Dil Udaas", "Arijit", 40000, None, ig_music.MOOD_SEARCHES["somber"][0])]
 REEL = {"title": "Flood kills 12", "hook": "…", "category": "News", "mood": "somber", "narrated": True}
 
 def fake_decisions(reply, seen):
@@ -322,8 +368,9 @@ def test_decide_sends_one_choice_question_and_returns_the_pick():
     c = fake_decisions({"answers": [{"type": "choice", "name": "song", "choice": "Dil Udaas — Arijit",
                                      "confidence": 0.8}],
                         "usage": {"input_tokens": 900, "input_tokens_details": {"cached_tokens": 0}}}, seen)
-    track, conf, usage = ig_music.decide(c, "sk", REEL, TRACKS)
-    assert track.audio_id == "2" and conf == 0.8 and usage.input_tokens == 900 and usage.output_tokens == 0
+    track, conf, usage, by = ig_music.decide(c, "sk", REEL, TRACKS)
+    assert track.audio_id == "2" and conf == 0.8 and by == "decisions"
+    assert usage.input_tokens == 900 and usage.output_tokens == 0
     body = seen[0]
     assert body["model"] == "gpt-6-luna" and body["questions"][0]["type"] == "choice"
     assert [ch["value"] for ch in body["questions"][0]["choices"]] == ["Party Song — DJ", "Dil Udaas — Arijit"]
@@ -332,9 +379,10 @@ def test_decide_sends_one_choice_question_and_returns_the_pick():
 def test_decide_falls_back_to_the_rule_pick():
     for reply in (500, {"answers": [{"type": "refusal", "name": "song"}]},
                   {"answers": [{"type": "choice", "name": "song", "choice": "Not offered"}]}):
-        track, conf, _ = ig_music.decide(fake_decisions(reply, []), "sk", REEL, TRACKS)
-        assert track.audio_id == "2" and conf is None
+        track, conf, _, by = ig_music.decide(fake_decisions(reply, []), "sk", REEL, TRACKS)
+        assert track.audio_id == "2" and conf is None and by == "rule"
     assert ig_music.decide(None, None, REEL, TRACKS)[0].audio_id == "2"     # no key: no call at all
+    assert ig_music.decide(None, "sk", REEL, TRACKS[:1])[3] == "only"       # one song: nothing to decide
 
 def test_duplicate_labels_are_made_unique():
     twins = [ig_music.Track("1", "Same", "A", 1, 1, "trending"), ig_music.Track("2", "Same", "A", 1, 2, "trending")]
@@ -368,15 +416,51 @@ git commit -m "OpenAI Decisions picks the reel's song; a refusal or outage falls
   - without a track: `final_ig_key = final_key` (same file, no second join).
   - no Unified account: `final_ig_key` stays null.
 - Helper `_wants_ig_copy(channel_id) -> bool` in `assemble.py`.
+- Every assembly also clears a stale choice: the final `update posts` sets `ig_music = null` (a re-assembled reel gets a fresh pick) and `final_ig_key` to the new value or null.
 
-- [ ] **Step 1: Write the failing test** — copy the setup of `test_render_then_assemble_to_a_ready_reel`, insert a Unified Instagram account for the post's channel, monkeypatch `assemble._music` to return a `_Track`-like object pointing at a short generated tone (use the file the existing tests use for music, or `ffmpeg -f lavfi -i sine` in `tmp_path`), run assembly, then:
+- [ ] **Step 1: Write the failing tests** (in `test_render_pipeline.py`; reuse that file's imports — `media` there is the module whose `join_segments` assembly calls; import `corpus.handlers.assemble as assemble_handler` and `corpus.music as music` if not already)
 
 ```python
-row = owner.execute("select final_key, final_ig_key from posts where id = %s", (pid,)).fetchone()
-assert row["final_ig_key"].endswith(".ig.mp4") and row["final_ig_key"] != row["final_key"]
-assert joins == [True, False]        # spy on media.join_segments: music passed, then music=None
+def _render_and_assemble(owner, user, pid):
+    cpu_all().tick()
+    as_user(owner, user, "select api.request_render(%s)", (pid,))
+    assert gpu_lane().tick()
+    drain(cpu_all())
+
+def _with_tone_and_spy(monkeypatch, tmp_path):
+    tone = tmp_path / "tone.mp3"
+    subprocess.run(["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "sine=frequency=440:duration=5", str(tone)],
+                   check=True)
+    monkeypatch.setattr(assemble_handler, "_music", lambda post, script_id, work: assemble_handler._Track(
+        music.Track(1, "Tone", "me", "https://example.test/tone", tone), "uplifting"))
+    joins, real = [], media.join_segments
+    def spy(segments, out, **kw):
+        joins.append(kw.get("music") is not None)
+        return real(segments, out, **kw)
+    monkeypatch.setattr(media, "join_segments", spy)
+    return joins
+
+def test_assemble_keeps_a_music_free_copy_for_unified_instagram(s3, owner, user, gpu, tmp_path, segment_cache,
+                                                                monkeypatch):
+    pid, sid = approved_narrated_post(owner, user)
+    owner.execute("""insert into channel_accounts (user_id, channel_id, platform, external_id, token_ciphertext, api)
+                     select %s, channel_id, 'instagram', '178', 'x', 'unified' from posts where id = %s""", (user, pid))
+    owner.execute("update posts set ig_music = '{\"audio_id\": \"old\"}' where id = %s", (pid,))
+    joins = _with_tone_and_spy(monkeypatch, tmp_path)
+    _render_and_assemble(owner, user, pid)
+    row = owner.execute("select final_key, final_ig_key, ig_music from posts where id = %s", (pid,)).fetchone()
+    assert row["final_ig_key"].endswith(".ig.mp4") and row["final_ig_key"] != row["final_key"]
+    assert joins == [True, False] and row["ig_music"] is None
+
+def test_assemble_makes_one_reel_without_unified_instagram(s3, owner, user, gpu, tmp_path, segment_cache,
+                                                           monkeypatch):
+    pid, sid = approved_narrated_post(owner, user)
+    joins = _with_tone_and_spy(monkeypatch, tmp_path)
+    _render_and_assemble(owner, user, pid)
+    assert joins == [True]
+    assert owner.execute("select final_ig_key from posts where id = %s", (pid,)).fetchone()["final_ig_key"] is None
 ```
-and a second test without the Instagram account: `final_ig_key is None` and one join.
+(If `join_segments` is called positionally with more than two arguments in `assemble.py`, make the spy `def spy(*a, **kw)` and read `music` from `kw`.)
 
 - [ ] **Step 2: Run to see it fail** — `bash db/dev/test.sh worker/tests/test_render_pipeline.py -k ig -q` → FAIL.
 - [ ] **Step 3: Implement** in `assemble.run`; add `final_ig_key` to the final `update posts …` statement; log `"instagram copy without music"` in the assemble log line.
@@ -403,7 +487,7 @@ git commit -m "Assembly keeps a music-free copy of the reel for Instagram's own 
   ```python
   def choose(client: httpx.Client, *, post: dict, acc: dict, token: str, job_id=None) -> dict | None
   ```
-  Returns the saved `posts.ig_music` dict `{audio_id, title, artist, confidence, trending_rank, found_by, audio_volume, video_volume}` or `None` when there are no candidates. Steps: if `post["ig_music"]` has an `audio_id` → return it unchanged (retry reuse). Else read `music_mood` from `scripts` (`post["approved_script_id"]`), the category name, the 20 most recent `ig_music->>'audio_id'` of posts on the same channel; `candidates(...)` with `graph=instagram.host("unified")`; `[]` → `None`. Else `decide(client, vault.secret(user_id, "openai"), reel, tracks)`; record usage with `costs.record_llm(usage, user_id=…, kind="music_pick", post_id=…, channel_id=…, job_id=job_id, note="Instagram song")` when usage is not None; save to `posts.ig_music` and return it.
+  Returns the saved `posts.ig_music` dict `{audio_id, title, artist, confidence, trending_rank, found_by, picked_by, audio_volume, video_volume}` or `None` when there are no candidates. Steps: if `post["ig_music"]` has a `dropped` key → return `None` (Instagram refused that song; post with the bed). If it has an `audio_id` → return it unchanged (retry reuse). Else read `music_mood` from `scripts` (`post["approved_script_id"]`), the category name, the 20 most recent `ig_music->>'audio_id'` of posts on the same channel; `candidates(...)` with `graph=instagram.host("unified")`; `[]` → `None`. Else `decide(client, vault.secret(user_id, "openai"), reel, tracks)`; record usage with `costs.record_llm(usage, user_id=…, kind="music_pick", post_id=…, channel_id=…, job_id=job_id, note="Instagram song")` when usage is not None; save to `posts.ig_music` and return it.
 - Handler, Instagram reel branch (not slides): when `acc["api"] == "unified"` and `post["final_ig_key"]`:
   - `pick = ig_music.choose(...)` (any exception from it → log a warning, `pick = None`; `AuthExpired` still propagates);
   - with a pick: `video_url = signed(final_ig_key)`, `audio = {audio_id, audio_volume, video_volume}`, `fallback_video_url = signed(final_key)`, and the caption's credits drop every entry starting with `"Music:"`;
@@ -420,31 +504,51 @@ def _unified(owner, user, pid):
     owner.execute("update posts set final_ig_key = 'u/p/final.ig.mp4', credits = %s where id = %s",
                   (json.dumps(["Music: “x” by y (Freesound, CC0)"]), pid))
 
-def test_handler_attaches_a_picked_song_from_the_music_free_copy(owner, user, fake_http, monkeypatch):
-    fake = fake_http(FakeInstagram(version="v27.0", audio_list=[{"audio_id": "587", "title": "Dil", "display_artist": "A",
-                                                                  "duration_in_ms": 30000}]))
+SONG = {"audio_id": "587", "title": "Dil", "display_artist": "A", "duration_in_ms": 30000}
+
+def _publish_unified(owner, user, fake_http, monkeypatch, fake, ig_music=None):
+    fake_http(fake)
     monkeypatch.setattr(publish_post.storage, "signed_url", lambda key, seconds: f"{LINK}&key={key}")
     monkeypatch.setattr(publish_post.instagram, "POLL_S", 0)
-    pid = _ready_post(owner, user); _unified(owner, user, pid)
+    pid = _ready_post(owner, user)
+    _unified(owner, user, pid)
+    if ig_music is not None:
+        owner.execute("update posts set ig_music = %s where id = %s", (json.dumps(ig_music), pid))
     _request(owner, user, pid, ("instagram",))
     assert Runner("publish", {"publish_post": publish_post.HANDLER}).tick()
+    job = owner.execute("select state, error from jobs where dedupe_key = %s", (f"publish:{pid}:instagram",)).fetchone()
+    assert job["state"] == "succeeded", job["error"]
+    return pid
+
+def test_handler_attaches_a_picked_song_from_the_music_free_copy(owner, user, fake_http, monkeypatch):
+    fake = FakeInstagram(version="v27.0", audio_list=[SONG])
+    pid = _publish_unified(owner, user, fake_http, monkeypatch, fake)
     assert fake.video_url.endswith("key=u/p/final.ig.mp4")
-    assert json.loads(fake.audio)["audio_id"] == "587" and "Freesound" not in fake.caption
-    assert owner.execute("select ig_music->>'audio_id' as a from posts where id = %s", (pid,)).fetchone()["a"] == "587"
+    assert json.loads(fake.audio) == {"audio_id": "587", "audio_volume": 100, "video_volume": 40}  # not narrated
+    assert "Freesound" not in fake.caption
+    saved = owner.execute("select ig_music from posts where id = %s", (pid,)).fetchone()["ig_music"]
+    assert saved["audio_id"] == "587" and saved["picked_by"] == "only"
 
 def test_handler_keeps_the_bed_version_when_instagram_has_no_songs(owner, user, fake_http, monkeypatch):
-    fake = fake_http(FakeInstagram(version="v27.0", audio_list=[]))
-    ... same setup ...
+    fake = FakeInstagram(version="v27.0", audio_list=[])
+    pid = _publish_unified(owner, user, fake_http, monkeypatch, fake)
     assert fake.video_url.endswith("key=u/p/final.mp4") and fake.audio == ""
+    assert owner.execute("select ig_music from posts where id = %s", (pid,)).fetchone()["ig_music"] is None
 
 def test_a_retry_reuses_the_saved_song(owner, user, fake_http, monkeypatch):
-    fake = fake_http(FakeInstagram(version="v27.0", audio_list=[{"audio_id": "999", ...}]))
-    ... same setup, plus: owner.execute("update posts set ig_music = %s where id = %s",
-                                        (json.dumps({"audio_id": "587", "audio_volume": 25, "video_volume": 100}), pid))
+    fake = FakeInstagram(version="v27.0", audio_list=[{**SONG, "audio_id": "999"}])
+    _publish_unified(owner, user, fake_http, monkeypatch, fake,
+                     ig_music={"audio_id": "587", "audio_volume": 25, "video_volume": 100})
     assert json.loads(fake.audio)["audio_id"] == "587" and fake.audio_searches == 0
+
+def test_a_refused_song_is_not_tried_again(owner, user, fake_http, monkeypatch):
+    fake = FakeInstagram(version="v27.0", audio_list=[SONG])
+    _publish_unified(owner, user, fake_http, monkeypatch, fake,
+                     ig_music={"audio_id": "587", "dropped": "Invalid audio"})
+    assert fake.video_url.endswith("key=u/p/final.mp4") and fake.audio == "" and fake.audio_searches == 0
 ```
 
-Extend `FakeInstagram`: `audio_list: list | None = None`; `GET /{version}/ig_audio` returns `{"audio": audio_list}` and counts `self.audio_searches += 1`. No OpenAI key is in the test vault, so `decide` takes the rule pick — the tests need no Decisions fake.
+Extend `FakeInstagram`: `audio_list: list | None = None`; `GET /{version}/ig_audio` returns `{"audio": audio_list or []}` for every query and counts `self.audio_searches += 1`. `_ready_post` makes a post with `audio_source = 'ltx_native'` (not narrated) — check it, and adjust the expected volumes if it doesn't. `vault.secret` returns `None` here (no OpenAI key stored), so `decide` never calls OpenAI — no Decisions fake is needed.
 
 - [ ] **Step 2: Run to see them fail** — `bash db/dev/test.sh worker/tests/test_publish.py -k "song or bed_version" -q` → FAIL.
 - [ ] **Step 3: Implement** `choose` and the handler branch per the Interfaces block.
@@ -477,8 +581,8 @@ git commit -m "Instagram reels go out with a trending song picked for them; YouT
   export async function exchange(p: Platform, code: string, api?: IgApi, keepId?: string | null): Promise<Connected>
   // Connected gains `api: IgApi | null`
   ```
-- Unified authorize URL: `https://www.facebook.com/v27.0/dialog/oauth?client_id=META_APP_ID&config_id=META_IG_CONFIG_ID&redirect_uri=…&response_type=code&state=…`.
-- Unified exchange: `GET https://graph.facebook.com/v27.0/oauth/access_token?client_id&client_secret&redirect_uri&code` → `access_token`, optional `expires_in` (absent/0 → `expiresAt: null`). Then `GET https://graph.facebook.com/v27.0/me/assigned_instagram_accounts?access_token=…` → `data[].id`; pick the id equal to `keepId` when given, else the first; if `keepId` is given and absent from `data`, throw `Error("That isn't the Instagram account this channel was connected to — log in with @<handle> or disconnect first.")` (handle passed in the message by the callback). Profile: `GET https://graph.facebook.com/v27.0/{id}?fields=username,name,profile_picture_url&access_token=…`. `scopes`: `[]` (the token's permissions come from the configuration).
+- Unified authorize URL: `https://www.facebook.com/dialog/oauth?client_id=META_APP_ID&config_id=META_IG_CONFIG_ID&redirect_uri=…&response_type=code&state=…`.
+- Unified exchange: `GET https://graph.facebook.com/v27.0/oauth/access_token?client_id&client_secret&redirect_uri&code` → `access_token`, optional `expires_in` (absent/0 → `expiresAt: null`). Then `GET https://graph.facebook.com/v27.0/me/assigned_instagram_accounts?fields=id,username&access_token=…` → `data[].id`; pick the id equal to `keepId` when given, else the first; if `keepId` is given and absent from `data`, throw `Error("That isn't the Instagram account this channel was connected to — log in with @<handle> or disconnect first.")` (handle passed in the message by the callback). Profile: `GET https://graph.facebook.com/v27.0/{id}?fields=username,name,profile_picture_url&access_token=…`. `scopes`: `[]` (the token's permissions come from the configuration).
 - Start route: look up `memberships.role` for the session user (reuse `membership()` from `lib/session.ts`); `api = (p === "instagram" && unifiedConfigured() && role === "owner") ? "unified" : "instagram_login"`; if `api === "instagram_login"` and the old `INSTAGRAM_APP_*` vars are missing, send back "Instagram isn't set up on the server yet."
 - Callback: read `state.a`; for Unified, fetch the channel's current Instagram row (`external_id, handle, api`) and pass `keepId = row?.api === "instagram_login" ? row.external_id : null` to `exchange`; insert/update `api` along with the other columns.
 
@@ -537,5 +641,7 @@ git commit -m "Deploy notes: Instagram Unified Login setup"
 - [ ] **Step 2: Whole-branch review on Opus** (superpowers:requesting-code-review), fix findings.
 - [ ] **Step 3: Owner does the Meta App Dashboard setup** and adds `META_APP_ID`, `META_APP_SECRET`, `META_IG_CONFIG_ID` on the server. Blocked until the owner reports done.
 - [ ] **Step 4: Apply migration 0043 to production and deploy** — only with the owner's explicit go-ahead, following `docs/DEPLOY.md`.
-- [ ] **Step 5: Live check by a Haiku browser agent** (claude-in-chrome, new tab): reconnect Instagram on one channel as the owner; confirm the card shows the handle and no reconnect note; confirm a mismatched account is refused with the message from Task 7; publish one reel; on the post page confirm "Instagram song: …"; open the reel's permalink and confirm the song shows on it. Report screenshots/GIF named `ig_trending_music_check.gif`.
-- [ ] **Step 6: Update memory** (`ig-trending-music.md`, `build-progress.md`) with the live result.
+- [ ] **Step 5: Owner reconnects Instagram** on one channel (the owner logs in and consents — never an agent). A Haiku browser agent (claude-in-chrome, new tab) then only verifies: the card shows the handle and no reconnect note.
+- [ ] **Step 6: Make a fresh reel on that channel** — it must be assembled *after* the reconnect (older reels have no `final_ig_key` and will correctly go out with the bed, which looks like a failure but isn't).
+- [ ] **Step 7: Owner approves the live post explicitly**, then it is published. The Haiku browser agent verifies: the post page shows "Instagram song: …"; `posts.ig_music->>'picked_by'` is `decisions` (a read-only query; `rule` means the Decisions call failed — check the worker log); the reel's permalink shows the song. GIF named `ig_trending_music_check.gif`.
+- [ ] **Step 8: Update memory** (`ig-trending-music.md`, `build-progress.md`) with the live result.
