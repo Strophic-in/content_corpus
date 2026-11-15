@@ -149,11 +149,12 @@ class FakeInstagram:
     def __init__(self, *, statuses=("IN_PROGRESS", "FINISHED"), container: str | None = None,
                  media: list | None = None, error_code: int | None = None, version: str = "v23.0",
                  refuse_audio: bool = False, audio_breaks_processing: bool = False,
-                 audio_list: list | None = None):
+                 audio_list: list | None = None, choice: str | None = None):
         self.statuses, self.container, self.media = list(statuses), container, media or []
         self.error_code, self.version = error_code, version
         self.refuse_audio, self.audio_breaks_processing = refuse_audio, audio_breaks_processing
         self.audio_list, self.audio_searches = audio_list, 0
+        self.choice, self.decisions = choice, 0     # the song the Decisions API answers with
         self.created = self.published = 0
         self.caption = self.video_url = self.audio = ""
         self.with_audio: dict[str, bool] = {}     # container id → created with a song?
@@ -161,6 +162,12 @@ class FakeInstagram:
 
     def __call__(self, req: httpx.Request) -> httpx.Response:
         path = req.url.path
+        if req.url.host == "api.openai.com":
+            assert path == "/v1/decisions"
+            self.decisions += 1
+            return httpx.Response(200, json={"answers": [{"type": "choice", "name": "song",
+                                                          "choice": self.choice, "confidence": 0.9}],
+                                             "usage": {"input_tokens": 500}})
         form = parse_qs(req.content.decode()) if req.method == "POST" else {}
         if self.error_code:
             return httpx.Response(400, json={"error": {"message": "bad", "code": self.error_code}})
@@ -515,6 +522,22 @@ def test_a_song_instagram_refuses_is_recorded_and_the_reel_goes_out_without_it(o
     assert saved["audio_id"] == "587" and "Invalid audio" in saved["dropped"]
     assert owner.execute("select reason from post_events where post_id = %s and reason = %s",
                          (pid, "posted to Instagram without its song")).fetchone()
+
+
+SECOND = {"audio_id": "700", "title": "Kal", "display_artist": "B", "duration_in_ms": 20000}
+
+
+def test_the_song_pick_is_costed(owner, user, fake_http, monkeypatch):
+    monkeypatch.setattr(publish_post.ig_music.vault, "secret", lambda uid, name: "sk")
+    fake = FakeInstagram(version="v27.0", audio_list=[LISTED, SECOND], choice="Kal — B")
+    pid = _publish_unified(owner, user, fake_http, monkeypatch, fake)
+    assert fake.decisions == 1 and json.loads(fake.audio)["audio_id"] == "700"
+    saved = owner.execute("select ig_music from posts where id = %s", (pid,)).fetchone()["ig_music"]
+    assert saved["audio_id"] == "700" and saved["picked_by"] == "decisions"
+    cost = owner.execute("select kind, model, quantity from costs where post_id = %s and kind = 'music_pick'",
+                         (pid,)).fetchone()
+    assert cost == {"kind": "music_pick", "model": "gpt-6-luna", "quantity": {"input": 500, "cached_input": 0,
+                                                                              "output": 0}}
 
 
 def test_a_refused_song_is_not_tried_again(owner, user, fake_http, monkeypatch):

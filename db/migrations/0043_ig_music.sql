@@ -6,3 +6,7 @@ alter table channel_accounts
 alter table posts
   add column final_ig_key text,
   add column ig_music jsonb;
+
+-- The song pick is one OpenAI call, costed like the others (kind 'music_pick').
+alter table costs drop constraint costs_kind_check,
+  add constraint costs_kind_check check (kind in ('llm','vision','moderation','image','tts','gpu','pod_storage','music_pick'));
