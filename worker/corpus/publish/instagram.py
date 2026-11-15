@@ -89,7 +89,7 @@ def publish(client: httpx.Client, *, token: str, ig_user_id: str, video_url: str
     if not container:
         container = (_create_images(client, token, ig_user_id, image_urls, caption, sleep, clock, graph)
                      if image_urls
-                     else _create(client, token, ig_user_id, video_url or "", caption, graph, cover_url))
+                     else _create(client, token, ig_user_id, video_url or "", caption, cover_url, graph))
         save(upload_session_uri=CONTAINER + container, state="uploading")
         _wait_until_processed(client, token, container, sleep, clock, graph)
 
@@ -116,8 +116,8 @@ def comment(client: httpx.Client, *, token: str, media_id: str, text: str, graph
     return f"not posted: {(err.get('message') or f'HTTP {r.status_code}')[:200]}"
 
 
-def _create(client: httpx.Client, token: str, ig_user_id: str, video_url: str, text: str, graph: str,
-            cover_url: str | None = None) -> str:
+def _create(client: httpx.Client, token: str, ig_user_id: str, video_url: str, text: str,
+            cover_url: str | None = None, graph: str = GRAPH) -> str:
     data = {"media_type": "REELS", "video_url": video_url, "caption": text, "share_to_feed": "true",
             "access_token": token}
     if cover_url:
