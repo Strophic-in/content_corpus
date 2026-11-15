@@ -12,11 +12,25 @@ candidates. A song Instagram refuses later is dropped by the publisher, never th
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 import httpx
 
 from .publish import instagram
+from .script.llm import Usage
+
+log = logging.getLogger("corpus.ig_music")
+
+DECISIONS = "https://api.openai.com/v1/decisions"
+MODEL = "gpt-6-luna"
+INSTRUCTIONS = (
+    "Pick the song that best suits this Instagram reel. Prefer Hindi songs. A song in another "
+    "language is fine when it sounds great and suits the reel. Gen-Z, meme and viral sounds are "
+    "good for light, funny or surprising stories. For death, disaster or tragedy pick the closest "
+    "calm or emotional song, never a comic or party one. When songs fit equally, prefer the more "
+    "trending one."
+)
 
 CAP = 40                 # candidates handed to the picker
 TRENDING_SLOTS = 15      # the no-query list may fill at most this many, so searches always get room
@@ -141,3 +155,94 @@ def volumes(narrated: bool) -> dict:
     if narrated:
         return {"audio_volume": 25, "video_volume": 100}
     return {"audio_volume": 100, "video_volume": 40}
+
+
+def _reel_lines(reel: dict) -> str:
+    return "\n".join([
+        f"Title: {reel.get('title') or ''}",
+        f"Hook: {reel.get('hook') or ''}",
+        f"Category: {reel.get('category') or ''}",
+        f"Mood: {reel.get('mood') or ''}",
+        f"Narrated: {'yes' if reel.get('narrated') else 'no'}",
+    ])
+
+
+def _unique_labels(tracks: list[Track]) -> list[str]:
+    """Each track's label, made unique: a repeated label gets ' (2)', ' (3)'…"""
+    used: set[str] = set()
+    out: list[str] = []
+    for t in tracks:
+        label, n = t.label, 1
+        while label in used:
+            n += 1
+            label = f"{t.label} ({n})"
+        used.add(label)
+        out.append(label)
+    return out
+
+
+def _usage(data: dict) -> Usage | None:
+    u = data.get("usage")
+    if not isinstance(u, dict):
+        return None
+    details = u.get("input_tokens_details") if isinstance(u.get("input_tokens_details"), dict) else {}
+    return Usage(model=MODEL, input_tokens=int(u.get("input_tokens") or 0), output_tokens=0,
+                 cached_input_tokens=int(details.get("cached_tokens") or 0))
+
+
+def decide(client: httpx.Client | None, api_key: str | None, reel: dict, tracks: list[Track]
+           ) -> tuple[Track, float | None, Usage | None, str]:
+    """The reel's song, asked of OpenAI's Decisions API as one choice question.
+    Returns (track, confidence, usage, picked_by): "only" when there is one song (no call),
+    "decisions" when the model chose, "rule" when rule_pick stands in (no key, a failed
+    call, a refusal, or a choice that is not offered). `usage` is set whenever a reply carried one."""
+    if len(tracks) == 1:
+        return tracks[0], None, None, "only"
+    if client is None:
+        with httpx.Client() as c:
+            return decide(c, api_key, reel, tracks)
+    fallback = rule_pick(tracks, reel.get("mood"))
+    if not api_key:
+        return fallback, None, None, "rule"
+    labels = _unique_labels(tracks)
+    by_label = dict(zip(labels, tracks))
+    choices = [{"value": label,
+                "description": (f"trending #{t.trending_rank}" if t.trending_rank else "not in trending")
+                + f"; found by: {t.found_by}"}
+               for label, t in zip(labels, tracks)]
+    body = {"model": MODEL,
+            "input": [{"role": "user", "content": [
+                {"type": "input_text", "text": _reel_lines(reel)},
+                {"type": "input_json", "data": {"songs": [
+                    {"song": label, "artist": t.artist, "trending_rank": t.trending_rank,
+                     "found_by": t.found_by, "seconds": round(t.duration_ms / 1000)}
+                    for label, t in zip(labels, tracks)]}}]}],
+            "questions": [{"type": "choice", "name": "song", "instructions": INSTRUCTIONS,
+                           "choices": choices}]}
+    try:
+        r = client.post(DECISIONS, json=body, headers={"Authorization": f"Bearer {api_key}"}, timeout=20)
+    except httpx.HTTPError as e:
+        log.warning("Decisions call failed, using the rule pick: %s", e)
+        return fallback, None, None, "rule"
+    if r.status_code != 200:
+        log.warning("Decisions returned %s, using the rule pick: %s", r.status_code, r.text[:300])
+        return fallback, None, None, "rule"
+    try:
+        data = r.json()
+        if not isinstance(data, dict):
+            raise ValueError("reply is not an object")
+        usage = _usage(data)
+        answer = next(a for a in data.get("answers") or []
+                      if isinstance(a, dict) and a.get("name") == "song")
+    except (ValueError, TypeError, StopIteration, AttributeError) as e:
+        log.warning("Decisions reply unreadable, using the rule pick: %s", e)
+        return fallback, None, None, "rule"
+    if answer.get("type") != "choice":
+        log.warning("Decisions refused the song question, using the rule pick")
+        return fallback, None, usage, "rule"
+    track = by_label.get(answer.get("choice"))
+    if track is None:
+        log.warning("Decisions chose %r, which was not offered; using the rule pick", answer.get("choice"))
+        return fallback, None, usage, "rule"
+    conf = answer.get("confidence")
+    return track, float(conf) if conf is not None else None, usage, "decisions"

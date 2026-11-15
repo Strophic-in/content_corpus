@@ -7,6 +7,8 @@ Pure unit tests against a fake Graph API (httpx.MockTransport); no database.
 
 from __future__ import annotations
 
+import json
+
 import httpx
 import pytest
 
@@ -96,3 +98,49 @@ def test_rule_pick_prefers_the_moods_search_then_trending():
 def test_volumes():
     assert ig_music.volumes(True) == {"audio_volume": 25, "video_volume": 100}
     assert ig_music.volumes(False) == {"audio_volume": 100, "video_volume": 40}
+
+
+TRACKS = [ig_music.Track("1", "Party Song", "DJ", 30000, 1, "trending"),
+          ig_music.Track("2", "Dil Udaas", "Arijit", 40000, None, ig_music.MOOD_SEARCHES["somber"][0])]
+REEL = {"title": "Flood kills 12", "hook": "Water rose overnight", "category": "News", "mood": "somber",
+        "narrated": True}
+
+
+def fake_decisions(reply, seen):          # dict → 200 JSON; int → bare status
+    def handler(req):
+        seen.append(json.loads(req.content))
+        assert req.url == ig_music.DECISIONS
+        assert req.headers["authorization"] == "Bearer sk"
+        return httpx.Response(200, json=reply) if isinstance(reply, dict) else httpx.Response(reply)
+    return httpx.Client(transport=httpx.MockTransport(handler))
+
+
+def test_decide_sends_one_choice_question_and_returns_the_pick():
+    seen = []
+    c = fake_decisions({"answers": [{"type": "choice", "name": "song", "choice": "Dil Udaas — Arijit",
+                                     "confidence": 0.8}],
+                        "usage": {"input_tokens": 900, "input_tokens_details": {"cached_tokens": 0}}}, seen)
+    track, conf, usage, by = ig_music.decide(c, "sk", REEL, TRACKS)
+    assert track.audio_id == "2" and conf == 0.8 and by == "decisions"
+    assert usage.input_tokens == 900 and usage.output_tokens == 0
+    body = seen[0]
+    assert body["model"] == "gpt-6-luna" and body["questions"][0]["type"] == "choice"
+    assert [ch["value"] for ch in body["questions"][0]["choices"]] == ["Party Song — DJ", "Dil Udaas — Arijit"]
+    assert "Prefer Hindi songs" in body["questions"][0]["instructions"]
+
+
+def test_decide_falls_back_to_the_rule_pick():
+    for reply in (500, {"answers": [{"type": "refusal", "name": "song"}]},
+                  {"answers": [{"type": "choice", "name": "song", "choice": "Not offered"}]}):
+        track, conf, _, by = ig_music.decide(fake_decisions(reply, []), "sk", REEL, TRACKS)
+        assert track.audio_id == "2" and conf is None and by == "rule"
+    assert ig_music.decide(None, None, REEL, TRACKS)[0].audio_id == "2"     # no key: no call at all
+    assert ig_music.decide(None, "sk", REEL, TRACKS[:1])[3] == "only"       # one song: nothing to decide
+
+
+def test_duplicate_labels_are_made_unique():
+    twins = [ig_music.Track("1", "Same", "A", 1, 1, "trending"), ig_music.Track("2", "Same", "A", 1, 2, "trending")]
+    seen = []
+    ig_music.decide(fake_decisions({"answers": [{"type": "choice", "name": "song", "choice": "Same — A (2)",
+                                                 "confidence": 0.5}]}, seen), "sk", REEL, twins)
+    assert [ch["value"] for ch in seen[0]["questions"][0]["choices"]] == ["Same — A", "Same — A (2)"]
