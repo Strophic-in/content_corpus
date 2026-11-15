@@ -144,3 +144,24 @@ def test_duplicate_labels_are_made_unique():
     ig_music.decide(fake_decisions({"answers": [{"type": "choice", "name": "song", "choice": "Same — A (2)",
                                                  "confidence": 0.5}]}, seen), "sk", REEL, twins)
     assert [ch["value"] for ch in seen[0]["questions"][0]["choices"]] == ["Same — A", "Same — A (2)"]
+
+
+def test_a_malformed_answer_falls_back_to_the_rule_pick():
+    for answer in ({"type": "choice", "name": "song", "choice": "Party Song — DJ", "confidence": "high"},
+                   {"type": "choice", "name": "song", "choice": ["Party Song — DJ"], "confidence": 0.9}):
+        track, conf, _, by = ig_music.decide(fake_decisions({"answers": [answer]}, []), "sk", REEL, TRACKS)
+        assert track.audio_id == "2" and conf is None and by == "rule"
+
+
+def test_malformed_usage_keeps_a_valid_pick():
+    reply = {"answers": [{"type": "choice", "name": "song", "choice": "Party Song — DJ", "confidence": 0.7}],
+             "usage": {"input_tokens": "lots"}}
+    track, conf, usage, by = ig_music.decide(fake_decisions(reply, []), "sk", REEL, TRACKS)
+    assert track.audio_id == "1" and conf == 0.7 and by == "decisions" and usage is None
+
+
+def test_a_400_is_logged_with_its_status(caplog):
+    with caplog.at_level("WARNING", logger="corpus.ig_music"):
+        track, _, _, by = ig_music.decide(fake_decisions(400, []), "sk", REEL, TRACKS)
+    assert track.audio_id == "2" and by == "rule"
+    assert any(r.levelname == "WARNING" and "400" in r.getMessage() for r in caplog.records)

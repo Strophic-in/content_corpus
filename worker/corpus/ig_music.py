@@ -186,8 +186,12 @@ def _usage(data: dict) -> Usage | None:
     if not isinstance(u, dict):
         return None
     details = u.get("input_tokens_details") if isinstance(u.get("input_tokens_details"), dict) else {}
-    return Usage(model=MODEL, input_tokens=int(u.get("input_tokens") or 0), output_tokens=0,
-                 cached_input_tokens=int(details.get("cached_tokens") or 0))
+    try:
+        return Usage(model=MODEL, input_tokens=int(u.get("input_tokens") or 0), output_tokens=0,
+                     cached_input_tokens=int(details.get("cached_tokens") or 0))
+    except (TypeError, ValueError):
+        log.warning("Decisions usage unreadable; recording none")
+        return None
 
 
 def decide(client: httpx.Client | None, api_key: str | None, reel: dict, tracks: list[Track]
@@ -231,18 +235,23 @@ def decide(client: httpx.Client | None, api_key: str | None, reel: dict, tracks:
         data = r.json()
         if not isinstance(data, dict):
             raise ValueError("reply is not an object")
-        usage = _usage(data)
-        answer = next(a for a in data.get("answers") or []
-                      if isinstance(a, dict) and a.get("name") == "song")
-    except (ValueError, TypeError, StopIteration, AttributeError) as e:
+    except ValueError as e:
         log.warning("Decisions reply unreadable, using the rule pick: %s", e)
         return fallback, None, None, "rule"
-    if answer.get("type") != "choice":
-        log.warning("Decisions refused the song question, using the rule pick")
+    usage = _usage(data)
+    try:
+        answer = next(a for a in data.get("answers") or []
+                      if isinstance(a, dict) and a.get("name") == "song")
+        if answer.get("type") != "choice":
+            log.warning("Decisions refused the song question, using the rule pick")
+            return fallback, None, usage, "rule"
+        track = by_label.get(answer.get("choice"))
+        conf = answer.get("confidence")
+        conf = float(conf) if conf is not None else None
+    except (TypeError, ValueError, StopIteration, AttributeError) as e:
+        log.warning("Decisions answer unreadable, using the rule pick: %s", e)
         return fallback, None, usage, "rule"
-    track = by_label.get(answer.get("choice"))
     if track is None:
         log.warning("Decisions chose %r, which was not offered; using the rule pick", answer.get("choice"))
         return fallback, None, usage, "rule"
-    conf = answer.get("confidence")
-    return track, float(conf) if conf is not None else None, usage, "decisions"
+    return track, conf, usage, "decisions"
