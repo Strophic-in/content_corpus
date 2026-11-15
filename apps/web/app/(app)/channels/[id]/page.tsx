@@ -66,7 +66,7 @@ export default async function ChannelPage({ params, searchParams }: {
         <h2 className="font-medium">Accounts</h2>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           {(["youtube", "instagram"] as const).map((p) => (
-            <ConnectionCard key={p} platform={p} channelId={channel.id} ready={configured(p)}
+            <ConnectionCard key={p} platform={p} channelId={channel.id} ready={configured(p)} owner={user.role === "owner"}
                             account={accounts.find((a) => a.platform === p) ?? null} />
           ))}
         </div>

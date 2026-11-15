@@ -336,9 +336,16 @@ async function RenderPanel({ post, shots }: { post: PostRow; shots: ShotRow[] })
           <>
             <video src={play} controls playsInline className="aspect-[9/16] w-full max-w-xs rounded-lg bg-black" />
             {download && <a href={download} className="w-fit text-accent underline-offset-4 hover:underline">Download MP4</a>}
+            {post.ig_music && (
+              <p className="text-xs text-muted">
+                {post.ig_music.dropped
+                  ? "Instagram refused the song — posted with the background track."
+                  : <>Instagram song: “{post.ig_music.title}” by {post.ig_music.artist}{post.ig_music.trending_rank ? ` · trending #${post.ig_music.trending_rank}` : ""}</>}
+              </p>
+            )}
             {post.music && (
               <p className="text-xs text-muted">
-                Music: <a href={post.music.page} target="_blank" rel="noreferrer" className="underline">“{post.music.name}”</a>{" "}
+                {post.ig_music ? "YouTube music" : "Music"}: <a href={post.music.page} target="_blank" rel="noreferrer" className="underline">“{post.music.name}”</a>{" "}
                 by {post.music.author} · {post.music.mood} · CC0
               </p>
             )}
@@ -643,9 +650,16 @@ async function SlidesPanel({ post }: { post: PostRow }) {
         <p className="text-xs text-muted">Instagram gets these as {post.slides.length === 1 ? "a picture post" : "a carousel"};
           YouTube gets the slideshow below.</p>
         {play && <video src={play} controls playsInline className="aspect-[9/16] w-full max-w-[220px] rounded-lg bg-black" />}
+        {post.ig_music && (
+          <p className="text-xs text-muted">
+            {post.ig_music.dropped
+              ? "Instagram refused the song — posted with the background track."
+              : <>Instagram song: “{post.ig_music.title}” by {post.ig_music.artist}{post.ig_music.trending_rank ? ` · trending #${post.ig_music.trending_rank}` : ""}</>}
+          </p>
+        )}
         {post.music && (
           <p className="text-xs text-muted">
-            Music: <a href={post.music.page} target="_blank" rel="noreferrer" className="underline">“{post.music.name}”</a>{" "}
+            {post.ig_music ? "YouTube music" : "Music"}: <a href={post.music.page} target="_blank" rel="noreferrer" className="underline">“{post.music.name}”</a>{" "}
             by {post.music.author} · {post.music.mood} · CC0
           </p>
         )}
