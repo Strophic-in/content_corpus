@@ -268,7 +268,7 @@ def choose(client: httpx.Client, *, post: dict, acc: dict, token: str, job_id=No
         return None
     if saved and saved.get("audio_id"):
         return saved
-    row = db.one("""select s.title, s.hook, s.music_mood, p.audio_source, c.name as category
+    row = db.one("""select s.title, s.hook, s.music_mood, s.intended_dialogue, p.audio_source, c.name as category
                       from posts p
                       left join scripts s on s.id = p.approved_script_id
                       left join categories c on c.id = p.category_id
@@ -278,7 +278,9 @@ def choose(client: httpx.Client, *, post: dict, acc: dict, token: str, job_id=No
             """select ig_music->>'audio_id' as audio_id from posts
                 where channel_id = %s and id <> %s and ig_music->>'audio_id' is not null
                 order by created_at desc limit %s""", (post["channel_id"], post["id"], RECENT)).fetchall()}
-    narrated = row["audio_source"] == "kokoro"
+    # A voice-over, or characters who speak on screen: the song stays under the speech.
+    narrated = row["audio_source"] == "kokoro" or (
+        row["audio_source"] == "ltx_native" and (row["intended_dialogue"] or "").strip() != "")
     reel = {"title": row["title"] or "", "hook": row["hook"] or "", "category": row["category"] or "",
             "mood": row["music_mood"] or "", "narrated": narrated}
     tracks = candidates(client, graph=instagram.host("unified"), token=token, ig_user_id=acc["external_id"],

@@ -442,7 +442,7 @@ def _unified(owner, user, pid):
 LISTED = {"audio_id": "587", "title": "Dil", "display_artist": "A", "duration_in_ms": 30000}
 
 
-def _publish_unified(owner, user, fake_http, monkeypatch, fake, ig_music=None, narrated=False):
+def _publish_unified(owner, user, fake_http, monkeypatch, fake, ig_music=None, narrated=False, dialogue=None):
     fake_http(fake)
     monkeypatch.setattr(publish_post.storage, "signed_url", lambda key, seconds: f"{LINK}&key={key}")
     monkeypatch.setattr(publish_post.instagram, "POLL_S", 0)
@@ -450,6 +450,9 @@ def _publish_unified(owner, user, fake_http, monkeypatch, fake, ig_music=None, n
     _unified(owner, user, pid)
     if narrated:
         owner.execute("update posts set audio_source = 'kokoro' where id = %s", (pid,))
+    if dialogue is not None:        # an LTX-native reel whose characters speak
+        owner.execute("update posts set audio_source = 'ltx_native' where id = %s", (pid,))
+        owner.execute("update scripts set intended_dialogue = %s where post_id = %s", (dialogue, pid))
     if ig_music is not None:
         owner.execute("update posts set ig_music = %s where id = %s", (json.dumps(ig_music), pid))
     _request(owner, user, pid, ("instagram",))
@@ -487,6 +490,18 @@ def test_a_narrated_reel_keeps_the_song_quiet_under_the_voice(owner, user, fake_
     fake = FakeInstagram(version="v27.0", audio_list=[LISTED])
     _publish_unified(owner, user, fake_http, monkeypatch, fake, narrated=True)
     assert json.loads(fake.audio) == {"audio_id": "587", "audio_volume": 25, "video_volume": 100}
+
+
+def test_a_reel_whose_characters_speak_keeps_the_song_quiet(owner, user, fake_http, monkeypatch):
+    fake = FakeInstagram(version="v27.0", audio_list=[LISTED])
+    _publish_unified(owner, user, fake_http, monkeypatch, fake, dialogue="Hello there")
+    assert json.loads(fake.audio) == {"audio_id": "587", "audio_volume": 25, "video_volume": 100}
+
+
+def test_a_silent_ltx_reel_keeps_the_song_loud(owner, user, fake_http, monkeypatch):
+    fake = FakeInstagram(version="v27.0", audio_list=[LISTED])
+    _publish_unified(owner, user, fake_http, monkeypatch, fake, dialogue="")
+    assert json.loads(fake.audio) == {"audio_id": "587", "audio_volume": 100, "video_volume": 40}
 
 
 def test_a_failed_pick_posts_the_bed_version(owner, user, fake_http, monkeypatch):
