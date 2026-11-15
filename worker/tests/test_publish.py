@@ -435,12 +435,14 @@ def _unified(owner, user, pid):
 LISTED = {"audio_id": "587", "title": "Dil", "display_artist": "A", "duration_in_ms": 30000}
 
 
-def _publish_unified(owner, user, fake_http, monkeypatch, fake, ig_music=None):
+def _publish_unified(owner, user, fake_http, monkeypatch, fake, ig_music=None, narrated=False):
     fake_http(fake)
     monkeypatch.setattr(publish_post.storage, "signed_url", lambda key, seconds: f"{LINK}&key={key}")
     monkeypatch.setattr(publish_post.instagram, "POLL_S", 0)
     pid = _ready_post(owner, user)
     _unified(owner, user, pid)
+    if narrated:
+        owner.execute("update posts set audio_source = 'kokoro' where id = %s", (pid,))
     if ig_music is not None:
         owner.execute("update posts set ig_music = %s where id = %s", (json.dumps(ig_music), pid))
     _request(owner, user, pid, ("instagram",))
@@ -472,6 +474,37 @@ def test_a_retry_reuses_the_saved_song(owner, user, fake_http, monkeypatch):
     _publish_unified(owner, user, fake_http, monkeypatch, fake,
                      ig_music={"audio_id": "587", "audio_volume": 25, "video_volume": 100})
     assert json.loads(fake.audio)["audio_id"] == "587" and fake.audio_searches == 0
+
+
+def test_a_narrated_reel_keeps_the_song_quiet_under_the_voice(owner, user, fake_http, monkeypatch):
+    fake = FakeInstagram(version="v27.0", audio_list=[LISTED])
+    _publish_unified(owner, user, fake_http, monkeypatch, fake, narrated=True)
+    assert json.loads(fake.audio) == {"audio_id": "587", "audio_volume": 25, "video_volume": 100}
+
+
+def test_a_failed_pick_posts_the_bed_version(owner, user, fake_http, monkeypatch):
+    def broken(*args, **kwargs):
+        raise RuntimeError("the picker fell over")
+    monkeypatch.setattr(publish_post.ig_music, "choose", broken)
+    fake = FakeInstagram(version="v27.0", audio_list=[LISTED])
+    _publish_unified(owner, user, fake_http, monkeypatch, fake)
+    assert fake.video_url.endswith("key=u/p/final.mp4") and fake.audio == ""
+
+
+def test_expired_access_during_the_pick_marks_instagram_for_reconnecting(owner, user, fake_http, monkeypatch):
+    def expired(*args, **kwargs):
+        raise instagram.AuthExpired("Instagram access has expired or was removed")
+    monkeypatch.setattr(publish_post.ig_music, "choose", expired)
+    fake_http(FakeInstagram(version="v27.0", audio_list=[LISTED]))
+    monkeypatch.setattr(publish_post.storage, "signed_url", lambda key, seconds: f"{LINK}&key={key}")
+    pid = _ready_post(owner, user)
+    _unified(owner, user, pid)
+    _request(owner, user, pid, ("instagram",))
+    Runner("publish", {"publish_post": publish_post.HANDLER}).tick()
+    job = owner.execute("select state, error from jobs where dedupe_key = %s", (f"publish:{pid}:instagram",)).fetchone()
+    assert job["state"] == "dead" and "reconnect Instagram" in job["error"]["message"]
+    assert owner.execute("select status from channel_accounts where platform = 'instagram' and channel_id = "
+                         "(select channel_id from posts where id = %s)", (pid,)).fetchone()["status"] == "expired"
 
 
 def test_a_song_instagram_refuses_is_recorded_and_the_reel_goes_out_without_it(owner, user, fake_http, monkeypatch):

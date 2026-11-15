@@ -139,7 +139,10 @@ def run(ctx: JobContext) -> dict:
     attempts.update(att, state="live", remote_id=out["remote_id"], remote_url=out.get("remote_url"),
                     privacy=out.get("privacy"), response=out.get("response") or {}, error=None)
     if out.get("audio_dropped"):
-        _drop_song(post, out["audio_dropped"])
+        try:
+            _drop_song(post, out["audio_dropped"])
+        except Exception:  # noqa: BLE001 - the post is live; the record is best effort
+            log.warning("could not record the dropped song for %s", post["id"], exc_info=True)
     # Live first; then the cover as YouTube's thumbnail and the first comment. These
     # never undo the post — what happened is recorded on the attempt and the activity.
     extras = _extras(platform, acc["id"], out, pkg)
