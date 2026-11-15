@@ -147,9 +147,9 @@ class FakeInstagram:
     an earlier run's container reports; `statuses` are replies after creating one."""
 
     def __init__(self, *, statuses=("IN_PROGRESS", "FINISHED"), container: str | None = None,
-                 media: list | None = None, error_code: int | None = None):
+                 media: list | None = None, error_code: int | None = None, version: str = "v23.0"):
         self.statuses, self.container, self.media = list(statuses), container, media or []
-        self.error_code = error_code
+        self.error_code, self.version = error_code, version
         self.created = self.published = 0
         self.caption = self.video_url = ""
 
@@ -158,7 +158,7 @@ class FakeInstagram:
         form = parse_qs(req.content.decode()) if req.method == "POST" else {}
         if self.error_code:
             return httpx.Response(400, json={"error": {"message": "bad", "code": self.error_code}})
-        if req.method == "POST" and path == "/v23.0/178/media":
+        if req.method == "POST" and path == f"/{self.version}/178/media":
             if "video_url" not in form:      # what the real API said to upload_type=resumable
                 return httpx.Response(400, json={"error": {"message": "The parameter video_url is required",
                                                            "code": 100}})
@@ -166,16 +166,16 @@ class FakeInstagram:
             self.created += 1
             self.caption, self.video_url = form["caption"][0], form["video_url"][0]
             return httpx.Response(200, json={"id": "c1"})
-        if req.method == "GET" and path == "/v23.0/c1":
+        if req.method == "GET" and path == f"/{self.version}/c1":
             status = self.container or (self.statuses.pop(0) if len(self.statuses) > 1 else self.statuses[0])
             return httpx.Response(200, json={"status_code": status, "status": "Error: too short"})
-        if req.method == "POST" and path == "/v23.0/178/media_publish":
+        if req.method == "POST" and path == f"/{self.version}/178/media_publish":
             assert form["creation_id"] == ["c1"]
             self.published += 1
             return httpx.Response(200, json={"id": "m1"})
-        if req.method == "GET" and path == "/v23.0/m1":
+        if req.method == "GET" and path == f"/{self.version}/m1":
             return httpx.Response(200, json={"permalink": "https://www.instagram.com/reel/abc/"})
-        if req.method == "GET" and path == "/v23.0/178/media":
+        if req.method == "GET" and path == f"/{self.version}/178/media":
             return httpx.Response(200, json={"data": self.media})
         raise AssertionError(f"unexpected {req.method} {req.url}")
 
@@ -219,6 +219,47 @@ def test_instagram_failures_are_told_apart(video):
         _ig(FakeInstagram(error_code=190), video, {})
     with pytest.raises(instagram.PublishError):
         _ig(FakeInstagram(error_code=4), video, {})                     # rate limited
+
+
+def test_instagram_host_follows_the_account_api():
+    assert instagram.host("unified") == "https://graph.facebook.com/v27.0"
+    assert instagram.host("instagram_login") == instagram.GRAPH
+    assert instagram.host(None) == instagram.GRAPH
+
+
+def test_instagram_publishes_through_the_unified_host(video):
+    fake = FakeInstagram(version="v27.0")
+    out = instagram.publish(client(fake), token="tok", ig_user_id="178", video_url=LINK, caption="A reel",
+                            attempt={}, save=lambda **f: None, sleep=lambda s: None,
+                            graph=instagram.GRAPH_UNIFIED)
+    assert out["remote_id"] == "m1" and fake.published == 1
+
+
+def _due_unified(owner, user, pid):
+    """An account due for renewal by its dates — but on Unified Login."""
+    owner.execute("""insert into channel_accounts (user_id, channel_id, platform, external_id, token_ciphertext,
+                                                   token_expires_at, api, updated_at)
+                     select %s, channel_id, 'instagram', '178', %s, now() + interval '2 days', 'unified',
+                            now() - interval '3 days' from posts where id = %s""", (user, encrypt("tok"), pid))
+    return owner.execute("select * from channel_accounts where external_id = '178'").fetchone()
+
+
+def test_upkeep_never_renews_a_unified_token(owner, user, monkeypatch):
+    _due_unified(owner, user, _ready_post(owner, user))
+    calls = []
+    monkeypatch.setattr(publish_post.instagram, "refresh", lambda *a: calls.append(a) or ("new", 5_184_000))
+    monkeypatch.setattr(publish_post, "_last_upkeep", -1e18)      # upkeep's hourly gate is open
+    monkeypatch.setattr(publish_post, "_last_stats", 1e18)        # no stats round
+    publish_post.upkeep()
+    assert calls == []
+    assert owner.execute("select status from channel_accounts where external_id = '178'").fetchone()["status"] == "connected"
+
+
+def test_publishing_never_renews_a_unified_token(owner, user, monkeypatch):
+    acc = _due_unified(owner, user, _ready_post(owner, user))
+    calls = []
+    monkeypatch.setattr(publish_post.instagram, "refresh", lambda *a: calls.append(a) or ("new", 5_184_000))
+    assert publish_post._instagram_token(httpx.Client(), acc) == "tok" and calls == []
 
 
 def test_instagram_caption_keeps_to_the_limits():

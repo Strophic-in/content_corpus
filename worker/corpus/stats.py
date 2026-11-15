@@ -62,13 +62,13 @@ def read_back(client: httpx.Client, log: Callable[[str], None] = print) -> int:
                         n += 1
     for x in (r for r in live if r["platform"] == "instagram"):
         with db.conn() as c:
-            acc = c.execute("""select token_ciphertext from channel_accounts
+            acc = c.execute("""select token_ciphertext, api from channel_accounts
                                 where channel_id = %s and platform = 'instagram' and status = 'connected'""",
                             (x["channel_id"],)).fetchone()
         if not acc:
             continue
         try:
-            r = client.get(f"{instagram.GRAPH}/{x['remote_id']}",
+            r = client.get(f"{instagram.host(acc['api'])}/{x['remote_id']}",
                            params={"fields": "like_count,comments_count", "access_token": decrypt(acc["token_ciphertext"])})
             if r.status_code != 200:
                 continue

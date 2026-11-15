@@ -102,7 +102,8 @@ def run(ctx: JobContext) -> dict:
                                                credits)),
                     cover_url=(storage.signed_url(pkg["thumbnail_key"], INSTAGRAM_LINK_SECONDS)
                                if pkg and pkg.get("thumbnail_key") and not slides else None),
-                    attempt=att, save=lambda **f: attempts.update(att, **f))
+                    attempt=att, save=lambda **f: attempts.update(att, **f),
+                    graph=instagram.host(acc.get("api")))
     except (youtube.AuthExpired, instagram.AuthExpired) as e:
         _set_account_status(acc, "expired")
         _give_up(att, e)
@@ -139,7 +140,7 @@ def _extras(platform: str, account_id, out: dict, pkg: dict | None) -> dict:
     if not pkg or not out.get("remote_id"):
         return {}
     # The account row again: its token may have been renewed during the upload.
-    acc = db.one("select token_ciphertext from channel_accounts where id = %s", (account_id,))
+    acc = db.one("select token_ciphertext, api from channel_accounts where id = %s", (account_id,))
     try:
         with httpx.Client(timeout=TIMEOUT) as client:
             if platform == "youtube":
@@ -151,7 +152,8 @@ def _extras(platform: str, account_id, out: dict, pkg: dict | None) -> dict:
                                           comment=packaging.first_comment(pkg, "youtube"))
             return {"comment": instagram.comment(client, token=decrypt(acc["token_ciphertext"]),
                                                  media_id=out["remote_id"],
-                                                 text=packaging.first_comment(pkg, "instagram"))}
+                                                 text=packaging.first_comment(pkg, "instagram"),
+                                                 graph=instagram.host(acc["api"]))}
     except Exception as e:  # noqa: BLE001 - the post is live either way
         log.warning("after posting to %s: %s", platform, e)
         return {"error": f"{type(e).__name__}: {e}"[:300]}
@@ -195,12 +197,15 @@ def _set_account_status(acc: dict, status: str) -> None:
 
 
 def _instagram_token(client: httpx.Client, acc: dict) -> str:
-    """The account's token, renewed first when it is due (see IG_RENEW_*)."""
+    """The account's token, renewed first when it is due (see IG_RENEW_*). Unified
+    Login tokens are never renewed here: only their expiry is checked."""
     token = decrypt(acc["token_ciphertext"])
     now = datetime.now(timezone.utc)
     expires = acc["token_expires_at"]
     if expires and expires <= now:
         raise instagram.AuthExpired("the Instagram token expired")
+    if acc.get("api") == "unified":
+        return token
     if expires and expires - now < IG_RENEW_WITHIN and now - acc["updated_at"] > IG_RENEW_AFTER:
         try:
             token = _renew(client, acc, token)
@@ -248,6 +253,7 @@ def upkeep() -> None:
     with db.conn() as c:
         due = c.execute("""select * from channel_accounts
                             where platform = 'instagram' and status = 'connected'
+                              and api = 'instagram_login'
                               and token_expires_at < now() + %s and updated_at < now() - %s""",
                         (IG_RENEW_WITHIN, IG_RENEW_AFTER)).fetchall()
     if not due:
