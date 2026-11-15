@@ -458,6 +458,28 @@ def test_assemble_keeps_a_music_free_copy_for_unified_instagram(s3, owner, user,
     assert row["final_ig_key"].endswith(".ig.mp4") and row["final_ig_key"] != row["final_key"]
     assert joins == [True, False] and row["ig_music"] is None
 
+def test_a_failed_music_free_copy_still_leaves_the_reel_ready(s3, owner, user, gpu, tmp_path, segment_cache,
+                                                              monkeypatch):
+    pid, sid = approved_narrated_post(owner, user)
+    channel = owner.execute("insert into channels (user_id, name, is_default) values (%s, 'Glow', true) returning id",
+                            (user,)).fetchone()["id"]
+    owner.execute("update posts set channel_id = %s where id = %s", (channel, pid))
+    owner.execute("""insert into channel_accounts (user_id, channel_id, platform, external_id, token_ciphertext, api)
+                     values (%s, %s, 'instagram', '178', 'x', 'unified')""", (user, channel))
+    joins = _with_tone_and_spy(monkeypatch, tmp_path)
+    spy = media.join_segments
+
+    def copy_fails(segments, out, **kw):
+        if kw.get("music") is None:
+            raise media.FfmpegError("ffmpeg failed: copy")
+        return spy(segments, out, **kw)
+    monkeypatch.setattr(media, "join_segments", copy_fails)
+    _render_and_assemble(owner, user, pid)
+    row = owner.execute("select status, final_key, final_ig_key from posts where id = %s", (pid,)).fetchone()
+    assert row["status"] == "ready" and row["final_key"] and row["final_ig_key"] is None
+    assert joins == [True]
+
+
 def test_assemble_makes_one_reel_without_unified_instagram(s3, owner, user, gpu, tmp_path, segment_cache,
                                                            monkeypatch):
     pid, sid = approved_narrated_post(owner, user)

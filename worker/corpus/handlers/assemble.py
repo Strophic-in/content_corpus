@@ -67,11 +67,15 @@ def run(ctx: JobContext) -> dict:
             if track:
                 log("instagram copy without music")
                 ig_out = Path(tmp) / "final.ig.mp4"
-                media.join_segments(segments, ig_out, log=log, music=None,
-                                    transitions=transitions, loop=look.loop)
-                ig_key = f"{prefix}/final/{script_id}.ig.mp4"
-                storage.put_file(ig_key, ig_out, kind="final", user_id=post["user_id"], post_id=post["id"],
-                                 content_type="video/mp4")
+                try:
+                    media.join_segments(segments, ig_out, log=log, music=None,
+                                        transitions=transitions, loop=look.loop)
+                    ig_key = f"{prefix}/final/{script_id}.ig.mp4"
+                    storage.put_file(ig_key, ig_out, kind="final", user_id=post["user_id"], post_id=post["id"],
+                                     content_type="video/mp4")
+                except Exception as e:  # noqa: BLE001 - the YouTube reel must still be ready
+                    log(f"instagram copy failed, Instagram gets the reel with the bed music: {e}")
+                    ig_key = None
     # Who made the footage shown, in order of appearance: for the description and caption.
     # ("AI reconstruction" and "AI illustration" are labels, not credits.)
     credits = list(dict.fromkeys(s["credit"].strip() for s in shots
