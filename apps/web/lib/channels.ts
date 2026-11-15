@@ -30,7 +30,7 @@ export type Format = {
 export type Account = {
   id: string; channel_id: string; platform: "youtube" | "instagram"; external_id: string;
   handle: string | null; display_name: string | null; avatar_url: string | null; status: string;
-  token_expires_at: Date | null; connected_at: Date;
+  token_expires_at: Date | null; connected_at: Date; api: "instagram_login" | "unified";
 };
 
 export const CHANNEL_COOKIE = "cc_channel";
@@ -46,7 +46,7 @@ export const FORMAT_COLS = `id, channel_id, name, description, is_default, audio
   idea_prompt, script_prompt, visual_style, sources, ideas_per_batch, version, updated_at, template_id,
   content_type, params`;
 export const ACCOUNT_COLS = `id, channel_id, platform, external_id, handle, display_name, avatar_url, status,
-  token_expires_at, connected_at`;
+  token_expires_at, connected_at, api`;
 
 // The names formats were made from before templates.
 const LEGACY: Record<string, string> = {

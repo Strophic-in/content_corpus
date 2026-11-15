@@ -383,6 +383,17 @@ def test_account_tokens_are_write_only(alice):
             c.execute("select token_ciphertext from channel_accounts")
 
 
+def test_the_web_sets_and_reads_which_instagram_api_an_account_uses(alice):
+    with web(alice) as c:
+        ch = _new_channel(c, alice)
+        c.execute("""insert into channel_accounts (user_id, channel_id, platform, external_id, token_ciphertext,
+                                                   api) values (%s, %s, 'instagram', '178', 'v1.x.y', 'unified')""",
+                  (alice, ch))
+        assert c.execute("select api from channel_accounts where channel_id = %s", (ch,)).fetchone()[0] == "unified"
+        c.execute("update channel_accounts set api = 'instagram_login' where channel_id = %s", (ch,))
+        assert c.execute("select api from channel_accounts where channel_id = %s", (ch,)).fetchone()[0] == "instagram_login"
+
+
 def test_swiping_schedules_a_post_or_records_why_not(alice, owner):
     with psycopg.connect(OWNER, autocommit=True) as o:       # ideas are written by the worker
         o.execute("insert into app_settings (user_id) values (%s)", (alice,))

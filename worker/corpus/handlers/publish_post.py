@@ -18,8 +18,9 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import httpx
+from psycopg.types.json import Jsonb
 
-from .. import db, packaging, stats, storage
+from .. import db, ig_music, packaging, stats, storage
 from ..config import settings
 from ..crypto import decrypt, encrypt
 from ..publish import attempts, instagram, youtube
@@ -41,7 +42,7 @@ def run(ctx: JobContext) -> dict:
         raise Permanent(f"unknown platform {platform!r}", stage="input")
     name = NAMES[platform]
     post = db.one("""select p.id, p.user_id, p.channel_id, p.status, p.final_key, p.final_sha256, p.credits,
-                            p.format, p.slides,
+                            p.format, p.slides, p.final_ig_key, p.ig_music,
                             (exists (select 1 from shots x where x.script_id = p.approved_script_id
                                         and x.source = 'generate')
                              or exists (select 1 from jsonb_array_elements(coalesce(s.slides, '[]'::jsonb)) e
@@ -74,6 +75,7 @@ def run(ctx: JobContext) -> dict:
     except Exception as e:  # noqa: BLE001
         log.warning("no caption package for %s: %s", post["id"], e)
     credits = post["credits"] or []
+    pick = None                     # the Instagram song, when one was picked
 
     try:
         with httpx.Client(timeout=TIMEOUT) as client:
@@ -92,17 +94,41 @@ def run(ctx: JobContext) -> dict:
                 video = None
                 # A carousel or card goes as its slides; YouTube gets its slideshow (final_key).
                 slides = [s["key"] for s in (post["slides"] or [])] if post["format"] in ("carousel", "image") else []
-                out = instagram.publish(
-                    client, token=_instagram_token(client, acc), ig_user_id=acc["external_id"],
-                    # Instagram downloads the file itself; the link lapses well after it has.
-                    video_url=None if slides else storage.signed_url(post["final_key"], INSTAGRAM_LINK_SECONDS),
-                    image_urls=[storage.signed_url(k, INSTAGRAM_LINK_SECONDS) for k in slides] or None,
-                    caption=(packaging.instagram_caption(pkg, credits) if pkg else
-                             instagram.caption(post["title"], post["description"] or "", post["hashtags"] or [],
-                                               credits)),
-                    cover_url=(storage.signed_url(pkg["thumbnail_key"], INSTAGRAM_LINK_SECONDS)
-                               if pkg and pkg.get("thumbnail_key") and not slides else None),
-                    attempt=att, save=lambda **f: attempts.update(att, **f))
+                token = _instagram_token(client, acc)
+                # A reel may carry a trending Instagram song: the music-free copy, with the song mixed in.
+                pick = None
+                if not slides and acc.get("api") == "unified" and post["final_ig_key"]:
+                    try:
+                        pick = ig_music.choose(client, post=post, acc=acc, token=token, job_id=ctx.job.get("id"))
+                    except instagram.AuthExpired:
+                        raise
+                    except Exception:  # noqa: BLE001 - a reel without a song beats no reel
+                        log.warning("picking an Instagram song for %s failed; posting without one", post["id"],
+                                    exc_info=True)
+                credits_ig = [c for c in credits if not (pick and c.startswith("Music:"))]
+                try:
+                    out = instagram.publish(
+                        client, token=token, ig_user_id=acc["external_id"],
+                        # Instagram downloads the file itself; the link lapses well after it has.
+                        video_url=None if slides else storage.signed_url(
+                            post["final_ig_key"] if pick else post["final_key"], INSTAGRAM_LINK_SECONDS),
+                        image_urls=[storage.signed_url(k, INSTAGRAM_LINK_SECONDS) for k in slides] or None,
+                        caption=(packaging.instagram_caption(pkg, credits_ig) if pkg else
+                                 instagram.caption(post["title"], post["description"] or "", post["hashtags"] or [],
+                                                   credits_ig)),
+                        cover_url=(storage.signed_url(pkg["thumbnail_key"], INSTAGRAM_LINK_SECONDS)
+                                   if pkg and pkg.get("thumbnail_key") and not slides else None),
+                        attempt=att, save=lambda **f: attempts.update(att, **f),
+                        graph=instagram.host(acc.get("api")),
+                        audio=({k: pick[k] for k in ("audio_id", "audio_volume", "video_volume")} if pick else None),
+                        fallback_video_url=storage.signed_url(post["final_key"], INSTAGRAM_LINK_SECONDS) if pick else None)
+                except instagram.PublishError as e:
+                    if pick:    # the song may be what failed: the retry goes out with the bed version
+                        try:
+                            _drop_song(post, str(e))
+                        except Exception:  # noqa: BLE001 - the retry still follows
+                            log.warning("could not record the dropped song for %s", post["id"], exc_info=True)
+                    raise
     except (youtube.AuthExpired, instagram.AuthExpired) as e:
         _set_account_status(acc, "expired")
         _give_up(att, e)
@@ -121,6 +147,15 @@ def run(ctx: JobContext) -> dict:
 
     attempts.update(att, state="live", remote_id=out["remote_id"], remote_url=out.get("remote_url"),
                     privacy=out.get("privacy"), response=out.get("response") or {}, error=None)
+    if out.get("audio_dropped"):
+        try:
+            _drop_song(post, out["audio_dropped"])
+        except Exception:  # noqa: BLE001 - the post is live; the record is best effort
+            log.warning("could not record the dropped song for %s", post["id"], exc_info=True)
+    if out.get("audio_id"):
+        _note_song(post, {"attached": True})
+    elif pick and not out.get("audio_dropped"):
+        _note_song(post, {"dropped": "the reel went out from an earlier container without the song"})
     # Live first; then the cover as YouTube's thumbnail and the first comment. These
     # never undo the post — what happened is recorded on the attempt and the activity.
     extras = _extras(platform, acc["id"], out, pkg)
@@ -135,11 +170,32 @@ def run(ctx: JobContext) -> dict:
     return {"platform": platform, "url": out.get("remote_url"), "privacy": out.get("privacy")}
 
 
+def _drop_song(post: dict, message: str) -> None:
+    """Instagram refused the picked song: the reel went out without it. The post keeps
+    the reason, so the song is not picked again on a retry."""
+    with db.conn() as c:
+        c.execute("update posts set ig_music = coalesce(ig_music, '{}'::jsonb) || %s where id = %s",
+                  (Jsonb({"dropped": message}), post["id"]))
+        db.log_event(c, post["id"], post["status"], post["status"], f"worker:{settings().worker_id}",
+                     "posted to Instagram without its song", {"message": message})
+
+
+def _note_song(post: dict, fields: dict) -> None:
+    """Merge what happened to the post's song into its record. The post is live either
+    way, so a failure here is logged, not raised."""
+    try:
+        with db.conn() as c:
+            c.execute("update posts set ig_music = coalesce(ig_music, '{}'::jsonb) || %s where id = %s",
+                      (Jsonb(fields), post["id"]))
+    except Exception:  # noqa: BLE001 - the post is live; the record is best effort
+        log.warning("could not record the song for %s", post["id"], exc_info=True)
+
+
 def _extras(platform: str, account_id, out: dict, pkg: dict | None) -> dict:
     if not pkg or not out.get("remote_id"):
         return {}
     # The account row again: its token may have been renewed during the upload.
-    acc = db.one("select token_ciphertext from channel_accounts where id = %s", (account_id,))
+    acc = db.one("select token_ciphertext, api from channel_accounts where id = %s", (account_id,))
     try:
         with httpx.Client(timeout=TIMEOUT) as client:
             if platform == "youtube":
@@ -151,7 +207,8 @@ def _extras(platform: str, account_id, out: dict, pkg: dict | None) -> dict:
                                           comment=packaging.first_comment(pkg, "youtube"))
             return {"comment": instagram.comment(client, token=decrypt(acc["token_ciphertext"]),
                                                  media_id=out["remote_id"],
-                                                 text=packaging.first_comment(pkg, "instagram"))}
+                                                 text=packaging.first_comment(pkg, "instagram"),
+                                                 graph=instagram.host(acc["api"]))}
     except Exception as e:  # noqa: BLE001 - the post is live either way
         log.warning("after posting to %s: %s", platform, e)
         return {"error": f"{type(e).__name__}: {e}"[:300]}
@@ -195,12 +252,15 @@ def _set_account_status(acc: dict, status: str) -> None:
 
 
 def _instagram_token(client: httpx.Client, acc: dict) -> str:
-    """The account's token, renewed first when it is due (see IG_RENEW_*)."""
+    """The account's token, renewed first when it is due (see IG_RENEW_*). Unified
+    Login tokens are never renewed here: only their expiry is checked."""
     token = decrypt(acc["token_ciphertext"])
     now = datetime.now(timezone.utc)
     expires = acc["token_expires_at"]
     if expires and expires <= now:
         raise instagram.AuthExpired("the Instagram token expired")
+    if acc.get("api") == "unified":
+        return token
     if expires and expires - now < IG_RENEW_WITHIN and now - acc["updated_at"] > IG_RENEW_AFTER:
         try:
             token = _renew(client, acc, token)
@@ -248,6 +308,7 @@ def upkeep() -> None:
     with db.conn() as c:
         due = c.execute("""select * from channel_accounts
                             where platform = 'instagram' and status = 'connected'
+                              and api = 'instagram_login'
                               and token_expires_at < now() + %s and updated_at < now() - %s""",
                         (IG_RENEW_WITHIN, IG_RENEW_AFTER)).fetchall()
     if not due:

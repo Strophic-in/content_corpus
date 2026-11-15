@@ -21,7 +21,7 @@ import pytest
 from corpus import db
 from corpus.crypto import encrypt
 from corpus.handlers import publish_post
-from corpus.publish import instagram, youtube
+from corpus.publish import attempts, instagram, youtube
 from corpus.runner import Runner
 
 VIDEO = bytes(range(256)) * 100          # 25,600 bytes
@@ -147,36 +147,65 @@ class FakeInstagram:
     an earlier run's container reports; `statuses` are replies after creating one."""
 
     def __init__(self, *, statuses=("IN_PROGRESS", "FINISHED"), container: str | None = None,
-                 media: list | None = None, error_code: int | None = None):
+                 media: list | None = None, error_code: int | None = None, version: str = "v23.0",
+                 refuse_audio: bool = False, audio_breaks_processing: bool = False,
+                 audio_list: list | None = None, choice: str | None = None, audio_server_error: bool = False):
         self.statuses, self.container, self.media = list(statuses), container, media or []
-        self.error_code = error_code
+        self.error_code, self.version = error_code, version
+        self.refuse_audio, self.audio_breaks_processing = refuse_audio, audio_breaks_processing
+        self.audio_list, self.audio_searches = audio_list, 0
+        self.choice, self.decisions = choice, 0     # the song the Decisions API answers with
+        self.audio_server_error = audio_server_error  # the first Reel with a song gets a 500
         self.created = self.published = 0
-        self.caption = self.video_url = ""
+        self.caption = self.video_url = self.audio = ""
+        self.with_audio: dict[str, bool] = {}     # container id → created with a song?
+        self.published_id = None
 
     def __call__(self, req: httpx.Request) -> httpx.Response:
         path = req.url.path
+        if req.url.host == "api.openai.com":
+            assert path == "/v1/decisions"
+            self.decisions += 1
+            return httpx.Response(200, json={"answers": [{"type": "choice", "name": "song",
+                                                          "choice": self.choice, "confidence": 0.9}],
+                                             "usage": {"input_tokens": 500}})
         form = parse_qs(req.content.decode()) if req.method == "POST" else {}
         if self.error_code:
             return httpx.Response(400, json={"error": {"message": "bad", "code": self.error_code}})
-        if req.method == "POST" and path == "/v23.0/178/media":
+        if req.method == "POST" and path == f"/{self.version}/178/media":
             if "video_url" not in form:      # what the real API said to upload_type=resumable
                 return httpx.Response(400, json={"error": {"message": "The parameter video_url is required",
                                                            "code": 100}})
             assert form["media_type"] == ["REELS"] and "upload_type" not in form
-            self.created += 1
+            self.audio = form.get("audio_configuration", [""])[0]
+            if self.audio_server_error and self.audio:
+                self.audio_server_error = False
+                return httpx.Response(500, json={"error": {"message": "Something went wrong"}})
             self.caption, self.video_url = form["caption"][0], form["video_url"][0]
-            return httpx.Response(200, json={"id": "c1"})
-        if req.method == "GET" and path == "/v23.0/c1":
+            self.created += 1
+            cid = f"c{self.created}"
+            self.with_audio[cid] = bool(self.audio)
+            if self.refuse_audio and self.audio:
+                return httpx.Response(400, json={"error": {"message": "Invalid audio", "code": 100}})
+            return httpx.Response(200, json={"id": cid})
+        if req.method == "GET" and path.startswith(f"/{self.version}/c"):
+            cid = path.rsplit("/", 1)[1]
+            if self.audio_breaks_processing and self.with_audio.get(cid):
+                return httpx.Response(200, json={"status_code": "ERROR", "status": "Error: audio unavailable"})
             status = self.container or (self.statuses.pop(0) if len(self.statuses) > 1 else self.statuses[0])
             return httpx.Response(200, json={"status_code": status, "status": "Error: too short"})
-        if req.method == "POST" and path == "/v23.0/178/media_publish":
-            assert form["creation_id"] == ["c1"]
+        if req.method == "POST" and path == f"/{self.version}/178/media_publish":
+            assert form["creation_id"][0] in ("c1", "c2")
+            self.published_id = form["creation_id"][0]
             self.published += 1
             return httpx.Response(200, json={"id": "m1"})
-        if req.method == "GET" and path == "/v23.0/m1":
+        if req.method == "GET" and path == f"/{self.version}/m1":
             return httpx.Response(200, json={"permalink": "https://www.instagram.com/reel/abc/"})
-        if req.method == "GET" and path == "/v23.0/178/media":
+        if req.method == "GET" and path == f"/{self.version}/178/media":
             return httpx.Response(200, json={"data": self.media})
+        if req.method == "GET" and path == f"/{self.version}/ig_audio":
+            self.audio_searches += 1
+            return httpx.Response(200, json={"audio": self.audio_list or []})
         raise AssertionError(f"unexpected {req.method} {req.url}")
 
 
@@ -219,6 +248,113 @@ def test_instagram_failures_are_told_apart(video):
         _ig(FakeInstagram(error_code=190), video, {})
     with pytest.raises(instagram.PublishError):
         _ig(FakeInstagram(error_code=4), video, {})                     # rate limited
+
+
+def test_instagram_host_follows_the_account_api():
+    assert instagram.host("unified") == "https://graph.facebook.com/v27.0"
+    assert instagram.host("instagram_login") == instagram.GRAPH
+    assert instagram.host(None) == instagram.GRAPH
+
+
+def test_instagram_publishes_through_the_unified_host(video):
+    fake = FakeInstagram(version="v27.0")
+    out = instagram.publish(client(fake), token="tok", ig_user_id="178", video_url=LINK, caption="A reel",
+                            attempt={}, save=lambda **f: None, sleep=lambda s: None,
+                            graph=instagram.GRAPH_UNIFIED)
+    assert out["remote_id"] == "m1" and fake.published == 1
+
+
+SONG = {"audio_id": "587", "audio_volume": 25, "video_volume": 100}
+
+
+def test_instagram_attaches_the_song_to_the_reel(video):
+    fake = FakeInstagram()
+    out = instagram.publish(client(fake), token="tok", ig_user_id="178", video_url=LINK, caption="A reel",
+                            attempt={}, save=lambda **f: None, sleep=lambda s: None, audio=SONG)
+    assert json.loads(fake.audio) == {"audio_id": "587", "audio_volume": 25, "video_volume": 100}
+    assert out["audio_id"] == "587" and "audio_dropped" not in out
+
+
+def test_instagram_posts_without_the_song_when_it_is_refused(video):
+    fake = FakeInstagram(refuse_audio=True)
+    out = instagram.publish(client(fake), token="tok", ig_user_id="178", video_url=LINK + "&ig", caption="A reel",
+                            attempt={}, save=lambda **f: None, sleep=lambda s: None,
+                            audio=SONG, fallback_video_url=LINK)
+    assert out["remote_id"] == "m1" and "audio" in out["audio_dropped"]
+    assert fake.video_url == LINK and fake.audio == ""        # second container: bed version, no song
+    assert fake.published_id == "c2"
+
+
+def test_instagram_posts_without_the_song_when_processing_fails_on_it(video):
+    fake = FakeInstagram(audio_breaks_processing=True)
+    out = instagram.publish(client(fake), token="tok", ig_user_id="178", video_url=LINK + "&ig", caption="A reel",
+                            attempt={}, save=lambda **f: None, sleep=lambda s: None,
+                            audio=SONG, fallback_video_url=LINK)
+    assert out["remote_id"] == "m1" and out["audio_dropped"] and fake.created == 2 and fake.audio == ""
+    assert fake.published_id == "c2"
+
+
+def test_instagram_saves_the_fallback_container_over_the_refused_one(video):
+    fake, saved = FakeInstagram(refuse_audio=True), []
+    instagram.publish(client(fake), token="tok", ig_user_id="178", video_url=LINK, caption="A reel",
+                      attempt={}, save=lambda **f: saved.append(f), sleep=lambda s: None,
+                      audio=SONG, fallback_video_url=LINK)
+    assert saved[0] == {"upload_session_uri": "ig-container:c2", "state": "uploading"}
+    assert saved[-1] == {"state": "uploaded"}
+
+
+def test_a_resumed_container_does_not_claim_the_song(video):
+    fake = FakeInstagram(version="v27.0", container="FINISHED")
+    out = instagram.publish(client(fake), token="tok", ig_user_id="178", video_url=LINK, caption="A reel",
+                            attempt={"upload_session_uri": "ig-container:c1"}, save=lambda **f: None,
+                            sleep=lambda s: None, graph=instagram.GRAPH_UNIFIED, audio=SONG)
+    assert out["remote_id"] == "m1" and "audio_id" not in out and fake.created == 0
+
+
+def test_a_reel_from_an_earlier_container_is_recorded_without_the_song(owner, user, fake_http, monkeypatch):
+    fake = FakeInstagram(version="v27.0", audio_list=[LISTED], container="FINISHED")
+    fake_http(fake)
+    monkeypatch.setattr(publish_post.storage, "signed_url", lambda key, seconds: f"{LINK}&key={key}")
+    monkeypatch.setattr(publish_post.instagram, "POLL_S", 0)
+    pid = _ready_post(owner, user)
+    _unified(owner, user, pid)
+    att = attempts.start(pid, "instagram")          # an earlier run built this container, without the song
+    owner.execute("update publish_attempts set state = 'uploading', upload_session_uri = %s where id = %s",
+                  ("ig-container:c1", att["id"]))
+    _request(owner, user, pid, ("instagram",))
+    assert Runner("publish", {"publish_post": publish_post.HANDLER}).tick()
+    job = owner.execute("select state, error from jobs where dedupe_key = %s", (f"publish:{pid}:instagram",)).fetchone()
+    assert job["state"] == "succeeded", job["error"]
+    assert fake.published == 1 and fake.created == 0
+    saved = owner.execute("select ig_music from posts where id = %s", (pid,)).fetchone()["ig_music"]
+    assert saved["dropped"] == "the reel went out from an earlier container without the song" and "attached" not in saved
+
+
+def _due_unified(owner, user, pid):
+    """An account due for renewal by its dates — but on Unified Login."""
+    owner.execute("""insert into channel_accounts (user_id, channel_id, platform, external_id, token_ciphertext,
+                                                   token_expires_at, api, updated_at)
+                     select %s, channel_id, 'instagram', '178', %s, now() + interval '2 days', 'unified',
+                            now() - interval '3 days' from posts where id = %s""", (user, encrypt("tok"), pid))
+    return owner.execute("select * from channel_accounts where external_id = '178'").fetchone()
+
+
+def test_upkeep_never_renews_a_unified_token(owner, user, monkeypatch):
+    _due_unified(owner, user, _ready_post(owner, user))
+    calls = []
+    monkeypatch.setattr(publish_post.instagram, "refresh", lambda *a: calls.append(a) or ("new", 5_184_000))
+    monkeypatch.setattr(publish_post, "_last_upkeep", -1e18)      # upkeep's hourly gate is open
+    monkeypatch.setattr(publish_post, "_last_stats", 1e18)        # no stats round
+    publish_post.upkeep()
+    assert calls == []
+    assert owner.execute("select status from channel_accounts where external_id = '178'").fetchone()["status"] == "connected"
+
+
+def test_publishing_never_renews_a_unified_token(owner, user, monkeypatch):
+    acc = _due_unified(owner, user, _ready_post(owner, user))
+    calls = []
+    monkeypatch.setattr(publish_post.instagram, "refresh", lambda *a: calls.append(a) or ("new", 5_184_000))
+    assert publish_post._instagram_token(httpx.Client(), acc) == "tok" and calls == []
 
 
 def test_instagram_caption_keeps_to_the_limits():
@@ -324,6 +460,158 @@ def test_handler_posts_to_instagram_from_a_signed_link(owner, user, fake_http, m
     assert owner.execute("select remote_url from publish_attempts where post_id = %s",
                          (pid,)).fetchone()["remote_url"] == "https://www.instagram.com/reel/abc/"
     assert _status(owner, pid) == "published"
+
+
+def _unified(owner, user, pid):
+    owner.execute("""insert into channel_accounts (user_id, channel_id, platform, external_id, token_ciphertext, api)
+                     select %s, channel_id, 'instagram', '178', %s, 'unified' from posts where id = %s""",
+                  (user, encrypt("tok"), pid))
+    owner.execute("update posts set final_ig_key = 'u/p/final.ig.mp4', credits = %s where id = %s",
+                  (json.dumps(["Music: “x” by y (Freesound, CC0)"]), pid))
+
+
+LISTED = {"audio_id": "587", "title": "Dil", "display_artist": "A", "duration_in_ms": 30000}
+
+
+def _publish_unified(owner, user, fake_http, monkeypatch, fake, ig_music=None, narrated=False, dialogue=None):
+    fake_http(fake)
+    monkeypatch.setattr(publish_post.storage, "signed_url", lambda key, seconds: f"{LINK}&key={key}")
+    monkeypatch.setattr(publish_post.instagram, "POLL_S", 0)
+    pid = _ready_post(owner, user)
+    _unified(owner, user, pid)
+    if narrated:
+        owner.execute("update posts set audio_source = 'kokoro' where id = %s", (pid,))
+    if dialogue is not None:        # an LTX-native reel whose characters speak
+        owner.execute("update posts set audio_source = 'ltx_native' where id = %s", (pid,))
+        owner.execute("update scripts set intended_dialogue = %s where post_id = %s", (dialogue, pid))
+    if ig_music is not None:
+        owner.execute("update posts set ig_music = %s where id = %s", (json.dumps(ig_music), pid))
+    _request(owner, user, pid, ("instagram",))
+    assert Runner("publish", {"publish_post": publish_post.HANDLER}).tick()
+    job = owner.execute("select state, error from jobs where dedupe_key = %s", (f"publish:{pid}:instagram",)).fetchone()
+    assert job["state"] == "succeeded", job["error"]
+    return pid
+
+
+def test_handler_attaches_a_picked_song_from_the_music_free_copy(owner, user, fake_http, monkeypatch):
+    fake = FakeInstagram(version="v27.0", audio_list=[LISTED])
+    pid = _publish_unified(owner, user, fake_http, monkeypatch, fake)
+    assert fake.video_url.endswith("key=u/p/final.ig.mp4")
+    assert json.loads(fake.audio) == {"audio_id": "587", "audio_volume": 100, "video_volume": 40}  # not narrated
+    assert "Freesound" not in fake.caption
+    saved = owner.execute("select ig_music from posts where id = %s", (pid,)).fetchone()["ig_music"]
+    assert saved["audio_id"] == "587" and saved["picked_by"] == "only" and saved["attached"] is True
+
+
+def test_handler_keeps_the_bed_version_when_instagram_has_no_songs(owner, user, fake_http, monkeypatch):
+    fake = FakeInstagram(version="v27.0", audio_list=[])
+    pid = _publish_unified(owner, user, fake_http, monkeypatch, fake)
+    assert fake.video_url.endswith("key=u/p/final.mp4") and fake.audio == ""
+    assert owner.execute("select ig_music from posts where id = %s", (pid,)).fetchone()["ig_music"] is None
+
+
+def test_a_retry_reuses_the_saved_song(owner, user, fake_http, monkeypatch):
+    fake = FakeInstagram(version="v27.0", audio_list=[{**LISTED, "audio_id": "999"}])
+    _publish_unified(owner, user, fake_http, monkeypatch, fake,
+                     ig_music={"audio_id": "587", "audio_volume": 25, "video_volume": 100})
+    assert json.loads(fake.audio)["audio_id"] == "587" and fake.audio_searches == 0
+
+
+def test_a_narrated_reel_keeps_the_song_quiet_under_the_voice(owner, user, fake_http, monkeypatch):
+    fake = FakeInstagram(version="v27.0", audio_list=[LISTED])
+    _publish_unified(owner, user, fake_http, monkeypatch, fake, narrated=True)
+    assert json.loads(fake.audio) == {"audio_id": "587", "audio_volume": 25, "video_volume": 100}
+
+
+def test_a_reel_whose_characters_speak_keeps_the_song_quiet(owner, user, fake_http, monkeypatch):
+    fake = FakeInstagram(version="v27.0", audio_list=[LISTED])
+    _publish_unified(owner, user, fake_http, monkeypatch, fake, dialogue="Hello there")
+    assert json.loads(fake.audio) == {"audio_id": "587", "audio_volume": 25, "video_volume": 100}
+
+
+def test_a_silent_ltx_reel_keeps_the_song_loud(owner, user, fake_http, monkeypatch):
+    fake = FakeInstagram(version="v27.0", audio_list=[LISTED])
+    _publish_unified(owner, user, fake_http, monkeypatch, fake, dialogue="")
+    assert json.loads(fake.audio) == {"audio_id": "587", "audio_volume": 100, "video_volume": 40}
+
+
+def test_a_failed_pick_posts_the_bed_version(owner, user, fake_http, monkeypatch):
+    def broken(*args, **kwargs):
+        raise RuntimeError("the picker fell over")
+    monkeypatch.setattr(publish_post.ig_music, "choose", broken)
+    fake = FakeInstagram(version="v27.0", audio_list=[LISTED])
+    _publish_unified(owner, user, fake_http, monkeypatch, fake)
+    assert fake.video_url.endswith("key=u/p/final.mp4") and fake.audio == ""
+
+
+def test_expired_access_during_the_pick_marks_instagram_for_reconnecting(owner, user, fake_http, monkeypatch):
+    def expired(*args, **kwargs):
+        raise instagram.AuthExpired("Instagram access has expired or was removed")
+    monkeypatch.setattr(publish_post.ig_music, "choose", expired)
+    fake_http(FakeInstagram(version="v27.0", audio_list=[LISTED]))
+    monkeypatch.setattr(publish_post.storage, "signed_url", lambda key, seconds: f"{LINK}&key={key}")
+    pid = _ready_post(owner, user)
+    _unified(owner, user, pid)
+    _request(owner, user, pid, ("instagram",))
+    Runner("publish", {"publish_post": publish_post.HANDLER}).tick()
+    job = owner.execute("select state, error from jobs where dedupe_key = %s", (f"publish:{pid}:instagram",)).fetchone()
+    assert job["state"] == "dead" and "reconnect Instagram" in job["error"]["message"]
+    assert owner.execute("select status from channel_accounts where platform = 'instagram' and channel_id = "
+                         "(select channel_id from posts where id = %s)", (pid,)).fetchone()["status"] == "expired"
+
+
+def test_a_song_instagram_refuses_is_recorded_and_the_reel_goes_out_without_it(owner, user, fake_http, monkeypatch):
+    fake = FakeInstagram(version="v27.0", audio_list=[LISTED], refuse_audio=True)
+    pid = _publish_unified(owner, user, fake_http, monkeypatch, fake)
+    assert fake.video_url.endswith("key=u/p/final.mp4") and fake.published == 1
+    saved = owner.execute("select ig_music from posts where id = %s", (pid,)).fetchone()["ig_music"]
+    assert saved["audio_id"] == "587" and "Invalid audio" in saved["dropped"]
+    assert owner.execute("select reason from post_events where post_id = %s and reason = %s",
+                         (pid, "posted to Instagram without its song")).fetchone()
+
+
+SECOND = {"audio_id": "700", "title": "Kal", "display_artist": "B", "duration_in_ms": 20000}
+
+
+def test_the_song_pick_is_costed(owner, user, fake_http, monkeypatch):
+    monkeypatch.setattr(publish_post.ig_music.vault, "secret", lambda uid, name: "sk")
+    fake = FakeInstagram(version="v27.0", audio_list=[LISTED, SECOND], choice="Kal — B")
+    pid = _publish_unified(owner, user, fake_http, monkeypatch, fake)
+    assert fake.decisions == 1 and json.loads(fake.audio)["audio_id"] == "700"
+    saved = owner.execute("select ig_music from posts where id = %s", (pid,)).fetchone()["ig_music"]
+    assert saved["audio_id"] == "700" and saved["picked_by"] == "decisions"
+    cost = owner.execute("select kind, model, quantity from costs where post_id = %s and kind = 'music_pick'",
+                         (pid,)).fetchone()
+    assert cost == {"kind": "music_pick", "model": "gpt-6-luna", "quantity": {"input": 500, "cached_input": 0,
+                                                                              "output": 0}}
+
+
+def test_a_server_error_with_a_song_retries_the_bed_version(owner, user, fake_http, monkeypatch):
+    fake = FakeInstagram(version="v27.0", audio_list=[LISTED], audio_server_error=True)
+    fake_http(fake)
+    monkeypatch.setattr(publish_post.storage, "signed_url", lambda key, seconds: f"{LINK}&key={key}")
+    monkeypatch.setattr(publish_post.instagram, "POLL_S", 0)
+    pid = _ready_post(owner, user)
+    _unified(owner, user, pid)
+    _request(owner, user, pid, ("instagram",))
+    Runner("publish", {"publish_post": publish_post.HANDLER}).tick()
+    job = owner.execute("select state from jobs where dedupe_key = %s", (f"publish:{pid}:instagram",)).fetchone()
+    assert job["state"] == "queued" and fake.published == 0
+    saved = owner.execute("select ig_music from posts where id = %s", (pid,)).fetchone()["ig_music"]
+    assert saved["audio_id"] == "587" and "Something went wrong" in saved["dropped"]
+
+    owner.execute("update jobs set not_before = now() where dedupe_key = %s", (f"publish:{pid}:instagram",))
+    Runner("publish", {"publish_post": publish_post.HANDLER}).tick()
+    job = owner.execute("select state, error from jobs where dedupe_key = %s", (f"publish:{pid}:instagram",)).fetchone()
+    assert job["state"] == "succeeded", job["error"]
+    assert fake.video_url.endswith("key=u/p/final.mp4") and fake.audio == "" and fake.published == 1
+
+
+def test_a_refused_song_is_not_tried_again(owner, user, fake_http, monkeypatch):
+    fake = FakeInstagram(version="v27.0", audio_list=[LISTED])
+    _publish_unified(owner, user, fake_http, monkeypatch, fake,
+                     ig_music={"audio_id": "587", "dropped": "Invalid audio"})
+    assert fake.video_url.endswith("key=u/p/final.mp4") and fake.audio == "" and fake.audio_searches == 0
 
 
 def test_handler_reports_expired_access_and_frees_the_post(owner, user, fake_http):

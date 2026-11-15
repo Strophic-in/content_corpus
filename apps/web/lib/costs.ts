@@ -120,7 +120,7 @@ export async function overview(userId: string, channelId: string, limit = 500): 
       `with ps as (select * from posts where channel_id = $1 order by slot_date desc, created_at desc limit $3),
             spent as (
               select c.post_id,
-                     coalesce(sum(${inr}) filter (where c.kind in ('llm','vision','moderation')), 0)::float8 as writing,
+                     coalesce(sum(${inr}) filter (where c.kind in ('llm','vision','moderation','music_pick')), 0)::float8 as writing,
                      coalesce(sum(${inr}) filter (where c.kind = 'image'), 0)::float8 as pictures,
                      coalesce(sum(${inr}) filter (where c.kind = 'tts'), 0)::float8 as voice,
                      coalesce(sum(${inr}) filter (where c.kind = 'gpu'), 0)::float8 as gpu,

@@ -164,13 +164,13 @@ grant delete on channels to corpus_web;
 -- the key vault, token_ciphertext is write-only, so the web can never read a token
 -- back. Publishing workers decrypt it as the owner role.
 grant select (id, user_id, channel_id, platform, external_id, handle, display_name, avatar_url,
-              token_expires_at, scopes, status, connected_at, updated_at)
+              token_expires_at, scopes, status, connected_at, updated_at, api)
   on channel_accounts to corpus_web;
 grant insert (user_id, channel_id, platform, external_id, handle, display_name, avatar_url,
-              token_ciphertext, token_expires_at, scopes, status, updated_at)
+              token_ciphertext, token_expires_at, scopes, status, updated_at, api)
   on channel_accounts to corpus_web;
 grant update (external_id, handle, display_name, avatar_url, token_ciphertext, token_expires_at,
-              scopes, status, updated_at)
+              scopes, status, updated_at, api)
   on channel_accounts to corpus_web;
 grant delete on channel_accounts to corpus_web;
 

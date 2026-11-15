@@ -127,7 +127,7 @@ export function ChannelMenu({ channelId, isDefault }: { channelId: string; isDef
 }
 
 type AccountData = { id: string; handle: string | null; display_name: string | null; avatar_url: string | null;
-                     status: string; token_expires_at: Date | null };
+                     status: string; token_expires_at: Date | null; api: "instagram_login" | "unified" };
 
 const NAMES = { youtube: "YouTube", instagram: "Instagram" } as const;
 const NOTES = {
@@ -135,8 +135,9 @@ const NOTES = {
   instagram: "Posts your reels to an Instagram professional (creator or business) account.",
 } as const;
 
-export function ConnectionCard({ platform, channelId, account, ready }: {
-  platform: "youtube" | "instagram"; channelId: string; account: AccountData | null; ready: boolean;
+export function ConnectionCard({ platform, channelId, account, ready, owner, unified }: {
+  platform: "youtube" | "instagram"; channelId: string; account: AccountData | null; ready: boolean; owner: boolean;
+  unified: boolean;     // Unified Login is set up on the server (its song library needs it)
 }) {
   const [pending, start] = useTransition();
   const [state, setState] = useState<ActionState>(null);
@@ -158,6 +159,9 @@ export function ConnectionCard({ platform, channelId, account, ready }: {
         </div>
       </div>
       <p className="text-xs text-muted">{NOTES[platform]}</p>
+      {platform === "instagram" && owner && connected && account?.api !== "unified" && unified && (
+        <p className="text-xs text-muted">Reconnect to get trending Instagram music.</p>
+      )}
       <div className="flex gap-2">
         {ready ? (
           <a href={`/api/connect/${platform}/start?channel=${channelId}`}

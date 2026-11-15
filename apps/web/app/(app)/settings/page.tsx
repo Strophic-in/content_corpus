@@ -13,6 +13,7 @@ export const metadata = { title: "Settings · Content Corpus" };
 const KINDS: Record<string, string> = {
   llm: "Writing (OpenAI)", vision: "Reading videos (OpenAI)", image: "Images (OpenAI)", moderation: "Moderation",
   tts: "Voice", gpu: "GPU rendering", pod_storage: "Keeping GPUs parked",
+  music_pick: "Instagram song pick",
 };
 const inr = (n: number) => `₹${n.toLocaleString("en-IN", { maximumFractionDigits: n < 10 ? 2 : 0 })}`;
 
