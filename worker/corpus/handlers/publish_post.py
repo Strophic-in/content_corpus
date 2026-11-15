@@ -105,21 +105,29 @@ def run(ctx: JobContext) -> dict:
                         log.warning("picking an Instagram song for %s failed; posting without one", post["id"],
                                     exc_info=True)
                 credits_ig = [c for c in credits if not (pick and c.startswith("Music:"))]
-                out = instagram.publish(
-                    client, token=token, ig_user_id=acc["external_id"],
-                    # Instagram downloads the file itself; the link lapses well after it has.
-                    video_url=None if slides else storage.signed_url(
-                        post["final_ig_key"] if pick else post["final_key"], INSTAGRAM_LINK_SECONDS),
-                    image_urls=[storage.signed_url(k, INSTAGRAM_LINK_SECONDS) for k in slides] or None,
-                    caption=(packaging.instagram_caption(pkg, credits_ig) if pkg else
-                             instagram.caption(post["title"], post["description"] or "", post["hashtags"] or [],
-                                               credits_ig)),
-                    cover_url=(storage.signed_url(pkg["thumbnail_key"], INSTAGRAM_LINK_SECONDS)
-                               if pkg and pkg.get("thumbnail_key") and not slides else None),
-                    attempt=att, save=lambda **f: attempts.update(att, **f),
-                    graph=instagram.host(acc.get("api")),
-                    audio=({k: pick[k] for k in ("audio_id", "audio_volume", "video_volume")} if pick else None),
-                    fallback_video_url=storage.signed_url(post["final_key"], INSTAGRAM_LINK_SECONDS) if pick else None)
+                try:
+                    out = instagram.publish(
+                        client, token=token, ig_user_id=acc["external_id"],
+                        # Instagram downloads the file itself; the link lapses well after it has.
+                        video_url=None if slides else storage.signed_url(
+                            post["final_ig_key"] if pick else post["final_key"], INSTAGRAM_LINK_SECONDS),
+                        image_urls=[storage.signed_url(k, INSTAGRAM_LINK_SECONDS) for k in slides] or None,
+                        caption=(packaging.instagram_caption(pkg, credits_ig) if pkg else
+                                 instagram.caption(post["title"], post["description"] or "", post["hashtags"] or [],
+                                                   credits_ig)),
+                        cover_url=(storage.signed_url(pkg["thumbnail_key"], INSTAGRAM_LINK_SECONDS)
+                                   if pkg and pkg.get("thumbnail_key") and not slides else None),
+                        attempt=att, save=lambda **f: attempts.update(att, **f),
+                        graph=instagram.host(acc.get("api")),
+                        audio=({k: pick[k] for k in ("audio_id", "audio_volume", "video_volume")} if pick else None),
+                        fallback_video_url=storage.signed_url(post["final_key"], INSTAGRAM_LINK_SECONDS) if pick else None)
+                except instagram.PublishError as e:
+                    if pick:    # the song may be what failed: the retry goes out with the bed version
+                        try:
+                            _drop_song(post, str(e))
+                        except Exception:  # noqa: BLE001 - the retry still follows
+                            log.warning("could not record the dropped song for %s", post["id"], exc_info=True)
+                    raise
     except (youtube.AuthExpired, instagram.AuthExpired) as e:
         _set_account_status(acc, "expired")
         _give_up(att, e)

@@ -149,12 +149,13 @@ class FakeInstagram:
     def __init__(self, *, statuses=("IN_PROGRESS", "FINISHED"), container: str | None = None,
                  media: list | None = None, error_code: int | None = None, version: str = "v23.0",
                  refuse_audio: bool = False, audio_breaks_processing: bool = False,
-                 audio_list: list | None = None, choice: str | None = None):
+                 audio_list: list | None = None, choice: str | None = None, audio_server_error: bool = False):
         self.statuses, self.container, self.media = list(statuses), container, media or []
         self.error_code, self.version = error_code, version
         self.refuse_audio, self.audio_breaks_processing = refuse_audio, audio_breaks_processing
         self.audio_list, self.audio_searches = audio_list, 0
         self.choice, self.decisions = choice, 0     # the song the Decisions API answers with
+        self.audio_server_error = audio_server_error  # the first Reel with a song gets a 500
         self.created = self.published = 0
         self.caption = self.video_url = self.audio = ""
         self.with_audio: dict[str, bool] = {}     # container id → created with a song?
@@ -177,6 +178,9 @@ class FakeInstagram:
                                                            "code": 100}})
             assert form["media_type"] == ["REELS"] and "upload_type" not in form
             self.audio = form.get("audio_configuration", [""])[0]
+            if self.audio_server_error and self.audio:
+                self.audio_server_error = False
+                return httpx.Response(500, json={"error": {"message": "Something went wrong"}})
             self.caption, self.video_url = form["caption"][0], form["video_url"][0]
             self.created += 1
             cid = f"c{self.created}"
@@ -553,6 +557,27 @@ def test_the_song_pick_is_costed(owner, user, fake_http, monkeypatch):
                          (pid,)).fetchone()
     assert cost == {"kind": "music_pick", "model": "gpt-6-luna", "quantity": {"input": 500, "cached_input": 0,
                                                                               "output": 0}}
+
+
+def test_a_server_error_with_a_song_retries_the_bed_version(owner, user, fake_http, monkeypatch):
+    fake = FakeInstagram(version="v27.0", audio_list=[LISTED], audio_server_error=True)
+    fake_http(fake)
+    monkeypatch.setattr(publish_post.storage, "signed_url", lambda key, seconds: f"{LINK}&key={key}")
+    monkeypatch.setattr(publish_post.instagram, "POLL_S", 0)
+    pid = _ready_post(owner, user)
+    _unified(owner, user, pid)
+    _request(owner, user, pid, ("instagram",))
+    Runner("publish", {"publish_post": publish_post.HANDLER}).tick()
+    job = owner.execute("select state from jobs where dedupe_key = %s", (f"publish:{pid}:instagram",)).fetchone()
+    assert job["state"] == "queued" and fake.published == 0
+    saved = owner.execute("select ig_music from posts where id = %s", (pid,)).fetchone()["ig_music"]
+    assert saved["audio_id"] == "587" and "Something went wrong" in saved["dropped"]
+
+    owner.execute("update jobs set not_before = now() where dedupe_key = %s", (f"publish:{pid}:instagram",))
+    Runner("publish", {"publish_post": publish_post.HANDLER}).tick()
+    job = owner.execute("select state, error from jobs where dedupe_key = %s", (f"publish:{pid}:instagram",)).fetchone()
+    assert job["state"] == "succeeded", job["error"]
+    assert fake.video_url.endswith("key=u/p/final.mp4") and fake.audio == "" and fake.published == 1
 
 
 def test_a_refused_song_is_not_tried_again(owner, user, fake_http, monkeypatch):
