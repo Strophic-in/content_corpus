@@ -142,6 +142,10 @@ Runs inside `publish_post` for Instagram reels, just before the container:
    each track's trending rank (its position in the no-query list, if present)
    and which search found it. Cap ~40. Short tracks are fine (Instagram loops
    or trims; reels are ≤45 s).
+   **Trending dominates (owner, 2026-11-23):** the trending list fills up to 27
+   of the 40 slots, searches add at most 13, the picker is told to strongly
+   prefer trending songs (instrumental/background only rarely), and the rule
+   fallback takes the best-ranked trending track first.
 2. **Decision — OpenAI Decisions API.** One `POST /v1/decisions`,
    `model: "gpt-6-luna"`, with the owner's OpenAI key (`vault.secret(…,
    "openai")`):

@@ -2,8 +2,8 @@
 
 The owner's rules: a Hindi song by default; Gen-Z, meme and viral sounds are welcome;
 a reel always gets a song. Instagram's trending list comes first (the sounds people
-are actually using right now), then Hindi and meme searches, then the mood's own
-searches. The Decisions API picker chooses among these (Task 4), and rule_pick
+are actually using right now) fills most of the shortlist; Hindi, meme and mood searches
+only top it up, capped at SEARCH_SLOTS. The Decisions API picker chooses among these (Task 4), and rule_pick
 is the fallback when that call is unavailable.
 
 Instagram only lets a Reel carry a song from its library, so these are the only
@@ -30,15 +30,18 @@ log = logging.getLogger("corpus.ig_music")
 DECISIONS = "https://api.openai.com/v1/decisions"
 MODEL = "gpt-6-luna"
 INSTRUCTIONS = (
-    "Pick the song that best suits this Instagram reel. Prefer Hindi songs. A song in another "
-    "language is fine when it sounds great and suits the reel. Gen-Z, meme and viral sounds are "
-    "good for light, funny or surprising stories. For death, disaster or tragedy pick the closest "
-    "calm or emotional song, never a comic or party one. When songs fit equally, prefer the more "
-    "trending one."
+    "Pick the song that best suits this Instagram reel. Songs marked trending are the sounds most "
+    "people use on Reels right now (a lower trending rank number means more popular): strongly "
+    "prefer them. Prefer well-known vocal songs and meme or Gen-Z sounds. Prefer Hindi songs, but a "
+    "song in another language is fine when that sound is clearly popular. Pick an instrumental or "
+    "background-style track only rarely, when no trending song fits. For death, disaster or "
+    "tragedy pick the closest calm or emotional trending song, never a comic or party one. Never "
+    "answer with no song."
 )
 
 CAP = 40                 # candidates handed to the picker
-TRENDING_SLOTS = 15      # the no-query list may fill at most this many, so searches always get room
+SEARCH_SLOTS = CAP // 3  # search hits may add at most this many: the trending list dominates
+TRENDING_SLOTS = CAP - SEARCH_SLOTS   # the no-query list fills first, up to this many
 RECENT = 20              # songs in the owner's last reels are skipped by the caller's exclude set
 MOOD_SEARCHES: dict[str, list[str]] = {
     "breaking-tension": ["dramatic hindi bgm", "tense suspense beat"],
@@ -68,6 +71,12 @@ class Track:
     trending_rank: int | None   # 1-based position in the no-query list, None if not there
     found_by: str               # "trending" or the search text that found it
     preview_url: str | None = None   # Instagram's preview of the audio, when it gives one
+
+    @property
+    def trending(self) -> bool:
+        """True when the track came from Instagram's trending list (what most people use);
+        the API gives no instrumental flag, so every other track is just a search hit."""
+        return self.trending_rank is not None
 
     @property
     def label(self) -> str:
@@ -118,9 +127,10 @@ def _track(x: dict, rank: int | None, found_by: str) -> Track:
 
 def candidates(client: httpx.Client, *, graph: str, token: str, ig_user_id: str,
                mood: str | None, exclude: set[str]) -> list[Track]:
-    """Songs to pick from: the top of the trending list, then each search in order,
-    de-duplicated by audio_id (the first sighting wins), at most CAP. Songs in `exclude`
-    are skipped before they count toward TRENDING_SLOTS or CAP, so they never use up room.
+    """Songs to pick from: the top of the trending list (up to TRENDING_SLOTS), then each
+    search in order adds at most SEARCH_SLOTS more, de-duplicated by audio_id (the first
+    sighting wins), at most CAP. Songs in `exclude` are skipped before they count toward
+    any limit, so they never use up room. Previews sort first, trending order kept.
     Returns [] when Instagram answers nothing at all."""
     out: dict[str, Track] = {}
     trending = _audio(client, graph=graph, token=token, ig_user_id=ig_user_id, search=None) or []
@@ -134,30 +144,32 @@ def candidates(client: httpx.Client, *, graph: str, token: str, ig_user_id: str,
         if t.audio_id not in out:
             out[t.audio_id] = t
             trending_kept += 1
+    searched = 0
     for search in searches(mood):
-        if len(out) >= CAP:
+        if searched >= SEARCH_SLOTS or len(out) >= CAP:
             break
         found = _audio(client, graph=graph, token=token, ig_user_id=ig_user_id, search=search) or []
         for x in found:
-            if len(out) >= CAP:
+            if searched >= SEARCH_SLOTS or len(out) >= CAP:
                 break
             t = _track(x, None, search)
             if t.audio_id not in out and t.audio_id not in exclude:
                 out[t.audio_id] = t
+                searched += 1
     return sorted(out.values(), key=lambda t: t.preview_url is None)   # stable: previews first
 
 
 def rule_pick(tracks: list[Track], mood: str | None) -> Track:
-    """The fallback pick without the picker: the first track the mood's searches found
-    (Hindi search first), else the best trending rank, else the first track.
+    """The fallback pick without the picker: the best-ranked trending track, else the first
+    track the mood's searches found (Hindi search first), else the first track.
     `tracks` must not be empty."""
+    ranked = [t for t in tracks if t.trending]
+    if ranked:
+        return min(ranked, key=lambda t: t.trending_rank)
     for search in MOOD_SEARCHES.get(mood or "", MOOD_SEARCHES[FALLBACK]):
         for t in tracks:
             if t.found_by == search:
                 return t
-    ranked = [t for t in tracks if t.trending_rank is not None]
-    if ranked:
-        return min(ranked, key=lambda t: t.trending_rank)
     return tracks[0]
 
 
@@ -223,14 +235,14 @@ def decide(client: httpx.Client | None, api_key: str | None, reel: dict, tracks:
     labels = _unique_labels(tracks)
     by_label = dict(zip(labels, tracks))
     choices = [{"value": label,
-                "description": (f"trending #{t.trending_rank}" if t.trending_rank else "not in trending")
+                "description": (f"TRENDING #{t.trending_rank} (most people use it)" if t.trending else "not trending")
                 + f"; found by: {t.found_by}"}
                for label, t in zip(labels, tracks)]
     body = {"model": MODEL,
             "input": [{"role": "user", "content": [
                 {"type": "input_text", "text": _reel_lines(reel)},
                 {"type": "input_json", "data": {"songs": [
-                    {"song": label, "artist": t.artist, "trending_rank": t.trending_rank,
+                    {"song": label, "artist": t.artist, "trending": t.trending, "trending_rank": t.trending_rank,
                      "found_by": t.found_by, "seconds": round(t.duration_ms / 1000)}
                     for label, t in zip(labels, tracks)]}}]}],
             "questions": [{"type": "choice", "name": "song", "instructions": INSTRUCTIONS,

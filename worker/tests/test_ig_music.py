@@ -45,8 +45,8 @@ def test_trending_leaves_room_for_searches_and_the_cap_holds():
                     "bollywood": [a(100 + i) for i in range(50)]})
     got = ig_music.candidates(c, graph=GRAPH, token="t", ig_user_id="178", mood=None, exclude=set())
     assert len(got) == 40
-    assert sum(t.found_by == "trending" for t in got) == 15
-    assert sum(t.found_by == "bollywood" for t in got) == 25         # the failing search was skipped
+    assert sum(t.found_by == "trending" for t in got) == ig_music.TRENDING_SLOTS == 27
+    assert sum(t.found_by == "bollywood" for t in got) == ig_music.SEARCH_SLOTS == 13   # the failing search was skipped
 
 
 def test_excluded_trending_songs_do_not_use_up_slots():
@@ -54,8 +54,19 @@ def test_excluded_trending_songs_do_not_use_up_slots():
     got = ig_music.candidates(c, graph=GRAPH, token="t", ig_user_id="178", mood=None,
                               exclude={"0", "1", "2", "3", "4"})
     trending = [t.audio_id for t in got if t.found_by == "trending"]
-    assert trending == [str(i) for i in range(5, 20)]               # 15 kept, all past the excluded five
+    assert trending == [str(i) for i in range(5, 20)]               # all 15 left kept, past the excluded five
     assert "100" in [t.audio_id for t in got]                        # the search still gets reached
+
+
+def test_searches_are_capped_and_never_push_out_trending():
+    c = fake_audio({"": [a(i) for i in range(30)], "hindi trending": [a(100 + i) for i in range(30)],
+                    "bollywood": [a(200 + i) for i in range(30)]})
+    got = ig_music.candidates(c, graph=GRAPH, token="t", ig_user_id="178", mood=None, exclude=set())
+    assert [t.audio_id for t in got if t.trending] == [str(i) for i in range(27)]   # trending order kept
+    assert sum(not t.trending for t in got) == 13 and len(got) == 40
+    short = fake_audio({"": [a(1), a(2)], "hindi trending": [a(100 + i) for i in range(30)]})
+    got = ig_music.candidates(short, graph=GRAPH, token="t", ig_user_id="178", mood=None, exclude=set())
+    assert len(got) == 2 + 13                                        # searches only top up, capped
 
 
 def test_a_non_numeric_duration_counts_as_zero():
@@ -88,11 +99,16 @@ def test_mood_searches_cover_every_music_mood():
     assert all(len(v) == 2 for v in ig_music.MOOD_SEARCHES.values())
 
 
-def test_rule_pick_prefers_the_moods_search_then_trending():
-    t1 = ig_music.Track("1", "A", "x", 1, 1, "trending")
+def test_rule_pick_prefers_the_best_trending_track_over_search_hits():
+    t1 = ig_music.Track("1", "A", "x", 1, 5, "trending")
     t2 = ig_music.Track("2", "B", "y", 1, None, ig_music.MOOD_SEARCHES["somber"][0])
-    assert ig_music.rule_pick([t1, t2], "somber").audio_id == "2"
-    assert ig_music.rule_pick([t1], "somber").audio_id == "1"
+    t3 = ig_music.Track("3", "C", "z", 1, 2, "trending")
+    assert ig_music.rule_pick([t2, t1, t3], "somber").audio_id == "3"
+    assert ig_music.rule_pick([t1, t2], "somber").audio_id == "1"
+    assert ig_music.rule_pick([t2], "somber").audio_id == "2"          # no trending: the mood's search
+    other = ig_music.Track("4", "D", "w", 1, None, "phonk")
+    assert ig_music.rule_pick([other, t2], "somber").audio_id == "2"
+    assert ig_music.rule_pick([other], "somber").audio_id == "4"
 
 
 def test_volumes():
@@ -126,15 +142,21 @@ def test_decide_sends_one_choice_question_and_returns_the_pick():
     body = seen[0]
     assert body["model"] == "gpt-6-luna" and body["questions"][0]["type"] == "choice"
     assert [ch["value"] for ch in body["questions"][0]["choices"]] == ["Party Song — DJ", "Dil Udaas — Arijit"]
-    assert "Prefer Hindi songs" in body["questions"][0]["instructions"]
+    ins = body["questions"][0]["instructions"]
+    assert "Prefer Hindi songs" in ins and "strongly prefer them" in ins and "only rarely" in ins
+    assert "Never answer with no song" in ins
+    assert body["questions"][0]["choices"][0]["description"].startswith("TRENDING #1")
+    assert body["questions"][0]["choices"][1]["description"].startswith("not trending")
+    songs = body["input"][0]["content"][1]["data"]["songs"]
+    assert [(x["trending"], x["trending_rank"]) for x in songs] == [(True, 1), (False, None)]
 
 
 def test_decide_falls_back_to_the_rule_pick():
     for reply in (500, {"answers": [{"type": "refusal", "name": "song"}]},
                   {"answers": [{"type": "choice", "name": "song", "choice": "Not offered"}]}):
         track, conf, _, by = ig_music.decide(fake_decisions(reply, []), "sk", REEL, TRACKS)
-        assert track.audio_id == "2" and conf is None and by == "rule"
-    assert ig_music.decide(None, None, REEL, TRACKS)[0].audio_id == "2"     # no key: no call at all
+        assert track.audio_id == "1" and conf is None and by == "rule"
+    assert ig_music.decide(None, None, REEL, TRACKS)[0].audio_id == "1"     # no key: no call at all
     assert ig_music.decide(None, "sk", REEL, TRACKS[:1])[3] == "only"       # one song: nothing to decide
 
 
@@ -150,7 +172,7 @@ def test_a_malformed_answer_falls_back_to_the_rule_pick():
     for answer in ({"type": "choice", "name": "song", "choice": "Party Song — DJ", "confidence": "high"},
                    {"type": "choice", "name": "song", "choice": ["Party Song — DJ"], "confidence": 0.9}):
         track, conf, _, by = ig_music.decide(fake_decisions({"answers": [answer]}, []), "sk", REEL, TRACKS)
-        assert track.audio_id == "2" and conf is None and by == "rule"
+        assert track.audio_id == "1" and conf is None and by == "rule"
 
 
 def test_malformed_usage_keeps_a_valid_pick():
@@ -163,7 +185,7 @@ def test_malformed_usage_keeps_a_valid_pick():
 def test_a_400_is_logged_with_its_status(caplog):
     with caplog.at_level("WARNING", logger="corpus.ig_music"):
         track, _, _, by = ig_music.decide(fake_decisions(400, []), "sk", REEL, TRACKS)
-    assert track.audio_id == "2" and by == "rule"
+    assert track.audio_id == "1" and by == "rule"
     assert any(r.levelname == "WARNING" and "400" in r.getMessage() for r in caplog.records)
 
 
