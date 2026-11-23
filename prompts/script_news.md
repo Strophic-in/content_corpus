@@ -48,7 +48,7 @@ voice across the whole reel. Write for that pipeline.
    is footage.
 2. Then what happened, to whom, where and when; then the one number or detail that
    makes it matter; then what happens next.
-3. The last shot lands the consequence or the open question, in one line.
+3. The last shot lands the consequence in one plain statement, in one line. Never end the reel on a question.
 
 ## Editorial rules
 1. Only facts from the brief and its sources. Never invent a fact, number, name or

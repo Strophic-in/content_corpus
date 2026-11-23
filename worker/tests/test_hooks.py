@@ -75,3 +75,13 @@ def test_packaging_asks_for_a_hook_cover_and_passes_the_scripts_hook():
     assert "first line is hook_line" in s and 'taps "more"' in s
     brief = packaging._brief({"title": "T", "hook": "The spire fell in four minutes", "shot_plan": []})
     assert "The spire fell in four minutes" in brief and "cover text must" in brief
+
+
+def test_reels_and_captions_never_end_on_a_question():
+    from corpus import packaging
+    text = packaging.SYSTEM.lower()
+    assert "end with a question" not in text
+    assert "never a question" in text
+    news = open("prompts/script_news.md", encoding="utf-8").read().lower()
+    assert "never end the reel on a question" in news
+    assert "open question" not in news

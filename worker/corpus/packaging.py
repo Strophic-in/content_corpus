@@ -6,12 +6,12 @@ page before it goes out; publish_post makes it there and then if it is missing, 
 anew when the script changed since.
 
   title           gripping and accurate — a curiosity gap, never a false promise
-  caption         a hook line, a few short lines (what happened, why it matters),
-                  a question; then the sources (YouTube: with links; Instagram:
+  caption         a hook line, a few short lines (what happened, why it matters);
+                  never ending on a question (owner, 2026-11-23); then the sources (YouTube: with links; Instagram:
                   their names), the footage credits and the hashtags
   first comment   more on the story than the video had time for — background, a
                   telling detail from the reports, what happens next — ending on a
-                  question; never the sources or links (owner, 2026-10-19)
+                  fact, not a question (owner, 2026-11-23); never the sources or links (owner, 2026-10-19)
   cover           media/thumbnail.py: the strongest real photo — or the place
                   before and now — with a short bold line
 """
@@ -54,13 +54,13 @@ scrolling and tap - without misleading them. Everything you write must be true t
 - hook_line: the first line of the caption, at most 110 characters - the reel's own hook (the "Hook" in the
   brief), tightened if needed, so the caption, the cover and the video all open the same curiosity gap. It must
   work alone, before the viewer taps "more".
-- caption: 2-4 short lines (no hashtags, no links); the first line is hook_line; then what happened, why it matters, and end with a question to the
-  viewer. Plain words; at most two emojis in total.
+- caption: 2-4 short lines (no hashtags, no links); the first line is hook_line; then what happened, why it matters, and end on a statement (the last line is never a question
+  and never asks the viewer anything). Plain words; at most two emojis in total.
 - hashtags: 8-12, each starting with #, most important first (YouTube shows the first three): the place, the
   topic, the event, then broader ones (#news, #worldnews, …). No spaces inside a tag, no misleading tags.
 - first_comment: 2-4 short sentences (at most 450 characters) that tell viewers more than the video had time
   for: the background, a telling detail or number from the reports, or what happens next - only facts the
-  reports state. End with a question that starts a conversation. No links, no list of sources, no hashtags,
+  reports state. End on a fact or a plain statement, never a question. No links, no list of sources, no hashtags,
   never begging for likes.
 - Style: never use em dashes or en dashes as punctuation; write a comma, a full stop or a colon.
 - thumbnail_text: a punchy curiosity hook on the cover, derived from the reel's Hook: 2-5 words, ALL CAPS, that
