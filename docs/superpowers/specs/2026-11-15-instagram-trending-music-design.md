@@ -161,7 +161,7 @@ Runs inside `publish_post` for Instagram reels, just before the container:
      mood (rule fallback), so a song is still attached.
    - Cost recorded via `costs` (kind `music_pick`, model `gpt-6-luna`;
      input tokens only — Decisions output is free).
-3. **Attach.** `audio_volume`: 25 when narrated, 100 when not; `video_volume`:
+3. **Attach.** `audio_volume`: 60 when narrated, 100 when not; `video_volume`:
    100 when narrated, 40 otherwise (clips' own sound under the song).
 4. **Save** on the post: `posts.ig_music` jsonb
    `{audio_id, title, artist, confidence, trending_rank, found_by,

@@ -96,7 +96,7 @@ def test_rule_pick_prefers_the_moods_search_then_trending():
 
 
 def test_volumes():
-    assert ig_music.volumes(True) == {"audio_volume": 25, "video_volume": 100}
+    assert ig_music.volumes(True) == {"audio_volume": 60, "video_volume": 100}
     assert ig_music.volumes(False) == {"audio_volume": 100, "video_volume": 40}
 
 
@@ -165,3 +165,65 @@ def test_a_400_is_logged_with_its_status(caplog):
         track, _, _, by = ig_music.decide(fake_decisions(400, []), "sk", REEL, TRACKS)
     assert track.audio_id == "2" and by == "rule"
     assert any(r.levelname == "WARNING" and "400" in r.getMessage() for r in caplog.records)
+
+
+# --- silent-preview guard ---------------------------------------------------------------------
+
+def _tr(i, url="http://p/x"):
+    return ig_music.Track(audio_id=str(i), title=f"T{i}", artist="A", duration_ms=30000,
+                          trending_rank=i, found_by="trending", preview_url=url)
+
+
+def _probe(levels):                       # preview url -> measured dB (or an exception to raise)
+    def probe(url):
+        v = levels[url]
+        if isinstance(v, Exception):
+            raise v
+        return v
+    return probe
+
+
+def test_a_silent_pick_is_skipped_and_the_next_is_used():
+    tracks = [_tr(1, "u1"), _tr(2, "u2")]
+    got = ig_music.pick_audible(None, None, REEL, tracks, probe=_probe({"u1": -60.0, "u2": -20.0}))
+    assert got[0].audio_id == "2" and got[4] == -20.0 and got[5] == ["T1"]
+
+
+def test_no_preview_url_is_accepted():
+    got = ig_music.pick_audible(None, None, REEL, [_tr(1, None), _tr(2, None)],
+                                probe=lambda url: ig_music.preview_db(url))
+    assert got[0].audio_id == "1" and got[4] is None and got[5] == []
+
+
+def test_a_failed_check_is_accepted(monkeypatch):
+    def boom(*a, **k):
+        raise OSError("no network")
+    monkeypatch.setattr(ig_music.httpx, "stream", boom)
+    assert ig_music.preview_db("http://p/x") is None
+    got = ig_music.pick_audible(None, None, REEL, [_tr(1), _tr(2)])
+    assert got[0].audio_id == "1" and got[4] is None and got[5] == []
+
+
+def test_repicks_are_capped_at_three():
+    tracks = [_tr(i, f"u{i}") for i in range(1, 7)]
+    got = ig_music.pick_audible(None, None, REEL, tracks, probe=_probe({f"u{i}": -70.0 for i in range(1, 7)}))
+    assert got[0].audio_id == "4" and got[5] == ["T1", "T2", "T3"] and got[4] == -70.0
+
+
+def test_preview_db_parses_ffmpeg_volumedetect(monkeypatch):
+    class R:
+        def raise_for_status(self): pass
+        def iter_bytes(self): yield b"abc"
+        def __enter__(self): return self
+        def __exit__(self, *a): pass
+    monkeypatch.setattr(ig_music.httpx, "stream", lambda *a, **k: R())
+    monkeypatch.setattr(ig_music.subprocess, "run", lambda *a, **k: type(
+        "P", (), {"returncode": 0, "stderr": "[Parsed_volumedetect_0] mean_volume: -41.3 dB\n"})())
+    assert ig_music.preview_db("http://p/x") == -41.3
+
+
+def test_candidates_prefer_tracks_with_a_preview():
+    withurl = {**a(2), "download_url": "http://p/2"}
+    c = fake_audio({"": [a(1), withurl]})
+    got = ig_music.candidates(c, graph=GRAPH, token="t", ig_user_id="178", mood=None, exclude=set())
+    assert [t.audio_id for t in got] == ["2", "1"] and got[0].preview_url == "http://p/2"

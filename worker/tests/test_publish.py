@@ -264,14 +264,14 @@ def test_instagram_publishes_through_the_unified_host(video):
     assert out["remote_id"] == "m1" and fake.published == 1
 
 
-SONG = {"audio_id": "587", "audio_volume": 25, "video_volume": 100}
+SONG = {"audio_id": "587", "audio_volume": 60, "video_volume": 100}
 
 
 def test_instagram_attaches_the_song_to_the_reel(video):
     fake = FakeInstagram()
     out = instagram.publish(client(fake), token="tok", ig_user_id="178", video_url=LINK, caption="A reel",
                             attempt={}, save=lambda **f: None, sleep=lambda s: None, audio=SONG)
-    assert json.loads(fake.audio) == {"audio_id": "587", "audio_volume": 25, "video_volume": 100}
+    assert json.loads(fake.audio) == {"audio_id": "587", "audio_volume": 60, "video_volume": 100}
     assert out["audio_id"] == "587" and "audio_dropped" not in out
 
 
@@ -513,20 +513,20 @@ def test_handler_keeps_the_bed_version_when_instagram_has_no_songs(owner, user, 
 def test_a_retry_reuses_the_saved_song(owner, user, fake_http, monkeypatch):
     fake = FakeInstagram(version="v27.0", audio_list=[{**LISTED, "audio_id": "999"}])
     _publish_unified(owner, user, fake_http, monkeypatch, fake,
-                     ig_music={"audio_id": "587", "audio_volume": 25, "video_volume": 100})
+                     ig_music={"audio_id": "587", "audio_volume": 60, "video_volume": 100})
     assert json.loads(fake.audio)["audio_id"] == "587" and fake.audio_searches == 0
 
 
 def test_a_narrated_reel_keeps_the_song_quiet_under_the_voice(owner, user, fake_http, monkeypatch):
     fake = FakeInstagram(version="v27.0", audio_list=[LISTED])
     _publish_unified(owner, user, fake_http, monkeypatch, fake, narrated=True)
-    assert json.loads(fake.audio) == {"audio_id": "587", "audio_volume": 25, "video_volume": 100}
+    assert json.loads(fake.audio) == {"audio_id": "587", "audio_volume": 60, "video_volume": 100}
 
 
 def test_a_reel_whose_characters_speak_keeps_the_song_quiet(owner, user, fake_http, monkeypatch):
     fake = FakeInstagram(version="v27.0", audio_list=[LISTED])
     _publish_unified(owner, user, fake_http, monkeypatch, fake, dialogue="Hello there")
-    assert json.loads(fake.audio) == {"audio_id": "587", "audio_volume": 25, "video_volume": 100}
+    assert json.loads(fake.audio) == {"audio_id": "587", "audio_volume": 60, "video_volume": 100}
 
 
 def test_a_silent_ltx_reel_keeps_the_song_loud(owner, user, fake_http, monkeypatch):

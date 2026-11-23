@@ -13,6 +13,9 @@ candidates. A song Instagram refuses later is dropped by the publisher, never th
 from __future__ import annotations
 
 import logging
+import re
+import subprocess
+import tempfile
 from dataclasses import dataclass
 
 import httpx
@@ -50,6 +53,10 @@ MOOD_SEARCHES: dict[str, list[str]] = {
 MEME_SEARCHES = ["viral meme song", "phonk"]
 FALLBACK = "neutral-corporate"       # the mood an unknown or missing mood is treated as
 HINDI_FIRST = ["hindi trending", "bollywood"]
+SILENT_DB = -35.0        # a preview whose mean volume is below this counts as silent
+REPICKS = 3              # silent picks skipped at most this many times, then the last pick is kept
+PREVIEW_SECONDS = 15     # how much of the preview is measured
+PREVIEW_MAX_BYTES = 2_000_000
 
 
 @dataclass
@@ -60,6 +67,7 @@ class Track:
     duration_ms: int
     trending_rank: int | None   # 1-based position in the no-query list, None if not there
     found_by: str               # "trending" or the search text that found it
+    preview_url: str | None = None   # Instagram's preview of the audio, when it gives one
 
     @property
     def label(self) -> str:
@@ -104,7 +112,8 @@ def _track(x: dict, rank: int | None, found_by: str) -> Track:
         duration_ms = 0
     return Track(audio_id=str(x["audio_id"]), title=str(x.get("title") or ""),
                  artist=str(x.get("display_artist") or ""), duration_ms=duration_ms,
-                 trending_rank=rank, found_by=found_by)
+                 trending_rank=rank, found_by=found_by,
+                 preview_url=str(x["download_url"]) if x.get("download_url") else None)
 
 
 def candidates(client: httpx.Client, *, graph: str, token: str, ig_user_id: str,
@@ -135,7 +144,7 @@ def candidates(client: httpx.Client, *, graph: str, token: str, ig_user_id: str,
             t = _track(x, None, search)
             if t.audio_id not in out and t.audio_id not in exclude:
                 out[t.audio_id] = t
-    return list(out.values())
+    return sorted(out.values(), key=lambda t: t.preview_url is None)   # stable: previews first
 
 
 def rule_pick(tracks: list[Track], mood: str | None) -> Track:
@@ -153,9 +162,10 @@ def rule_pick(tracks: list[Track], mood: str | None) -> Track:
 
 
 def volumes(narrated: bool) -> dict:
-    """Mix levels for the reel's audio: a narrated reel keeps the song quiet under the voice."""
+    """Mix levels for the reel's audio: a narrated reel keeps the song under the voice, but
+    loud enough to be heard (the normalized voice masks a much quieter track)."""
     if narrated:
-        return {"audio_volume": 25, "video_volume": 100}
+        return {"audio_volume": 60, "video_volume": 100}
     return {"audio_volume": 100, "video_volume": 40}
 
 
@@ -259,6 +269,54 @@ def decide(client: httpx.Client | None, api_key: str | None, reel: dict, tracks:
     return track, conf, usage, "decisions"
 
 
+def preview_db(url: str | None) -> float | None:
+    """Mean volume (dB) of the first seconds of a track's preview, or None when there is no
+    preview or any step fails: the check is best effort and never blocks a post."""
+    if not url:
+        return None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".audio") as f:
+            with httpx.stream("GET", url, timeout=10, follow_redirects=True) as r:
+                r.raise_for_status()
+                size = 0
+                for chunk in r.iter_bytes():
+                    f.write(chunk)
+                    size += len(chunk)
+                    if size >= PREVIEW_MAX_BYTES:
+                        break
+            f.flush()
+            p = subprocess.run(["ffmpeg", "-v", "info", "-t", str(PREVIEW_SECONDS), "-i", f.name,
+                                "-af", "volumedetect", "-f", "null", "-"],
+                               capture_output=True, text=True, timeout=30)
+        m = re.search(r"mean_volume:\s*(-?[\d.]+|-inf)\s*dB", p.stderr)
+        if p.returncode != 0 or not m:
+            return None
+        return float(m.group(1))
+    except Exception as e:      # noqa: BLE001 - any failure means "unknown", which is accepted
+        log.warning("Preview check failed, accepting the song: %s", e)
+        return None
+
+
+def pick_audible(client: httpx.Client | None, api_key: str | None, reel: dict, tracks: list[Track],
+                 probe=None) -> tuple[Track, float | None, list[Usage], str, float | None, list[str]]:
+    """decide(), but a song whose preview is silent is skipped and the next pick made from the
+    rest (at most REPICKS times, then the last pick stays). Returns decide's values with usages
+    as a list, then the picked preview's mean dB (None if unmeasured) and the skipped titles."""
+    probe = probe or preview_db
+    usages: list[Usage] = []
+    skipped: list[str] = []
+    left = list(tracks)
+    while True:
+        track, conf, usage, picked_by = decide(client, api_key, reel, left)
+        if usage is not None:
+            usages.append(usage)
+        db_ = probe(track.preview_url)
+        if db_ is None or db_ >= SILENT_DB or len(skipped) >= REPICKS or len(left) <= 1:
+            return track, conf, usages, picked_by, db_, skipped
+        skipped.append(track.title)
+        left = [t for t in left if t.audio_id != track.audio_id]
+
+
 def choose(client: httpx.Client, *, post: dict, acc: dict, token: str, job_id=None) -> dict | None:
     """The reel's song, saved on the post (posts.ig_music) and returned. A song Instagram
     refused stays refused (None: the reel goes out with the bed); a song already saved
@@ -287,13 +345,14 @@ def choose(client: httpx.Client, *, post: dict, acc: dict, token: str, job_id=No
                         mood=reel["mood"], exclude=recent)
     if not tracks:
         return None
-    track, conf, usage, picked_by = decide(client, vault.secret(post["user_id"], "openai"), reel, tracks)
-    if usage is not None:
+    track, conf, usages, picked_by, heard_db, skipped = pick_audible(
+        client, vault.secret(post["user_id"], "openai"), reel, tracks)
+    for usage in usages:
         costs.record_llm(usage, user_id=post["user_id"], kind="music_pick", post_id=post["id"],
                          channel_id=post["channel_id"], job_id=job_id, note="Instagram song")
     out = {"audio_id": track.audio_id, "title": track.title, "artist": track.artist, "confidence": conf,
            "trending_rank": track.trending_rank, "found_by": track.found_by, "picked_by": picked_by,
-           **volumes(narrated)}
+           "preview_db": heard_db, "skipped_silent": skipped, **volumes(narrated)}
     with db.conn() as c:
         c.execute("update posts set ig_music = %s where id = %s", (Jsonb(out), post["id"]))
     return out
