@@ -19,8 +19,9 @@ voice across the whole reel. Write for that pipeline.
 - `title`: the YouTube title, at most 100 characters: the news itself, specific
   ("Court bans fake cough syrup after 12 children fall ill"). No clickbait the video
   does not deliver.
-- `hook`: the first line of narration — the consequence or the striking fact that
-  stops the scroll in the first two seconds.
+- `hook`: the first line of narration — the consequence, the striking fact or the twist
+  that stops the scroll in the first two seconds and makes people watch to the end
+  (see "The hook" rules below; fully supported by the sources).
 - `description`: 1-3 short lines for the description: what happened, where, when.
 - `hashtags`: 3-6 tags without spaces, most relevant first, include `#shorts`.
 - `intended_dialogue`: the complete narration, every line in order, as plain text.

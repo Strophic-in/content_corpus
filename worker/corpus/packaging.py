@@ -51,8 +51,10 @@ scrolling and tap - without misleading them. Everything you write must be true t
 - title: at most 70 characters. Lead with the most striking concrete fact and the named place, person or thing.
   A curiosity gap is good ("…and nobody knows what happens next"); a false promise, invented detail or shouty
   ALL CAPS is not. At most one emoji, usually none.
-- hook_line: the first line of the caption, at most 110 characters - the one fact that makes people watch.
-- caption: 2-4 short lines (no hashtags, no links): what happened, why it matters, and end with a question to the
+- hook_line: the first line of the caption, at most 110 characters - the reel's own hook (the "Hook" in the
+  brief), tightened if needed, so the caption, the cover and the video all open the same curiosity gap. It must
+  work alone, before the viewer taps "more".
+- caption: 2-4 short lines (no hashtags, no links); the first line is hook_line; then what happened, why it matters, and end with a question to the
   viewer. Plain words; at most two emojis in total.
 - hashtags: 8-12, each starting with #, most important first (YouTube shows the first three): the place, the
   topic, the event, then broader ones (#news, #worldnews, …). No spaces inside a tag, no misleading tags.
@@ -61,8 +63,9 @@ scrolling and tap - without misleading them. Everything you write must be true t
   reports state. End with a question that starts a conversation. No links, no list of sources, no hashtags,
   never begging for likes.
 - Style: never use em dashes or en dashes as punctuation; write a comma, a full stop or a colon.
-- thumbnail_text: 2-5 words in capitals that tell the story at a glance and make people curious (for a before/now
-  video, name what is gone or changed: "SPIRE GONE IN MINUTES"). True, no question marks spam, no clickbait lies.
+- thumbnail_text: a punchy curiosity hook on the cover, derived from the reel's Hook: 2-5 words, ALL CAPS, that
+  create a question or tension without giving away the full answer ("SPIRE GONE IN MINUTES", "THE PRICE NOBODY
+  SAW"). It must agree with the reel's hook and stay true to the story: no clickbait lie, no question-mark spam.
 - kicker: one or two words for a small red label above it ("BREAKING", "BEFORE / NOW", "LIVE", "UPDATE"), or ""
   when none fits.
 Never name victims of crimes or minors; nobody is guilty before a verdict; stay non-partisan."""
@@ -134,7 +137,8 @@ def _brief(post: dict) -> str:
              f"Video format: {post.get('template_id') or 'news video'}"
              + (" (before vs now: the place as it was, then as it is now)"
                 if post.get("template_id") == "before_after_comparison" else ""),
-             "", f"Script title: {post['title']}", f"Hook: {post.get('hook') or ''}",
+             "", f"Script title: {post['title']}", f"Hook (the reel's first line; the caption's first line and the cover text must carry it): "
+             f"{post.get('hook') or ''}",
              f"Script description: {post.get('description') or ''}",
              f"Script hashtags: {' '.join(post.get('hashtags') or [])}", "", "What the video says:"]
     for s in post.get("shot_plan") or []:

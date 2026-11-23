@@ -29,7 +29,9 @@ Keywords: {category_keywords}
 Suggest {count} video ideas. For each one:
 - `title`: the YouTube title, as a curiosity question or a surprising claim, at most
   90 characters.
-- `hook`: the first line the viewer hears — it must stop the scroll in two seconds.
+- `hook`: the first line the viewer hears — it must stop the scroll in two seconds: a
+  surprising fact, a twist or a stake, fully true to the subject. Prefer the spicy, stand-out
+  angle over the routine one.
 - `brief`: 2-4 sentences: the angle, the 3-4 beats the video walks through, and the
   surprising fact it ends on.
 - `why_now`: one line on why it is timely — the trend item above it comes from, or

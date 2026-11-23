@@ -38,10 +38,15 @@ def _item_text(it: Item) -> str:
 
 
 # What makes people stop scrolling and tap, said once for items and ideas alike.
-PULL_WHAT = ("Strong pull: a surprise or twist; high stakes for ordinary people (money, prices, jobs, safety, "
-             "health); a famous name, place or brand; a striking number; conflict or controversy; something unusual "
-             "or visual to watch; a question people want answered. Weak pull: routine announcements, procedural "
-             "updates, jargon, stories with no consequence for anyone.")
+PULL_WHAT = ("Strong pull: spicy, weird, surprising or stand-out stories; a twist, irony or contradiction; a big or "
+             "striking number; high stakes for ordinary people (money, prices, jobs, safety, health); a famous name, "
+             "place or brand; controversy that is still factual; something unusual or visual to watch; a question "
+             "people want answered; a story with a hook that makes people watch to the end. Weak pull: dry press "
+             "releases, routine announcements and updates, procedural steps, jargon, stories with no consequence "
+             "or surprise for anyone. Judge the spice of what actually happened, never of how it could be "
+             "exaggerated.")
+# Owner, 2026-11-23: favour spicy, stand-out stories (was 1.5), even within a category.
+PULL_WEIGHT = 2.5
 PULL_SCALE = ["Almost nobody would tap", "A niche few would tap", "Many would stop and tap",
               "Most would stop, tap and share it"]
 
@@ -86,7 +91,7 @@ def rank_scored(jev: Jev, cands: list[Item], category: dict, audience: str = "")
         if a is None or score(a.get("fits")) < MIN_FIT:
             continue
         out.append((score(a.get("fits")) + 0.8 * score(a.get("trending")) + 1.5 * yes(a.get("genuine"))
-                    + 1.5 * score(a.get("pull")), it))
+                    + PULL_WEIGHT * score(a.get("pull")), it))
     return sorted(out, key=lambda x: x[0], reverse=True)
 
 
@@ -110,7 +115,7 @@ def rank(jev: Jev, cands: list[Item], category: dict, keep: int = KEEP, audience
             dropped += 1
             continue
         judged.append((fit + 0.8 * score(a.get("trending")) + 1.5 * yes(a.get("genuine"))
-                       + 1.5 * score(a.get("pull")), it))
+                       + PULL_WEIGHT * score(a.get("pull")), it))
     judged.sort(key=lambda x: x[0], reverse=True)
     out = [it for _, it in judged] + unjudged
     return out[:keep], {"judged": len(cands) - len(unjudged), "dropped_off_topic": dropped, "kept": min(keep, len(out))}

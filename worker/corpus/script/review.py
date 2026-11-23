@@ -23,7 +23,8 @@ report only problems serious enough to stop it:
 - someone presented as guilty before a verdict;
 - partisan framing, or content that could inflame a community;
 - graphic description of injury or death;
-- anything dangerous to copy.
+- anything dangerous to copy;
+- a hook (the first line) that the sources do not support, exaggerates, or that the script never pays off.
 
 Return ok = true when none of these is present (style and wording are not your job).
 Otherwise ok = false, with each problem as one short, specific line."""
