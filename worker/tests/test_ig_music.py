@@ -249,3 +249,13 @@ def test_candidates_prefer_tracks_with_a_preview():
     c = fake_audio({"": [a(1), withurl]})
     got = ig_music.candidates(c, graph=GRAPH, token="t", ig_user_id="178", mood=None, exclude=set())
     assert [t.audio_id for t in got] == ["2", "1"] and got[0].preview_url == "http://p/2"
+
+
+def test_a_pick_is_stale_after_a_day_but_a_legacy_pick_stands():
+    from datetime import datetime, timedelta, timezone
+    from corpus import ig_music
+    now = datetime.now(timezone.utc)
+    assert not ig_music.stale({"picked_at": (now - timedelta(hours=23)).isoformat()})
+    assert ig_music.stale({"picked_at": (now - timedelta(hours=25)).isoformat()})
+    assert ig_music.stale({"picked_at": "garbage"})
+    assert not ig_music.stale({"audio_id": "1"}) and not ig_music.stale(None)

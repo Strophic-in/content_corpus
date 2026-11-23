@@ -2,8 +2,10 @@
 // the post page's tracker, the Library and Discover read it from.
 
 export type StepState = "done" | "active" | "waiting" | "todo" | "failed" | "skipped";
+import { songSummary, type IgMusic } from "./ig-song";
+
 export type Step = { id: StepId; label: string; state: StepState; detail?: string };
-export type StepId = "sources" | "script" | "review" | "voice" | "render" | "assemble" | "package" | "post";
+export type StepId = "sources" | "script" | "review" | "voice" | "render" | "assemble" | "package" | "song" | "post";
 
 export type PipelineInput = {
   status: string;
@@ -17,6 +19,9 @@ export type PipelineInput = {
   error_stage?: string | null;
   live_on?: string[];                    // platforms it is live on
   publish_time?: string | null;          // "HH:MM" of a scheduled post
+  // The Instagram song: `unified` when the channel's Instagram account can carry one
+  // (and the post is a reel with its music-free copy), `pick` once it is chosen.
+  song?: { unified: boolean; pick: IgMusic | null };
 };
 
 const ORDER = ["draft", "scripting", "awaiting_approval", "approved", "queued_for_render", "rendering", "rendered",
@@ -86,6 +91,26 @@ export function pipeline(p: PipelineInput): Step[] {
     detail: past("post_processing") && !p.packaged ? "Title, caption, sources, hashtags and a cover" : undefined,
   });
   const live = p.live_on ?? [];
+  const pick = p.song?.pick ?? null;
+  const ended = is("published") || live.length > 0;
+  if (!p.song?.unified) {
+    steps.push({ id: "song", label: "Pick the song", state: "skipped", detail: "Not needed" });
+  } else if (pick) {
+    const sum = songSummary(pick);
+    steps.push({
+      id: "song", label: "Pick the song", state: "done",
+      detail: pick.dropped ? "Instagram refused the song — posted with the background track"
+        : sum ? `${sum.title}${sum.how ? ` · ${sum.how}` : ""}${sum.note ? ` · ${sum.note}` : ""}` : undefined,
+    });
+  } else if (ended) {   // went out without one (Instagram had none to offer)
+    steps.push({ id: "song", label: "Pick the song", state: "skipped", detail: "Not needed" });
+  } else {
+    const ready = past("post_processing") && p.packaged;
+    steps.push({
+      id: "song", label: "Pick the song", state: ready ? "active" : "todo",
+      detail: ready ? "Picking a trending song…" : "Picks right after the caption",
+    });
+  }
   steps.push({
     id: "post", label: "Post it",
     state: is("published") || live.length ? "done" : is("scheduled") ? "active" : is("ready") ? "waiting" : "todo",

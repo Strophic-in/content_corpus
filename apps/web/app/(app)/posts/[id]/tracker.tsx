@@ -23,7 +23,7 @@ function Mark({ state, n }: { state: Step["state"]; n: number }) {
 }
 
 export function Tracker({ steps }: { steps: Step[] }) {
-  const shown = steps.filter((s) => s.state !== "skipped");
+  const shown = steps.filter((s) => s.state !== "skipped" || s.id === "song")  // "Not needed" is worth showing;
   return (
     <ol className="flex flex-col">
       {shown.map((s, i) => {
@@ -39,7 +39,7 @@ export function Tracker({ steps }: { steps: Step[] }) {
               <Mark state={s.state} n={i + 1} />
             </span>
             <span className="flex min-w-0 flex-col pt-0.5">
-              <span className={`text-sm ${s.state === "todo" ? "text-muted" : "font-medium"}`}>
+              <span className={`text-sm ${s.state === "todo" || s.state === "skipped" ? "text-muted" : "font-medium"}`}>
                 {s.label}
                 {s.state === "waiting" && <span className="ml-2 rounded-full bg-warn/15 px-2 py-0.5 text-[11px] font-medium text-warn">Your turn</span>}
                 {s.state === "active" && <span className="ml-2 rounded-full bg-accent/15 px-2 py-0.5 text-[11px] font-medium text-accent">Now</span>}

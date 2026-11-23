@@ -15,6 +15,7 @@ import { lookName } from "@/lib/looks";
 import { styleName } from "@/lib/styles";
 import { voiceLabel } from "@/lib/voices";
 import { pipeline } from "@/lib/pipeline";
+import { songLine } from "@/lib/ig-song";
 import { template } from "@/lib/templates";
 
 import { PostForm } from "../post-form";
@@ -55,6 +56,11 @@ export default async function PostPage({ params }: { params: Promise<{ id: strin
   const liveOn = (await asUser(user.id, async (db) => (await db.query(
     "select platform from publish_attempts where post_id = $1 and state = 'live' order by platform", [post.id])).rows))
     .map((r) => (r.platform === "youtube" ? "YouTube" : "Instagram"));
+  // Can its Instagram account carry a song (Unified Login), on a reel with its music-free copy?
+  const unifiedIg = !(post.format === "carousel" || post.format === "image") &&
+    (await asUser(user.id, async (db) => (await db.query(
+      "select 1 from channel_accounts where channel_id = $1 and platform = 'instagram' and api = 'unified'",
+      [post.channel_id])).rows)).length > 0;
   const live = scripts.find((s) => ["awaiting_approval", "approved", "draft"].includes(s.state));
   const older = scripts.filter((s) => s !== live);
   const badge = statusBadge(post.status);
@@ -121,6 +127,8 @@ export default async function PostPage({ params }: { params: Promise<{ id: strin
                        voiced: shots.filter((x) => x.voiced).length },
               packaged: Boolean(post.package), go_ahead: post.go_ahead, error_stage: post.error?.stage ?? null,
               live_on: liveOn, publish_time: post.publish_time,
+              song: { unified: unifiedIg && (post.has_ig_copy || !["ready", "scheduled", "published"].includes(post.status)),
+                      pick: post.ig_music },
             })} />
           </div>
           {canGenerate && live && (
@@ -338,9 +346,7 @@ async function RenderPanel({ post, shots }: { post: PostRow; shots: ShotRow[] })
             {download && <a href={download} className="w-fit text-accent underline-offset-4 hover:underline">Download MP4</a>}
             {post.ig_music && (
               <p className="text-xs text-muted">
-                {post.ig_music.dropped
-                  ? "Instagram refused the song — posted with the background track."
-                  : <>Instagram song: “{post.ig_music.title}” by {post.ig_music.artist}{post.ig_music.trending_rank ? ` · trending #${post.ig_music.trending_rank}` : ""}</>}
+                {songLine(post.ig_music)}
               </p>
             )}
             {post.music && (
@@ -652,9 +658,7 @@ async function SlidesPanel({ post }: { post: PostRow }) {
         {play && <video src={play} controls playsInline className="aspect-[9/16] w-full max-w-[220px] rounded-lg bg-black" />}
         {post.ig_music && (
           <p className="text-xs text-muted">
-            {post.ig_music.dropped
-              ? "Instagram refused the song — posted with the background track."
-              : <>Instagram song: “{post.ig_music.title}” by {post.ig_music.artist}{post.ig_music.trending_rank ? ` · trending #${post.ig_music.trending_rank}` : ""}</>}
+            {songLine(post.ig_music)}
           </p>
         )}
         {post.music && (

@@ -17,6 +17,7 @@ import re
 import subprocess
 import tempfile
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 
 import httpx
 from psycopg.types.json import Jsonb
@@ -42,6 +43,7 @@ INSTRUCTIONS = (
 CAP = 40                 # candidates handed to the picker
 SEARCH_SLOTS = CAP // 3  # search hits may add at most this many: the trending list dominates
 TRENDING_SLOTS = CAP - SEARCH_SLOTS   # the no-query list fills first, up to this many
+FRESH_FOR = timedelta(hours=24)   # a pick made at packaging time is reused by publish for this long
 RECENT = 20              # songs in the owner's last reels are skipped by the caller's exclude set
 MOOD_SEARCHES: dict[str, list[str]] = {
     "breaking-tension": ["dramatic hindi bgm", "tense suspense beat"],
@@ -329,6 +331,21 @@ def pick_audible(client: httpx.Client | None, api_key: str | None, reel: dict, t
         left = [t for t in left if t.audio_id != track.audio_id]
 
 
+def stale(saved: dict | None, now: datetime | None = None) -> bool:
+    """A pick made more than FRESH_FOR ago is picked again (trending lists move). A pick
+    with no picked_at predates the stamp: it was made at publish time, so it stands."""
+    at = (saved or {}).get("picked_at")
+    if not at:
+        return False
+    try:
+        when = datetime.fromisoformat(at)
+    except (TypeError, ValueError):
+        return True
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=timezone.utc)
+    return (now or datetime.now(timezone.utc)) - when > FRESH_FOR
+
+
 def choose(client: httpx.Client, *, post: dict, acc: dict, token: str, job_id=None) -> dict | None:
     """The reel's song, saved on the post (posts.ig_music) and returned. A song Instagram
     refused stays refused (None: the reel goes out with the bed); a song already saved
@@ -336,7 +353,7 @@ def choose(client: httpx.Client, *, post: dict, acc: dict, token: str, job_id=No
     saved = post.get("ig_music")
     if saved and "dropped" in saved:
         return None
-    if saved and saved.get("audio_id"):
+    if saved and saved.get("audio_id") and not stale(saved):
         return saved
     row = db.one("""select s.title, s.hook, s.music_mood, s.intended_dialogue, p.audio_source, c.name as category
                       from posts p
@@ -364,7 +381,8 @@ def choose(client: httpx.Client, *, post: dict, acc: dict, token: str, job_id=No
                          channel_id=post["channel_id"], job_id=job_id, note="Instagram song")
     out = {"audio_id": track.audio_id, "title": track.title, "artist": track.artist, "confidence": conf,
            "trending_rank": track.trending_rank, "found_by": track.found_by, "picked_by": picked_by,
-           "preview_db": heard_db, "skipped_silent": skipped, **volumes(narrated)}
+           "preview_db": heard_db, "skipped_silent": skipped, **volumes(narrated),
+           "picked_at": datetime.now(timezone.utc).isoformat()}
     with db.conn() as c:
         c.execute("update posts set ig_music = %s where id = %s", (Jsonb(out), post["id"]))
     return out

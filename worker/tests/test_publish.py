@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import types
 import uuid
 from datetime import date, datetime, timedelta, timezone
 from urllib.parse import parse_qs
@@ -20,7 +21,7 @@ import httpx
 import pytest
 from corpus import db
 from corpus.crypto import encrypt
-from corpus.handlers import publish_post
+from corpus.handlers import package_post, publish_post
 from corpus.publish import attempts, instagram, youtube
 from corpus.runner import Runner
 
@@ -612,6 +613,79 @@ def test_a_refused_song_is_not_tried_again(owner, user, fake_http, monkeypatch):
     _publish_unified(owner, user, fake_http, monkeypatch, fake,
                      ig_music={"audio_id": "587", "dropped": "Invalid audio"})
     assert fake.video_url.endswith("key=u/p/final.mp4") and fake.audio == "" and fake.audio_searches == 0
+
+
+# ── the song is picked right after the caption, and publish reuses it ───────────
+
+def _package(owner, user, monkeypatch, fake, unified=True, ig_key=True, slides=False):
+    """Run package_post on a ready reel (the caption itself stubbed: that is packaging's own test)."""
+    real = httpx.Client
+    monkeypatch.setattr(package_post.httpx, "Client", lambda **kw: real(transport=httpx.MockTransport(fake)))
+    monkeypatch.setattr(package_post.packaging, "ensure",
+                        lambda pid, job_id=None: {"title": "t", "thumbnail_text": "T", "hashtags": []})
+    pid = _ready_post(owner, user)
+    if unified:
+        _unified(owner, user, pid)
+    if not ig_key:
+        owner.execute("update posts set final_ig_key = null where id = %s", (pid,))
+    if slides:
+        owner.execute("update posts set format = 'carousel' where id = %s", (pid,))
+    ctx = types.SimpleNamespace(job={"post_id": pid, "id": None}, payload={})
+    return pid, package_post.run(ctx)
+
+
+def _saved(owner, pid):
+    return owner.execute("select ig_music from posts where id = %s", (pid,)).fetchone()["ig_music"]
+
+
+def test_packaging_picks_the_song_for_a_unified_instagram_reel(owner, user, monkeypatch):
+    fake = FakeInstagram(version="v27.0", audio_list=[LISTED])
+    pid, out = _package(owner, user, monkeypatch, fake)
+    saved = _saved(owner, pid)
+    assert saved["audio_id"] == "587" and saved["picked_by"] == "only" and saved["picked_at"]
+    assert out["song"] == "Dil" and fake.published == 0
+
+
+def test_packaging_picks_no_song_without_a_unified_account_or_its_music_free_copy(owner, user, monkeypatch):
+    fake = FakeInstagram(version="v27.0", audio_list=[LISTED])
+    pid, _ = _package(owner, user, monkeypatch, fake, unified=False)             # YouTube only
+    assert _saved(owner, pid) is None
+    pid, _ = _package(owner, user, monkeypatch, fake, ig_key=False)              # no copy to mix into
+    assert _saved(owner, pid) is None
+    pid, _ = _package(owner, user, monkeypatch, fake, slides=True)               # a carousel carries no song
+    assert _saved(owner, pid) is None
+    assert fake.audio_searches == 0
+
+
+def test_a_failed_pick_does_not_fail_packaging(owner, user, monkeypatch):
+    def broken(*args, **kwargs):
+        raise RuntimeError("the picker fell over")
+    monkeypatch.setattr(package_post.ig_music, "choose", broken)
+    pid, out = _package(owner, user, monkeypatch, FakeInstagram(version="v27.0", audio_list=[LISTED]))
+    assert out["title"] == "t" and "song" not in out and _saved(owner, pid) is None
+
+
+def _fresh(hours):
+    return {"audio_id": "587", "audio_volume": 100, "video_volume": 40,
+            "picked_at": (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()}
+
+
+def test_publish_reuses_a_fresh_pick_without_asking_again(owner, user, fake_http, monkeypatch):
+    monkeypatch.setattr(publish_post.ig_music.vault, "secret", lambda uid, name: "sk")
+    fake = FakeInstagram(version="v27.0", audio_list=[SECOND, LISTED], choice="Kal — B")
+    pid = _publish_unified(owner, user, fake_http, monkeypatch, fake, ig_music=_fresh(2))
+    assert json.loads(fake.audio) == {"audio_id": "587", "audio_volume": 100, "video_volume": 40}
+    assert fake.decisions == 0 and fake.audio_searches == 0
+    saved = _saved(owner, pid)
+    assert saved["audio_id"] == "587" and saved["attached"] is True
+
+
+def test_publish_picks_again_when_the_pick_is_over_a_day_old(owner, user, fake_http, monkeypatch):
+    monkeypatch.setattr(publish_post.ig_music.vault, "secret", lambda uid, name: "sk")
+    fake = FakeInstagram(version="v27.0", audio_list=[LISTED, SECOND], choice="Kal — B")
+    pid = _publish_unified(owner, user, fake_http, monkeypatch, fake, ig_music=_fresh(25))
+    assert fake.decisions == 1 and json.loads(fake.audio)["audio_id"] == "700"
+    assert _saved(owner, pid)["audio_id"] == "700"
 
 
 def test_handler_reports_expired_access_and_frees_the_post(owner, user, fake_http):
