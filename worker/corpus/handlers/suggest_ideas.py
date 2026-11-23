@@ -82,12 +82,16 @@ Keywords: {category_keywords}"""
 PULL_NOTE = """
 
 ## Pick and frame for pull
-Choose the stories most of the channel's audience would stop scrolling for: a surprise or twist,
-stakes for ordinary people (money, prices, jobs, safety, health), a famous name or place, a striking
-number, a conflict, something unusual to watch. Skip routine announcements and procedural updates.
-Write each title and hook to open a curiosity gap the video truly closes: lead with the most surprising
-concrete fact, the number, the name, or what it means for the viewer. Clickable, never misleading -
-no invented detail, no promise the story can't keep, no fake urgency."""
+Choose the stories most of the channel's audience would stop scrolling for: spicy, weird, surprising,
+stand-out ones - a twist or irony, a striking number, stakes for ordinary people (money, prices, jobs,
+safety, health), a famous name or place, controversy that is still factual, something unusual to watch.
+Within every category, prefer the stand-out story over the routine one. Skip dry press releases,
+routine announcements and procedural updates unless something in them is truly surprising.
+For each story propose the spiciest angle the items honestly support, and write its title and hook to
+open a curiosity gap the video truly closes: lead with the most surprising concrete fact, the number,
+the name, or what it means for the viewer. Clickable, never misleading - no invented detail, no
+exaggeration beyond the items, no promise the story can't keep, no fake urgency, and never make light
+of deaths, disasters or tragedies."""
 
 OUTPUT_NOTE = """
 

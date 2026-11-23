@@ -41,6 +41,24 @@ def spoken_seconds(words: int, speed: float = 1.1) -> float:
     return words / (NARRATOR_WORDS_PER_SECOND * speed)
 
 
+# Appended to EVERY script prompt in code (write_script._system_prompt), so a prompt the
+# owner saved in the library cannot lose it. Owner, 2026-11-23: always a hook, so people
+# watch to the end; honesty stays binding.
+HOOK_RULES = """## The hook (required)
+The first line of the script (the first narration line, or the first slide) is a hook that earns
+attention within about two seconds: at most 14 words, built on ONE of: a surprising fact or number,
+a bold-but-true claim, a stake or consequence, a twist or contradiction, or an open question the
+piece then answers. It must not start with "Today", "Breaking", "Did you know", a source or outlet
+name, or a date. Put the same line in the `hook` field.
+- Open a curiosity gap and pay it off before the end; do not give the whole answer away in line one.
+- When the piece runs longer than about 20 seconds, add one re-hook or tease in the middle ("But
+  here is the part nobody expected") that the following lines deliver on.
+- Shot 1 shows the strongest picture while the hook plays.
+- Honesty is binding: the hook may be punchy, but every word must be supported by the collected
+  sources. No invented claim, no exaggeration beyond what the sources say, no clickbait the story
+  does not pay off. Never make light of deaths, disasters or tragedies: spicy means surprising, odd,
+  bold, ironic or a big number, never sensationalised suffering."""
+
 SOURCES = ("generate", "clip", "image", "stock", "chart", "plain")
 # Background music moods (music.MOODS); "" = no music.
 MUSIC_MOODS = ("", "breaking-tension", "somber", "uplifting", "energetic-hype", "neutral-corporate", "playful",

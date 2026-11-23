@@ -35,7 +35,7 @@ from ..runner import Defer, Handler, JobContext, Permanent, Retryable
 from ..script import carousel as carousel_
 from ..script import footage as footage_
 from ..script import structure
-from ..script.llm import (MUSIC_MOODS, NARRATOR_WORDS_PER_SECOND, OpenAIScriptWriter, Usage,
+from ..script.llm import (HOOK_RULES, MUSIC_MOODS, NARRATOR_WORDS_PER_SECOND, OpenAIScriptWriter, Usage,
                           narration_word_cap, validate)
 from ..script.review import OpenAIReviewer
 from ..style import NO_DASHES, undash
@@ -72,7 +72,7 @@ def _system_prompt(st: dict, target_seconds: int, revision_note: str, audio_sour
     look = look_text or (fmt["visual_style"] if fmt else prompts.default("visual_style"))
     shots = max(1, round(target_seconds / shot_seconds))
     cap = narration_word_cap(speed)
-    return prompts.fill(template, {
+    filled = prompts.fill(template, {
         "voice_rules": structure.voice_rules(audio_source, cap - 5, round(NARRATOR_WORDS_PER_SECOND * speed, 1)),
         "slide_count_hint": slide_hint,
         "channel_name": st.get("channel_name") or "(unnamed)",
@@ -88,6 +88,7 @@ def _system_prompt(st: dict, target_seconds: int, revision_note: str, audio_sour
         "narration_words_per_second": round(NARRATOR_WORDS_PER_SECOND * speed, 1),
         "visual_style": look or "(none set)",
     })
+    return filled + "\n\n" + HOOK_RULES
 
 
 def _classify_openai_error(e: Exception) -> Exception:

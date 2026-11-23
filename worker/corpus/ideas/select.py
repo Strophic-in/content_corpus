@@ -61,6 +61,9 @@ _STAKES_RE = re.compile(
 _MONEY_RE = re.compile(
     r"[₹$€£]\s?\d|\b\d[\d,.]*\s?(crore|lakh|billion|million|trillion|bn|mn|k)\b|\b\d+(\.\d+)?%", re.IGNORECASE)
 _NUMBER_RE = re.compile(r"\d")
+# Odd or surprising wording in a headline: a light nudge towards stand-out stories.
+_ODD_RE = re.compile(r"\b(first[- ]ever|record|unprecedented|bizarre|strange|weird|shock\w*|stunning|"
+                     r"surpris\w+|unexpected|mysterious|viral|outrage|slams?|backfires?)\b", re.IGNORECASE)
 # Sources ordered by what people voted for or shared: their rank is a signal.
 _VOTED = {"bluesky", "mastodon", "lemmy", "hackernews", "youtube"}
 
@@ -100,6 +103,8 @@ def score(item: Item) -> float:
         s += 3.0 if item.rank < 5 else 2.0 if item.rank < 15 else 1.0 if item.rank < 30 else 0
     elif title.rstrip().endswith("?"):
         s -= 1.5            # on news sites a question headline is usually opinion or SEO bait
+    if _ODD_RE.search(title):
+        s += 1.0
     if item.media_hint == "video":
         s += 1.5
     elif item.media_hint in ("image", "gallery"):

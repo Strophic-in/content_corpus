@@ -26,11 +26,15 @@ Keywords: {category_keywords}
 {rejected}
 
 ## Your task
-Pick up to {count} stories worth a short video today. Return fewer, or none, when the
+Pick up to {count} stories worth a short video today, favouring the spicy, weird,
+surprising and stand-out ones over routine updates (even within this category), each with the
+spiciest angle the items honestly support. Return fewer, or none, when the
 items above are weak: an empty list is a good answer on a slow day. For each story:
 - `title`: the video's title — the news itself, specific, at most 90 characters.
-- `hook`: the first line the viewer hears: the consequence or the striking fact, in
-  under twelve words.
+- `hook`: the first line the viewer hears, in under twelve words: the consequence, the
+  striking fact, or a twist, built to make people watch to the end. It must stop the scroll
+  and still be fully supported by the items. Never open with "Today", "Breaking" or an
+  outlet's name.
 - `brief`: 2-4 sentences: what happened, to whom, the one number or detail that makes it
   matter, and what happens next. Only facts stated in the items it comes from.
 - `why_now`: the news peg — what happened, and when.
